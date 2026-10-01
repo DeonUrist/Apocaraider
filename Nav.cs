@@ -175,7 +175,7 @@ namespace Apocaraiders
             if (s.Next >= n)
             {
                 s.Baked = true; _baking = null;
-                if (Plugin.NavLog.Value) Plugin.Log.LogInfo("Nav: baked " + s.Name + ": " + s.W + " x " + s.H + " cells of " + s.Cell.ToString("0.00") + " m, " + s.Walkable + " walkable, "
+                if (Plugin.NavLog.Value) Plugin.Log.LogInfo("Nav: baked " + s.Name + ": " + s.W + " x " + s.H + " cells of " + s.Cell.ToString("0.00") + " m, " + s.Walkable + " walkable (" + (100f * s.Walkable / Mathf.Max(1, s.W * s.H)).ToString("0") + " %), "
                     + s.BakeMs.ToString("0") + " ms over " + s.BakeFrames + " frames");
             }
         }
@@ -199,9 +199,21 @@ namespace Apocaraiders
                 if (d >= bestD || d > 6f) { if (y < s.RefY - 6f) break; continue; }
                 Vector3 f = new Vector3(c.x, y, c.z);
                 if (Physics.CheckCapsule(f + Vector3.up * (Ankle + Radius), f + Vector3.up * (HeadTop - Radius), Radius, BakeMask, QueryTriggerInteraction.Ignore)) continue;
+                if (InsideSolid(f)) continue;
                 best = y; bestD = d;
             }
             return best;
+        }
+
+        // An overlap test against a non-convex mesh collider (a cave's rock) only sees its triangles, so a capsule wholly inside the rock
+        // passes as free and the terrain under the rock looked like floor. One ray up with back faces on: from inside solid rock it meets the
+        // inside of the rock's surface; under a real roof there is open air up to head height.
+        private static bool InsideSolid(Vector3 floor)
+        {
+            bool old = Physics.queriesHitBackfaces;
+            Physics.queriesHitBackfaces = true;
+            try { return Physics.Raycast(floor + Vector3.up * 0.05f, Vector3.up, HeadTop, BakeMask, QueryTriggerInteraction.Ignore); }
+            finally { Physics.queriesHitBackfaces = old; }
         }
 
         private static Vector3 CellCenter(Structure s, int x, int z, float y)

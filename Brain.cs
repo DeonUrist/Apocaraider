@@ -64,7 +64,7 @@ namespace Apocaraiders
             public int Side, ClearLooks; public float SideUntil; public bool Flipped;     // pathing: the committed way around an obstacle
             public float FreeLeft, FreeRight;                                             // the last fan's free lengths per half
             public Vector3 Waypoint; public bool HasWaypoint; public float WaypointUntil, NextScout;   // a scouted corner with a clear line to the target
-            public bool ToGhost, OnNav; public float LookYaw, NextLookTurn;                       // Senses: going to a ghost / looking around at it
+            public bool ToGhost, OnNav, WasOnNav; public float LookYaw, NextLookTurn, NavOffUntil;                       // Senses: going to a ghost / looking around at it
             public float BestDist = float.MaxValue, NoProgressSince;
             public int Stucks; public float FirstStuck;
             public float LosLostAt = -1f; public bool Los; public float Dist;
@@ -237,8 +237,9 @@ namespace Apocaraiders
             }
             // moving: Chase or Advance
             // inside a baked camp / building / cave the structure's own map says the way (out through the right exit, around its walls)
-            Vector3 navNext; float pathLeft;
-            n.OnNav = Nav.Next(n.Owner, n.T.position, tp, out navNext, out pathLeft);
+            Vector3 navNext = Vector3.zero; float pathLeft = 0f;
+            n.OnNav = now >= n.NavOffUntil && Nav.Next(n.Owner, n.T.position, tp, out navNext, out pathLeft) && NavLegClear(n, navNext);
+            if (n.OnNav != n.WasOnNav) { n.WasOnNav = n.OnNav; n.BestDist = float.MaxValue; n.NoProgressSince = now; }   // map path length and straight distance don't compare
             if (!Progress(n, n.OnNav ? pathLeft : d, now)) return;
             Vector3 goal = d3; float gd = d;
             if (n.OnNav)
@@ -281,9 +282,9 @@ namespace Apocaraiders
                 _angles = new float[count];
                 for (int i = 0; i < count; i++) _angles[i] = -half + half * 2f * i / (count - 1);   // symmetric, 0 in the middle
             }
-            bool adv = !n.Ranged || Plugin.ShooterPathing.Value || n.ToGhost;
+            bool adv = !n.Ranged || Plugin.ShooterPathing.Value || n.ToGhost || n.OnNav;   // on a map route everyone uses the body-wide feelers
             float len = Mathf.Max(0.5f, n.Ranged && !n.ToGhost ? Plugin.FeelerLength.Value : Plugin.MeleeFeelerLength.Value);
-            if (dist < len) len = Mathf.Max(0.5f, dist);     // close to the target: don't "see" it as a wall
+            if (dist < len && !n.OnNav) len = Mathf.Max(0.5f, dist);     // close to the target: don't "see" it as a wall (a map waypoint is no object)
             Vector3 origin = n.Col != null ? n.Col.bounds.center : n.T.position;
             float targetYaw = Mathf.Atan2(toTarget.x, toTarget.z) * Mathf.Rad2Deg;
             Transform troot = n.Target.Value != null ? n.Target.Value.transform.root : null;
@@ -725,9 +726,36 @@ namespace Apocaraiders
             catch (Exception) { }
         }
 
+        // a map waypoint is taken only when the first metre toward it is free for the body (walls, rock, baked props - not loose items or cars,
+        // the feelers steer round those); otherwise this look runs without the map, as before maps existed
+        private static readonly int NavGateMask = PathMask & ~((1 << 8) | (1 << 9));
+        private static bool NavLegClear(Npc n, Vector3 next)
+        {
+            if (n.Col == null) return true;
+            var b = n.Col.bounds;
+            float r = Mathf.Clamp(Mathf.Min(b.extents.x, b.extents.z), 0.12f, 0.35f);
+            float lo = b.min.y + 0.25f + r, hi = b.min.y + b.size.y * 0.7f - r; if (hi < lo) hi = lo;
+            Vector3 p1 = new Vector3(b.center.x, lo, b.center.z), p2 = new Vector3(b.center.x, hi, b.center.z);
+            Vector3 d = next - n.T.position; d.y = 0f;
+            float len = Mathf.Min(1f, d.magnitude);
+            if (len < 0.05f) return true;
+            RaycastHit h;
+            if (!Physics.CapsuleCast(p1, p2, r, d.normalized, out h, len, NavGateMask, QueryTriggerInteraction.Ignore)) return true;
+            if (h.collider.transform.root == n.T) return true;
+            if (h.collider.gameObject.layer == 14 && h.normal.y > 0.6f) return true;
+            if (Plugin.BrainLog.Value) Plugin.Log.LogInfo("Brain: " + n.Owner.name + " map waypoint blocked by " + h.collider.name + ", steers without the map");
+            return false;
+        }
+
         private static void OnStuck(Npc n)
         {
             float now = Time.time;
+            if (n.OnNav)
+            {
+                // stuck on a map route: this map is wrong here - steer without it for a while
+                n.NavOffUntil = now + 10f * R; n.OnNav = false;
+                if (Plugin.BrainLog.Value) Plugin.Log.LogInfo("Brain: " + n.Owner.name + " stuck on a map route, steers without the map for " + (10f * R).ToString("0") + " s");
+            }
             if (n.Mode == Mode.Hold || n.Mode == Mode.Rest || n.Mode == Mode.Search || n.Mode == Mode.BackUp || n.Mode == Mode.Off) return;
             if (now - n.FirstStuck > StuckWindow * R) { n.FirstStuck = now; n.Stucks = 0; }
             n.Stucks++;

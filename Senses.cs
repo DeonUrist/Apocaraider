@@ -510,7 +510,8 @@ namespace Apocaraiders
             if (a == null || a.State == State.Combat) return;
             float now = Time.time;
             var g = GetOrMake(Src.Hit, attacker.transform.root.position, attacker.transform.root.gameObject, "hit by " + Name(attacker), 0f, 1f, now);
-            if (Assign(a, g, Src.Hit, now)) Log(a, "is hit by " + Name(attacker) + ", goes for ghost #" + g.Id);
+            bool had = a.Ghost == g;
+            if (Assign(a, g, Src.Hit, now)) { if (!had) Log(a, "is hit by " + Name(attacker) + ", goes for ghost #" + g.Id); }   // once per shot, not per pellet
             else if (g.Holders.Count == 0) { int i = _ghosts.IndexOf(g); if (i >= 0) KillGhost(i); }
         }
 
