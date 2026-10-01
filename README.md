@@ -60,7 +60,7 @@ BepInEx\plugins\Apocaraiders\Sounds\Gungirl\*.wav / *.ogg
   the falloff range per weapon type, shotgun pellets and spread, vehicle damage on/off, the metal-plate chance, and the
   most bullets in flight at once.
 - **[NpcAim]**: on/off, AimBaseDistance, AimDelayPer5m, SpreadPer5m, EngagePercent (fire within this % of the reach),
-  EngagePatience, HoldRecheck.
+  EngagePatience, HoldRecheckMin/Max (1 to 4 s reaction time once you come into reach).
 - **[Debug] SpawnKey** (F9): spawns a Gungirl in front of you.
 
 ## Making your own body

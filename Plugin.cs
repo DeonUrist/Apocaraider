@@ -18,7 +18,7 @@ namespace Apocaraiders
     {
         public const string GUID = "com.denis.apocalypter.apocaraiders";
         public const string NAME = "Apocaraiders";
-        public const string VERSION = "0.4.0";
+        public const string VERSION = "0.4.1";
 
         internal static ManualLogSource Log;
         internal static string Dir;
@@ -29,7 +29,7 @@ namespace Apocaraiders
         internal static ConfigEntry<string> GungirlModel, GungirlTexture, GungirlVoice, GungirlHideParts;
         internal static ConfigEntry<Key> SpawnKey;
         internal static ConfigEntry<bool> TracersEnabled, VehicleDamage, PlayerTracers, NpcAimAtBody, AimEnabled;
-        internal static ConfigEntry<float> AimBaseDistance, AimDelayPer5m, SpreadPer5m, EngagePercent, EngagePatience, HoldRecheck;
+        internal static ConfigEntry<float> AimBaseDistance, AimDelayPer5m, SpreadPer5m, EngagePercent, EngagePatience, HoldRecheckMin, HoldRecheckMax;
         internal static ConfigEntry<float> BulletSpeed, BoltSpeed, TracerWidth, TracerLength, BoltWidth, BoltLength, TracerGlow;
         internal static ConfigEntry<Color> TracerColor, BoltColor;
         internal static ConfigEntry<float> PistolRange, SmgRange, RifleRange, SniperRange, ShotgunRange, CrossbowRange, ShotgunPelletSpread, MetalSheetPopChance, NpcHitRadius, PlayerBodyRadius, PlayerHeadRadius, HeadshotMultiplier;
@@ -120,8 +120,10 @@ namespace Apocaraiders
                 new AcceptableValueRange<float>(1f, 100f)));
             EngagePatience = Config.Bind("NpcAim", "EngagePatience", 5f, new ConfigDescription(
                 "Seconds an NPC within reach but beyond EngagePercent keeps closing in before it fires anyway (stuck, hiding...).", new AcceptableValueRange<float>(0f, 60f)));
-            HoldRecheck = Config.Bind("NpcAim", "HoldRecheck", 0.5f, new ConfigDescription(
-                "While holding fire, how often the NPC re-checks the distance, s.", new AcceptableValueRange<float>(0.1f, 5f)));
+            HoldRecheckMin = Config.Bind("NpcAim", "HoldRecheckMin", 1f, new ConfigDescription(
+                "While holding fire (target too far), the NPC looks again after a random pause between HoldRecheckMin and HoldRecheckMax seconds: its reaction time once you come into reach.",
+                new AcceptableValueRange<float>(0.1f, 30f)));
+            HoldRecheckMax = Config.Bind("NpcAim", "HoldRecheckMax", 4f, new ConfigDescription("See HoldRecheckMin.", new AcceptableValueRange<float>(0.1f, 30f)));
             SpawnKey = Config.Bind("Debug", "SpawnKey", Key.F9,
                 "Spawns a Gungirl 6 m in front of you (a real raider: she fights and is saved). None = off.");
             VerboseLog = Config.Bind("Debug", "VerboseLog", false, "Log every Gungirl that is dressed (spawn, corpse, after a load).");

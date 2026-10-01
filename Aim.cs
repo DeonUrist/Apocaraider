@@ -18,7 +18,7 @@ namespace Apocaraiders
     // - SendEvent "Activate": the burst is skipped when the target is farther than the gun's reach ([Tracers] ranges) or farther than
     //   [NpcAim] EngagePercent of it, so the NPC keeps following instead of firing at nothing. Beyond EngagePercent but within reach
     //   the NPC holds for EngagePatience seconds, then fires anyway (it may be stuck, or hiding).
-    // - RandomWait: while holding fire the next check comes after HoldRecheck seconds; otherwise the vanilla pause grows by
+    // - RandomWait: while holding fire the next check comes after HoldRecheckMin..Max seconds (1-4); otherwise the vanilla pause grows by
     //   AimDelayPer5m for every 5 m the target is beyond AimBaseDistance ("takes longer to aim").
     // Tracers.BeforeRayHit widens the vanilla aim jitter by SpreadPer5m % for every 5 m beyond AimBaseDistance (Aim.SpreadFactor).
     internal static class Aim
@@ -114,9 +114,9 @@ namespace Apocaraiders
                 State st = owner != null && _states.TryGetValue(owner.GetInstanceID(), out st) ? st : null;
                 if (st != null && st.Holding)
                 {
-                    // too far: look again soon, the NPC is on its way
-                    float r = Mathf.Max(0.1f, Plugin.HoldRecheck.Value);
-                    w.MyMin.Value = r; w.MyMax.Value = r;
+                    // too far: look again in HoldRecheckMin..Max s (the NPC is on its way; a reaction time, and no per-frame work)
+                    float lo = Mathf.Max(0.1f, Plugin.HoldRecheckMin.Value), hi = Mathf.Max(lo, Plugin.HoldRecheckMax.Value);
+                    w.MyMin.Value = lo; w.MyMax.Value = hi;
                 }
                 else
                 {
