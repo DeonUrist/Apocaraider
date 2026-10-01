@@ -1,9 +1,11 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Reflection;
 using HutongGames.PlayMaker;
 using UnityEngine;
+using UnityEngine.Networking;
 
 namespace Apocaraiders
 {
@@ -13,22 +15,39 @@ namespace Apocaraiders
     //   Health [spawn]     PlayRandomSound clips   death_1, death_3, death_6 (death)
     // These clips are shared with other humans (human_hurt also with the player), so the clips themselves are never touched:
     // only the references inside one Gungirl's own FSMs (action fields, FSM variables) and AudioSources are pointed at our
-    // clips. A file <clip name>.wav in [Gungirl] Voice replaces that clip; clips without a file keep the game's sound.
+    // clips. A file <clip name>.wav or .ogg in [Gungirl] Voice replaces that clip; clips without a file keep the game's sound.
     internal static class Voice
     {
         private struct Pending { public GameObject Go; public float Until; }
 
-        private static Dictionary<string, AudioClip> _clips;
+        private static readonly Dictionary<string, AudioClip> _clips = new Dictionary<string, AudioClip>(StringComparer.OrdinalIgnoreCase);
+        private static bool _loaded;
+        private static MonoBehaviour _loader;     // the runner the load coroutine runs on (null = not started / runner destroyed)
         private static readonly List<Pending> _pending = new List<Pending>();
         private static readonly Dictionary<Type, FieldInfo[]> _fields = new Dictionary<Type, FieldInfo[]>();
 
-        private static Dictionary<string, AudioClip> Clips()
+        // Loads every .wav and .ogg once per game start. WAV is decoded here (Wav.cs); OGG by Unity's own decoder through a
+        // file:// UnityWebRequest, which needs a coroutine. Same name in both formats: the .ogg wins (the shipped .wav files
+        // are Flexa's originals, a .ogg next to one is the replacement).
+        public static void EnsureLoading(MonoBehaviour runner)
         {
-            if (_clips != null) return _clips;
-            _clips = new Dictionary<string, AudioClip>(StringComparer.OrdinalIgnoreCase);
+            if (_loaded || _loader != null) return;
+            _loader = runner;
+            runner.StartCoroutine(Load());
+        }
+
+        private static IEnumerator Load()
+        {
+            _clips.Clear();
             string dir = Gungirl.ModPath(Plugin.GungirlVoice.Value);
-            if (!Directory.Exists(dir)) { Plugin.Log.LogInfo("Gungirl voice: no folder " + dir + " - she keeps Flexa's voice"); return _clips; }
+            if (!Directory.Exists(dir))
+            {
+                Plugin.Log.LogInfo("Gungirl voice: no folder " + dir + " - she keeps Flexa's voice");
+                _loaded = true;
+                yield break;
+            }
             var failed = new List<string>();
+            int wavs = 0, oggs = 0;
             foreach (var path in Directory.GetFiles(dir, "*.wav"))
             {
                 string name = Path.GetFileNameWithoutExtension(path);
@@ -40,24 +59,48 @@ namespace Apocaraiders
                     clip.SetData(s, 0);
                     clip.hideFlags = HideFlags.DontUnloadUnusedAsset;
                     _clips[name] = clip;
+                    wavs++;
                 }
                 catch (Exception e) { failed.Add(Path.GetFileName(path) + " (" + e.Message + ")"); }
             }
-            Plugin.Log.LogInfo("Gungirl voice: " + _clips.Count + " clip(s) from " + dir);
+            foreach (var path in Directory.GetFiles(dir, "*.ogg"))
+            {
+                string name = Path.GetFileNameWithoutExtension(path);
+                var req = UnityWebRequestMultimedia.GetAudioClip(new Uri(path).AbsoluteUri, AudioType.OGGVORBIS);
+                var dh = req.downloadHandler as DownloadHandlerAudioClip;
+                if (dh != null) { dh.streamAudio = false; dh.compressed = false; }   // short clips: decode fully on load
+                yield return req.SendWebRequest();
+                try
+                {
+                    if (req.result != UnityWebRequest.Result.Success) throw new IOException(req.error);
+                    var clip = DownloadHandlerAudioClip.GetContent(req);
+                    if (clip == null || clip.length <= 0f) throw new InvalidDataException("not a readable Ogg Vorbis file");
+                    clip.name = name;
+                    clip.hideFlags = HideFlags.DontUnloadUnusedAsset;
+                    _clips[name] = clip;
+                    oggs++;
+                }
+                catch (Exception e) { failed.Add(Path.GetFileName(path) + " (" + e.Message + ")"); }
+                finally { req.Dispose(); }
+            }
+            Plugin.Log.LogInfo("Gungirl voice: " + _clips.Count + " clip(s) from " + dir + " (" + wavs + " wav, " + oggs + " ogg)");
             if (failed.Count > 0) Plugin.Log.LogWarning("Gungirl voice: could not read " + string.Join(", ", failed.ToArray()));
-            return _clips;
+            _loaded = true;
         }
 
         // Called when a body is dressed. FSM actions are only safe to edit once PlayMaker has initialised the FSM,
-        // so a fresh spawn may have to wait a frame or two.
+        // so a fresh spawn may have to wait a frame or two; and the clips may still be loading at game start.
         public static void Apply(GameObject root)
         {
-            if (root == null || Clips().Count == 0) return;
-            if (!TrySwap(root, false)) _pending.Add(new Pending { Go = root, Until = Time.unscaledTime + 10f });
+            if (root == null) return;
+            if (_loaded && _clips.Count == 0) return;
+            if (!_loaded || !TrySwap(root, false)) _pending.Add(new Pending { Go = root, Until = Time.unscaledTime + 10f });
         }
 
         public static void Tick()
         {
+            if (!_loaded) return;
+            if (_clips.Count == 0) { _pending.Clear(); return; }
             for (int i = _pending.Count - 1; i >= 0; i--)
             {
                 var p = _pending[i];

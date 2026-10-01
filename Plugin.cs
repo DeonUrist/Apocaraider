@@ -17,7 +17,7 @@ namespace Apocaraiders
     {
         public const string GUID = "com.denis.apocalypter.apocaraiders";
         public const string NAME = "Apocaraiders";
-        public const string VERSION = "0.2.0";
+        public const string VERSION = "0.2.1";
 
         internal static ManualLogSource Log;
         internal static string Dir;
@@ -45,7 +45,7 @@ namespace Apocaraiders
             GungirlTexture = Config.Bind("Gungirl", "Texture", "Models/flexa_female.png",
                 "Body texture (PNG/JPG), relative to the mod folder. Read at game start.");
             GungirlVoice = Config.Bind("Gungirl", "Voice", "Sounds/Gungirl",
-                "Folder with her voice, relative to the mod folder: WAV files named like Flexa's clips (death_1.wav, human_hurt.wav, enemy_human_single_1.wav ...). A clip without a file keeps Flexa's sound. Read at game start.");
+                "Folder with her voice, relative to the mod folder: WAV or OGG files named like Flexa's clips (death_1, human_hurt, enemy_human_single_1 ...; .ogg wins over .wav of the same name). A clip without a file keeps Flexa's sound. Read at game start.");
             GungirlHideParts = Config.Bind("Gungirl", "HideParts", "beard",
                 "Flexa's attachments to hide on a Gungirl, comma-separated name starts: beard, headband, armband, bag1, pouch1, armor2, machete.");
             SpawnKey = Config.Bind("Debug", "SpawnKey", Key.F9,
@@ -78,6 +78,6 @@ namespace Apocaraiders
 
     internal class Runner : MonoBehaviour
     {
-        private void Update() { Gungirl.Tick(); }
+        private void Update() { Voice.EnsureLoading(this); Gungirl.Tick(); }
     }
 }

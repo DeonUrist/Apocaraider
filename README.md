@@ -18,7 +18,7 @@ Needs BepInEx 5. Copy the `Apocaraiders` folder into `BepInEx\plugins\`, so you 
 BepInEx\plugins\Apocaraiders\Apocaraiders.dll
 BepInEx\plugins\Apocaraiders\Models\Flexa_female.glb
 BepInEx\plugins\Apocaraiders\Models\flexa_female.png
-BepInEx\plugins\Apocaraiders\Sounds\Gungirl\*.wav
+BepInEx\plugins\Apocaraiders\Sounds\Gungirl\*.wav / *.ogg
 ```
 
 ## Settings
@@ -41,7 +41,7 @@ same names, not moved. Export as glTF (.gltf or .glb) with Skinning on and point
 
 ## Her voice
 
-`Sounds\Gungirl\` holds one WAV per sound she makes, named after the game's clip it replaces:
+`Sounds\Gungirl\` holds one sound file per sound she makes, named after the game's clip it replaces:
 
 | File | When |
 |---|---|
@@ -49,6 +49,7 @@ same names, not moved. Export as glTF (.gltf or .glb) with Skinning on and point
 | `human_hurt.wav`, `human_hurt_2.wav` | getting hit |
 | `death_1.wav`, `death_3.wav`, `death_6.wav` | dying |
 
-Out of the box they are Flexa's own clips. Overwrite any of them with a recording of your own (WAV: 8/16/24-bit PCM or
-32-bit float, mono or stereo, any sample rate, any length) and restart the game. A missing file means she uses Flexa's
+Out of the box they are Flexa's own clips (WAV). Replace any of them with a recording of your own and restart the game:
+either overwrite the .wav (8/16/24-bit PCM or 32-bit float), or put an .ogg (Ogg Vorbis) with the same name next to it,
+which wins over the .wav. Mono or stereo, any sample rate, any length. Files with other names are ignored. A missing file means she uses Flexa's
 sound for that clip. Only Gungirls use these files: Flexa, the other raiders and the player keep their voices.
