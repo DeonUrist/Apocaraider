@@ -253,13 +253,13 @@ namespace Apocaraiders
             Vector3 p1 = origin, p2 = origin;
             if (adv)
             {
-                // the swept capsule: a little wider than the body, from step height (0.15 m) to chest, so a brazier, a tyre or a fence bar that
+                // the swept capsule: a little wider than the body, from ankle height (5 cm) to chest, so a brazier, a tyre or a fence bar that
                 // the body would clip registers (small animals: whatever fits between their collider's top and bottom)
                 if (n.Col != null)
                 {
                     var b = n.Col.bounds;
                     radius = Mathf.Clamp(Mathf.Min(b.extents.x, b.extents.z) * 1.15f, 0.12f, 0.45f);
-                    float lo = b.min.y + Mathf.Min(0.15f, b.size.y * 0.1f) + radius, hi = b.min.y + b.size.y * 0.7f - radius;
+                    float lo = b.min.y + Mathf.Min(0.05f, b.size.y * 0.05f) + radius, hi = b.min.y + b.size.y * 0.7f - radius;   // from 5 cm above the feet: a brazier lip, a kerb
                     if (hi < lo) hi = lo;
                     p1 = new Vector3(b.center.x, lo, b.center.z); p2 = new Vector3(b.center.x, hi, b.center.z);
                 }
@@ -550,7 +550,7 @@ namespace Apocaraiders
         {
             try
             {
-                Vector3 origin = n.Col != null ? new Vector3(n.Col.bounds.center.x, n.Col.bounds.min.y + 0.3f, n.Col.bounds.center.z) : n.T.position;
+                Vector3 origin = n.Col != null ? new Vector3(n.Col.bounds.center.x, n.Col.bounds.min.y + 0.1f, n.Col.bounds.center.z) : n.T.position;
                 var hits = Physics.RaycastAll(origin, n.T.forward, 1.5f, ~0, QueryTriggerInteraction.Collide);
                 var sb = new System.Text.StringBuilder();
                 foreach (var h in hits)
@@ -559,7 +559,7 @@ namespace Apocaraiders
                     sb.Append(h.collider.name).Append(" [").Append(LayerMask.LayerToName(h.collider.gameObject.layer)).Append(h.collider.isTrigger ? ", trigger" : "")
                       .Append(", ").Append(h.distance.ToString("0.0")).Append(" m] ");
                 }
-                Plugin.Log.LogInfo("Brain: " + n.Owner.name + " ahead at knee height: " + (sb.Length > 0 ? sb.ToString() : "nothing"));
+                Plugin.Log.LogInfo("Brain: " + n.Owner.name + " ahead at ankle height: " + (sb.Length > 0 ? sb.ToString() : "nothing"));
                 // what touches the body right now (the body capsule grown by 0.15 m, any layer, triggers too)
                 if (n.Col != null)
                 {
