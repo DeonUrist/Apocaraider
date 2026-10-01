@@ -18,7 +18,7 @@ namespace Apocaraiders
     {
         public const string GUID = "com.denis.apocalypter.apocaraiders";
         public const string NAME = "Apocaraiders";
-        public const string VERSION = "0.3.3";
+        public const string VERSION = "0.4.0";
 
         internal static ManualLogSource Log;
         internal static string Dir;
@@ -28,7 +28,8 @@ namespace Apocaraiders
         internal static ConfigEntry<int> GungirlChance;
         internal static ConfigEntry<string> GungirlModel, GungirlTexture, GungirlVoice, GungirlHideParts;
         internal static ConfigEntry<Key> SpawnKey;
-        internal static ConfigEntry<bool> TracersEnabled, VehicleDamage, PlayerTracers, NpcAimAtBody;
+        internal static ConfigEntry<bool> TracersEnabled, VehicleDamage, PlayerTracers, NpcAimAtBody, AimEnabled;
+        internal static ConfigEntry<float> AimBaseDistance, AimDelayPer5m, SpreadPer5m, EngagePercent, EngagePatience, HoldRecheck;
         internal static ConfigEntry<float> BulletSpeed, BoltSpeed, TracerWidth, TracerLength, BoltWidth, BoltLength, TracerGlow;
         internal static ConfigEntry<Color> TracerColor, BoltColor;
         internal static ConfigEntry<float> PistolRange, SmgRange, RifleRange, SniperRange, ShotgunRange, CrossbowRange, ShotgunPelletSpread, MetalSheetPopChance, NpcHitRadius, PlayerBodyRadius, PlayerHeadRadius, HeadshotMultiplier;
@@ -106,6 +107,21 @@ namespace Apocaraiders
             MetalSheetPopChance = Config.Bind("Tracers", "MetalSheetPopChance", 20f, new ConfigDescription("% chance that a bullet hitting a bolted-on metal plate knocks it off.", new AcceptableValueRange<float>(0f, 100f)));
             MetalSheetNames = Config.Bind("Tracers", "MetalSheetNames", "metal_plate", "Which attached parts count as metal sheets (comma-separated name starts).");
             MaxTracers = Config.Bind("Tracers", "MaxTracers", 300, new ConfigDescription("Most bullets in flight at once; shots above this hit instantly (vanilla style) instead.", new AcceptableValueRange<int>(16, 2000)));
+            AimEnabled = Config.Bind("NpcAim", "Enabled", true,
+                "NPC gunmen pace their fire by distance: no shots beyond the gun's reach (the [Tracers] ranges), slower aiming and a wider spread far away.");
+            AimBaseDistance = Config.Bind("NpcAim", "AimBaseDistance", 10f, new ConfigDescription(
+                "Up to this distance, m, NPCs aim and spread as the game does; every 5 m beyond it adds AimDelayPer5m and SpreadPer5m.", new AcceptableValueRange<float>(0f, 200f)));
+            AimDelayPer5m = Config.Bind("NpcAim", "AimDelayPer5m", 0.25f, new ConfigDescription(
+                "Seconds added to the pause between an NPC's bursts for every 5 m the target is beyond AimBaseDistance.", new AcceptableValueRange<float>(0f, 5f)));
+            SpreadPer5m = Config.Bind("NpcAim", "SpreadPer5m", 10f, new ConfigDescription(
+                "% added to the NPC's aim spread for every 5 m the target is beyond AimBaseDistance.", new AcceptableValueRange<float>(0f, 100f)));
+            EngagePercent = Config.Bind("NpcAim", "EngagePercent", 75f, new ConfigDescription(
+                "NPCs open fire once the target is within this % of the gun's reach; farther away they keep closing in. Never beyond the reach itself.",
+                new AcceptableValueRange<float>(1f, 100f)));
+            EngagePatience = Config.Bind("NpcAim", "EngagePatience", 5f, new ConfigDescription(
+                "Seconds an NPC within reach but beyond EngagePercent keeps closing in before it fires anyway (stuck, hiding...).", new AcceptableValueRange<float>(0f, 60f)));
+            HoldRecheck = Config.Bind("NpcAim", "HoldRecheck", 0.5f, new ConfigDescription(
+                "While holding fire, how often the NPC re-checks the distance, s.", new AcceptableValueRange<float>(0.1f, 5f)));
             SpawnKey = Config.Bind("Debug", "SpawnKey", Key.F9,
                 "Spawns a Gungirl 6 m in front of you (a real raider: she fights and is saved). None = off.");
             VerboseLog = Config.Bind("Debug", "VerboseLog", false, "Log every Gungirl that is dressed (spawn, corpse, after a load).");
@@ -123,6 +139,10 @@ namespace Apocaraiders
                     prefix: new HarmonyMethod(typeof(Tracers), nameof(Tracers.BeforeRayHit)));
                 h.Patch(AccessTools.Method(typeof(HutongGames.PlayMaker.Actions.Raycast), "OnEnter"),
                     prefix: new HarmonyMethod(typeof(Tracers), nameof(Tracers.BeforeRaycast)));
+                h.Patch(AccessTools.Method(typeof(HutongGames.PlayMaker.Actions.SendEvent), "OnEnter"),
+                    prefix: new HarmonyMethod(typeof(Aim), nameof(Aim.BeforeSendEvent)));
+                h.Patch(AccessTools.Method(typeof(HutongGames.PlayMaker.Actions.RandomWait), "OnEnter"),
+                    prefix: new HarmonyMethod(typeof(Aim), nameof(Aim.BeforeRandomWait)));
             }
             catch (Exception e) { Log.LogError("Harmony patch failed, no tracers: " + e); }
 

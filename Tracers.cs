@@ -100,6 +100,8 @@ namespace Apocaraiders
                 else if (root != null) head = HeadOf(root);
                 var offsetVar = fsm.Variables.GetFsmVector3("offset");
                 Vector3 jitter = offsetVar != null ? offsetVar.Value : Vector3.zero;
+                if (Plugin.AimEnabled.Value)    // [NpcAim] SpreadPer5m: the jitter grows with distance
+                    jitter *= Aim.SpreadFactor(Vector3.Distance(owner.transform.position, target.transform.position));
                 Vector3 aim;
                 var cap0 = root != null ? PlayerCapsule(root) : null;
                 if (cap0 != null && Plugin.NpcAimAtBody.Value) aim = cap0.transform.TransformPoint(cap0.center) + jitter;
@@ -152,6 +154,7 @@ namespace Apocaraiders
         {
             _shots.Clear();
             _shooters.Clear();
+            Aim.OnSceneLoaded();
             _guns.Clear();
             _notGun.Clear();
             _heads.Clear();
@@ -415,7 +418,25 @@ namespace Apocaraiders
             return Kind.Rifle;
         }
 
-        private static float RangeOf(Kind k)
+        // The gun an NPC holds, for the Aim pacing (cached like Info; finds the Damage Ranged FSM itself).
+        internal static bool GunKindOf(GameObject owner, out Kind kind)
+        {
+            kind = Kind.Rifle;
+            ShooterInfo info;
+            if (!_shooters.TryGetValue(owner.GetInstanceID(), out info) || (info.Weapon != null && !info.Weapon.gameObject.activeInHierarchy))
+            {
+                Fsm dr = null;
+                foreach (var f in owner.GetComponents<PlayMakerFSM>())
+                    if (f != null && f.FsmName == "Damage Ranged") { dr = f.Fsm; break; }
+                if (dr == null) return false;
+                info = Info(dr, owner);
+            }
+            if (!info.IsGun) return false;
+            kind = info.Kind;
+            return true;
+        }
+
+        internal static float RangeOf(Kind k)
         {
             switch (k)
             {

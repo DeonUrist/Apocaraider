@@ -6,4 +6,4 @@ mcs -nostdlib -noconfig -target:library -langversion:latest -optimize+ -out:${1:
   -r:$B/BepInEx.dll -r:$B/0Harmony.dll \
   -r:$M/UnityEngine.dll -r:$M/UnityEngine.CoreModule.dll -r:$M/UnityEngine.PhysicsModule.dll \
   -r:$M/UnityEngine.ImageConversionModule.dll -r:$M/UnityEngine.AudioModule.dll -r:$M/UnityEngine.UnityWebRequestModule.dll -r:$M/UnityEngine.UnityWebRequestAudioModule.dll -r:$M/Unity.InputSystem.dll -r:$M/PlayMaker.dll -r:$M/Micosmo.SensorToolkit.dll -r:$M/Assembly-CSharp.dll \
-  Plugin.cs Gungirl.cs Voice.cs Wav.cs Level.cs Tracers.cs Gltf.cs Json.cs Bindposes.cs
+  Plugin.cs Gungirl.cs Voice.cs Wav.cs Level.cs Tracers.cs Aim.cs Gltf.cs Json.cs Bindposes.cs

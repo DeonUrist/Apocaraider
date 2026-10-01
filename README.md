@@ -26,6 +26,13 @@ visible bolts. Tracers look the same by day and by night.
   can be knocked off (20 % per hit by default).
 - A hit on its target does exactly what the game's own hit does (blood/sparks, damage, armor, hit sounds).
 
+## NPC aim
+
+Gunmen pace their fire by distance. They don't shoot at all beyond their gun's reach (the Tracers ranges) and keep
+closing in until you are within 75 % of it (a few seconds of patience, then they fire anyway). Up to 10 m they aim and
+spread as the game made them; every 5 m beyond that adds 0.25 s to the pause between their bursts and 10 % to their
+spread. All of it is configurable.
+
 ## Install
 
 Needs BepInEx 5. Copy the `Apocaraiders` folder into `BepInEx\plugins\`, so you have:
@@ -52,6 +59,8 @@ BepInEx\plugins\Apocaraiders\Sounds\Gungirl\*.wav / *.ogg
 - **[Tracers]**: on/off (NPCs and, separately, your own guns), bullet and bolt speed, colour, width, length and glow,
   the falloff range per weapon type, shotgun pellets and spread, vehicle damage on/off, the metal-plate chance, and the
   most bullets in flight at once.
+- **[NpcAim]**: on/off, AimBaseDistance, AimDelayPer5m, SpreadPer5m, EngagePercent (fire within this % of the reach),
+  EngagePatience, HoldRecheck.
 - **[Debug] SpawnKey** (F9): spawns a Gungirl in front of you.
 
 ## Making your own body

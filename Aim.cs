@@ -1,0 +1,158 @@
+using System;
+using System.Collections.Generic;
+using HutongGames.PlayMaker;
+using HutongGames.PlayMaker.Actions;
+using UnityEngine;
+
+namespace Apocaraiders
+{
+    // How NPC gunmen pace their shots with distance.
+    //
+    // Vanilla (asset dump 2026-10-01, every human shooter): FSM "RangedAttackWait" = state wait (RandomWait WaitMin..WaitMax, e.g. 3..5 s;
+    // the shotgunners' WeaponType FSM meant to set them per gun but writes minWait twice, so their 4..6 defaults stay) -> state check
+    // (SendEvent Activate -> the Attack FSM's global transition "ranged": line-of-sight check, then attack_ranged = shooting animation,
+    // muzzle flash, EnableFSM "Damage Ranged" = the burst) -> back to wait. The NPC runs toward the target the whole time (Attack FSM
+    // trigger state); nothing in vanilla looks at the distance.
+    //
+    // Here (two Harmony prefixes on the actions of "RangedAttackWait" only):
+    // - SendEvent "Activate": the burst is skipped when the target is farther than the gun's reach ([Tracers] ranges) or farther than
+    //   [NpcAim] EngagePercent of it, so the NPC keeps following instead of firing at nothing. Beyond EngagePercent but within reach
+    //   the NPC holds for EngagePatience seconds, then fires anyway (it may be stuck, or hiding).
+    // - RandomWait: while holding fire the next check comes after HoldRecheck seconds; otherwise the vanilla pause grows by
+    //   AimDelayPer5m for every 5 m the target is beyond AimBaseDistance ("takes longer to aim").
+    // Tracers.BeforeRayHit widens the vanilla aim jitter by SpreadPer5m % for every 5 m beyond AimBaseDistance (Aim.SpreadFactor).
+    internal static class Aim
+    {
+        private sealed class State
+        {
+            public float HoldSince = -1f;    // when the NPC first held fire inside reach (beyond EngagePercent)
+            public bool Holding;             // last decision: hold fire -> short recheck
+            public float LastLog;
+        }
+
+        private sealed class WaitRefs { public FsmFloat Min, Max, MyMin, MyMax; }
+
+        private static readonly Dictionary<int, State> _states = new Dictionary<int, State>();
+        private static readonly Dictionary<RandomWait, WaitRefs> _waits = new Dictionary<RandomWait, WaitRefs>();
+
+        public static void OnSceneLoaded() { _states.Clear(); _waits.Clear(); }
+
+        // Steps of 5 m beyond the base distance (0 at or below it).
+        internal static int Steps(float distance)
+        {
+            float beyond = distance - Plugin.AimBaseDistance.Value;
+            return beyond <= 0f ? 0 : (int)(beyond / 5f);
+        }
+
+        internal static float SpreadFactor(float distance)
+        {
+            return 1f + Steps(distance) * Plugin.SpreadPer5m.Value / 100f;
+        }
+
+        // Harmony prefix on HutongGames.PlayMaker.Actions.SendEvent.OnEnter. false = the Activate is not sent (no burst this cycle).
+        public static bool BeforeSendEvent(SendEvent __instance)
+        {
+            try
+            {
+                if (!Plugin.TracersEnabled.Value || !Plugin.AimEnabled.Value) return true;
+                var fsm = __instance.Fsm;
+                if (fsm == null || fsm.Name != "RangedAttackWait") return true;
+                if (__instance.sendEvent == null || __instance.sendEvent.Name != "Activate") return true;
+                var owner = fsm.GameObject;
+                if (owner == null) return true;
+                Tracers.Kind kind;
+                if (!Tracers.GunKindOf(owner, out kind)) return true;    // a monster: vanilla
+                GameObject target = TargetOf(owner);
+                if (target == null) return true;
+
+                var st = StateOf(owner);
+                float d = Vector3.Distance(owner.transform.position, target.transform.position);
+                float reach = Tracers.RangeOf(kind);
+                float engage = reach * Mathf.Clamp(Plugin.EngagePercent.Value, 1f, 100f) / 100f;
+                bool hold;
+                if (d > reach) { hold = true; st.HoldSince = -1f; }
+                else if (d > engage)
+                {
+                    if (st.HoldSince < 0f) st.HoldSince = Time.time;
+                    hold = Time.time - st.HoldSince < Plugin.EngagePatience.Value;
+                }
+                else { hold = false; st.HoldSince = -1f; }
+                st.Holding = hold;
+                if (hold && Time.time - st.LastLog > 5f)
+                {
+                    st.LastLog = Time.time;
+                    Plugin.Verbose("Aim: " + owner.name + " holds fire at " + d.ToString("0") + " m (" + kind + " reach " + reach.ToString("0") + " m, engages at " + engage.ToString("0") + " m)");
+                }
+                return !hold;
+            }
+            catch (Exception e)
+            {
+                Plugin.Log.LogError("Aim: " + e);
+                return true;
+            }
+        }
+
+        // Harmony prefix on HutongGames.PlayMaker.Actions.RandomWait.OnEnter: the pause between bursts.
+        public static bool BeforeRandomWait(RandomWait __instance)
+        {
+            try
+            {
+                var fsm = __instance.Fsm;
+                if (fsm == null || fsm.Name != "RangedAttackWait") return true;
+                WaitRefs w;
+                if (!_waits.TryGetValue(__instance, out w))
+                {
+                    w = new WaitRefs { Min = __instance.min, Max = __instance.max, MyMin = new FsmFloat(), MyMax = new FsmFloat() };
+                    _waits[__instance] = w;
+                }
+                float baseMin = w.Min != null ? w.Min.Value : 3f, baseMax = w.Max != null ? w.Max.Value : 5f;
+                if (!Plugin.TracersEnabled.Value || !Plugin.AimEnabled.Value)
+                { __instance.min = w.Min; __instance.max = w.Max; return true; }   // vanilla pause
+
+                var owner = fsm.GameObject;
+                float extra = 0f;
+                State st = owner != null && _states.TryGetValue(owner.GetInstanceID(), out st) ? st : null;
+                if (st != null && st.Holding)
+                {
+                    // too far: look again soon, the NPC is on its way
+                    float r = Mathf.Max(0.1f, Plugin.HoldRecheck.Value);
+                    w.MyMin.Value = r; w.MyMax.Value = r;
+                }
+                else
+                {
+                    var target = owner != null ? TargetOf(owner) : null;
+                    if (target != null)
+                        extra = Steps(Vector3.Distance(owner.transform.position, target.transform.position)) * Plugin.AimDelayPer5m.Value;
+                    w.MyMin.Value = baseMin + extra; w.MyMax.Value = baseMax + extra;
+                }
+                __instance.min = w.MyMin; __instance.max = w.MyMax;
+                return true;
+            }
+            catch (Exception e)
+            {
+                Plugin.Log.LogError("Aim: " + e);
+                return true;
+            }
+        }
+
+        private static State StateOf(GameObject owner)
+        {
+            State st;
+            int id = owner.GetInstanceID();
+            if (!_states.TryGetValue(id, out st)) { st = new State(); _states[id] = st; }
+            return st;
+        }
+
+        // The NPC's current target: Detection FSM variable detectedObj (what the Attack / Damage Ranged FSMs read too).
+        internal static GameObject TargetOf(GameObject owner)
+        {
+            foreach (var f in owner.GetComponents<PlayMakerFSM>())
+            {
+                if (f == null || f.FsmName != "Detection" || !f.Fsm.Initialized) continue;
+                var v = f.FsmVariables.GetFsmGameObject("detectedObj");
+                return v != null ? v.Value : null;
+            }
+            return null;
+        }
+    }
+}
