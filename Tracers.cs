@@ -253,12 +253,17 @@ namespace Apocaraiders
             if (ray.invertMask != null && ray.invertMask.Value) mask = ~mask;
             gun.Layers = mask;
             // shotguns: a "pellets" counter; the hit state loops until pellets > N
-            var pv = fsm.Variables.GetFsmInt("pellets");
-            bool shotgun = pv != null && !string.IsNullOrEmpty(pv.Name);
+            // (FsmVariables.GetFsmInt returns a placeholder for a missing variable, so the variable's presence proves nothing:
+            // only the loop itself - IntCompare on {pellets} in the hit state - makes a shotgun. 0.4.3 and earlier fired 9 bullets per shot from every gun.)
+            bool shotgun = false;
+            foreach (var a in gun.Hit)
+            {
+                var ic = a as IntCompare;
+                if (ic != null && ic.integer1 != null && ic.integer1.Name == "pellets" && ic.integer2 != null)
+                { shotgun = true; gun.Pellets = Mathf.Clamp(ic.integer2.Value + 1, 1, 32); }
+            }
             if (shotgun)
             {
-                gun.Pellets = 9;
-                foreach (var a in gun.Hit) { var ic = a as IntCompare; if (ic != null && ic.integer2 != null) gun.Pellets = Mathf.Clamp(ic.integer2.Value + 1, 1, 32); }
                 var fire = fsm.GetState("fire");
                 gun.PelletSpread = 0.02f;
                 if (fire != null) foreach (var a in fire.Actions) { var rf = a as RandomFloat; if (rf != null && rf.max != null) { gun.PelletSpread = Mathf.Abs(rf.max.Value); break; } }
@@ -548,7 +553,7 @@ namespace Apocaraiders
                 if (!onTarget && detectable) continue;      // other creatures don't stop a vanilla shot either
                 float dist = s.Travelled + h.distance;
                 float falloff = Falloff(ref s, dist);
-                if (onTarget) HitTarget(ref s, h.point, s.Damage * falloff, s.Target);
+                if (onTarget) HitTarget(ref s, h.point, s.Damage * falloff, s.Target, dist);
                 else HitWorld(ref s, col, h.point, s.Damage * falloff);
                 s.Pos = h.point;
                 s.Travelled = dist;
@@ -561,7 +566,7 @@ namespace Apocaraiders
                 float falloff = Falloff(ref s, dist);
                 float mult = vhead ? Mathf.Max(0f, Plugin.HeadshotMultiplier.Value) : 1f;
                 if (vhead) Plugin.Verbose("Tracers: headshot on " + s.Target.name + " at " + dist.ToString("0.0") + " m");
-                HitTarget(ref s, s.Pos + s.Dir * vt, s.Damage * falloff * mult, vhead && s.Head != null ? s.Head : s.Target);
+                HitTarget(ref s, s.Pos + s.Dir * vt, s.Damage * falloff * mult, vhead && s.Head != null ? s.Head : s.Target, dist);
                 s.Pos += s.Dir * vt;
                 s.Travelled = dist;
                 s.Alive = false;
@@ -683,7 +688,7 @@ namespace Apocaraiders
         }
 
         // exactly the vanilla attack state: impact effect at the point, <target>/Bodypart.Damage = damage, SendEvent Damage to the target
-        private static void HitTarget(ref Shot s, Vector3 point, float damage, GameObject target)
+        private static void HitTarget(ref Shot s, Vector3 point, float damage, GameObject target, float dist)
         {
             if (s.Impact != null) UnityEngine.Object.Instantiate(s.Impact, point, Quaternion.identity);
             if (target == null || Mathf.Abs(damage) < 0.01f) return;
@@ -698,7 +703,7 @@ namespace Apocaraiders
             foreach (var f in fsms) f.SendEvent(s.EventName);
             if (Plugin.HitLog.Value)
                 Plugin.Log.LogInfo("Hit: " + (s.ShooterRoot != null ? s.ShooterRoot.name : "?") + " -> " + target.transform.root.name + "/" + target.name + " at "
-                    + s.Travelled.ToString("0.0") + " m, damage " + damage.ToString("0.0")
+                    + dist.ToString("0.0") + " m, damage " + damage.ToString("0.0")
                     + (float.IsNaN(before) ? "" : ", Health " + before.ToString("0.0") + " -> " + HealthOf(target).ToString("0.0")));
         }
 
