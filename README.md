@@ -62,8 +62,8 @@ stepped into view. Melee NPCs path for real: their feelers are body-wide sweeps 
 blocked they commit to one way around the obstacle and follow its edge instead of dithering into it, and if they get nowhere for a few
 seconds they try the other side, then stop to rethink. Gunmen can get the same with `[Brain] ShooterPathing` (off by default).
 Flyers (bats, wasps, Terror of the Night) and crews seated in Apocapatrol cars are left to the game until they bail out.
-The work per NPC is spread out (one look every 0.1 s with a few NPCs around, up to 0.5 s with more than twenty), and NPCs
-farther than 150 m move the game's way. `[Brain] Enabled = false` restores the game's own movement.
+Every engaged NPC thinks every 0.1 s (`ScaleWithActors` thins that out when many are engaged), `ReactionTime` scales all its
+waits, and NPCs farther than 150 m move the game's way. `[Brain] Enabled = false` restores the game's own movement.
 
 ## Install
 
@@ -94,7 +94,7 @@ BepInEx\plugins\Apocaraiders\Sounds\Gungirl\*.wav / *.ogg
 - **[NpcAim]**: on/off, AimTimeScale (% of the game's pause between bursts, 50 = twice as fast), AimBaseDistance, AimDelayPer5m, SpreadPer5m, EngagePercent (fire within this % of the reach),
   EngagePatience, HoldRecheckMin/Max (1 to 4 s reaction time once you come into reach), LeadTargets, LeadAccuracy
   (0 = no lead, 1 = perfect), LeadError (% speed misjudgement), MaxLeadTime.
-- **[Brain]**: on/off, TurnRate (deg/s), AimPose (gun kept up while holding), CrouchChance (% of holds spent kneeling), SensorInterval (how often NPC eyes look, 0.1 s), FeelerLength / MeleeFeelerLength / FeelerAngle / FeelerCount, DropCheck, ShooterPathing, AdvanceChance (% per hold
+- **[Brain]**: on/off, ReactionTime (% of the default thinking/waiting times, 1-500), ScaleWithActors (think less often with many NPCs engaged, off), TurnRate (deg/s), AimPose (gun kept up while holding), CrouchChance (% of holds spent kneeling), SensorInterval (how often NPC eyes look, 0.1 s), FeelerLength / MeleeFeelerLength / FeelerAngle / FeelerCount, DropCheck, ShooterPathing, AdvanceChance (% per hold
   recheck that a holding gunman runs at you) and AdvanceMin/Max (s), StuckBackupSeconds, StuckMemorySeconds, StuckGiveUpCount, MaxDistance.
 - **[Hud]**: DamageNumbers (0/1/2), DamageFontSize, HitMarker on/off, HitMarkerSize.
 - **[Debug] HitLog**: logs every bullet that hits a creature with its damage and the creature's health before and after.

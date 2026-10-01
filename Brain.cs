@@ -31,7 +31,7 @@ namespace Apocaraiders
     //   of the engage distance. Melee NPCs run at the target with the feelers.
     // - stuck (the Unstuck FSM's detector is kept, its spin + hop are not): a gunman with a line of sight and the target in reach holds and
     //   shoots from there; otherwise it backs up for StuckBackupSeconds, remembers the heading as blocked and leaves on the clearer side;
-    //   StuckGiveUpCount stucks within 20 s -> it stands for 3 s (facing the target), then tries again.
+    //   StuckGiveUpCount stucks within 10 s -> it stands for a second (facing the target), then tries again. Every wait x [Brain] ReactionTime %.
     // - the random turns and bumper rays are switched off while a brain is in charge; Enabled = false gives the vanilla behaviour back.
     // Cost: one Think per NPC every 0.1 s (<= 5 brains) .. 0.5 s (> 20), staggered; a moving NPC casts FeelerCount (+1 drop check) rays
     // per Think, a holding gunman one line-of-sight ray; the per-frame work is one RotateTowards per NPC. NPCs beyond MaxDistance run vanilla.
@@ -87,6 +87,9 @@ namespace Apocaraiders
         public static void OnSceneLoaded() { _npcs.Clear(); _ignored.Clear(); _active = 0; }
 
         internal static bool On { get { return Plugin.BrainEnabled != null && Plugin.BrainEnabled.Value; } }
+        // [Brain] ReactionTime %: every wait of the brain (think interval, back-up, rest, side lock, no-progress, memory, LOS tolerance,
+        // hold rechecks) is multiplied by this; 100 = the defaults, 50 = twice as quick, 500 = five times slower
+        internal static float R { get { return Mathf.Clamp(Plugin.ReactionTime.Value, 1f, 500f) / 100f; } }
 
         // ---------- per frame ----------
         public static void Tick()
@@ -105,7 +108,7 @@ namespace Apocaraiders
                 }
                 foreach (var k in _dead) _npcs.Remove(k);
                 _active = n;
-                _interval = n <= 5 ? 0.1f : n <= 10 ? 0.2f : n <= 20 ? 0.3f : 0.5f;
+                _interval = (Plugin.ScaleWithActors.Value ? (n <= 5 ? 0.1f : n <= 10 ? 0.2f : n <= 20 ? 0.3f : 0.5f) : 0.1f) * R;
             }
             bool on = On;
             float turn = Mathf.Max(10f, Plugin.TurnRate.Value) * dt;
@@ -183,11 +186,11 @@ namespace Apocaraiders
                 bool good = los && d <= engage;
                 if (n.Mode == Mode.Hold)
                 {
-                    bool lost = (!los && now - n.LosLostAt > 0.5f) || d > engage * 1.1f;
+                    bool lost = (!los && now - n.LosLostAt > 0.3f * R) || d > engage * 1.1f;
                     if (lost) { SetMode(n, Mode.Chase, (los ? "target at " + d.ToString("0") + " m" : "no line of sight")); }
                     else if (now >= n.NextRecheck)
                     {
-                        n.NextRecheck = now + UnityEngine.Random.Range(Mathf.Max(0.1f, Plugin.HoldRecheckMin.Value), Mathf.Max(0.1f, Plugin.HoldRecheckMax.Value));
+                        n.NextRecheck = now + UnityEngine.Random.Range(Mathf.Max(0.1f, Plugin.HoldRecheckMin.Value), Mathf.Max(0.1f, Plugin.HoldRecheckMax.Value)) * R;
                         if (UnityEngine.Random.Range(0f, 100f) < Plugin.AdvanceChance.Value && d > 3f)
                         {
                             n.ModeUntil = now + UnityEngine.Random.Range(Plugin.AdvanceMin.Value, Mathf.Max(Plugin.AdvanceMin.Value, Plugin.AdvanceMax.Value));
@@ -207,7 +210,7 @@ namespace Apocaraiders
                 }
                 else if (n.Mode == Mode.Chase && good)
                 {
-                    n.NextRecheck = now + UnityEngine.Random.Range(Mathf.Max(0.1f, Plugin.HoldRecheckMin.Value), Mathf.Max(0.1f, Plugin.HoldRecheckMax.Value));
+                    n.NextRecheck = now + UnityEngine.Random.Range(Mathf.Max(0.1f, Plugin.HoldRecheckMin.Value), Mathf.Max(0.1f, Plugin.HoldRecheckMax.Value)) * R;
                     SetMode(n, Mode.Hold, "line of sight at " + d.ToString("0") + " m (engages within " + engage.ToString("0") + ")");
                     return;
                 }
@@ -320,7 +323,7 @@ namespace Apocaraiders
                             float facing = Vector3.Dot(_normals[centre], right);     // the obstacle's face leans right -> go right
                             side = Mathf.Abs(facing) > 0.05f ? (facing > 0f ? 1 : -1) : (UnityEngine.Random.value < 0.5f ? -1 : 1);
                         }
-                        n.Side = side; n.SideUntil = now + SideLock; n.ClearLooks = 0;
+                        n.Side = side; n.SideUntil = now + SideLock * R; n.ClearLooks = 0;
                         if (Plugin.BrainLog.Value) Plugin.Log.LogInfo("Brain: " + n.Owner.name + " goes around on the " + (side > 0 ? "right" : "left") + " (free L " + fl.ToString("0.0") + " / R " + fr.ToString("0.0") + ")");
                     }
                 }
@@ -394,23 +397,23 @@ namespace Apocaraiders
         private static bool Progress(Npc n, float d, float now)
         {
             if (d < n.BestDist - 0.5f) { n.BestDist = d; n.NoProgressSince = now; return true; }
-            if (now - n.NoProgressSince < NoProgressSeconds) return true;
+            if (now - n.NoProgressSince < NoProgressSeconds * R) return true;
             n.NoProgressSince = now;
             if (!n.Flipped)
             {
                 n.Flipped = true;
                 n.Side = n.Side != 0 ? -n.Side : (UnityEngine.Random.value < 0.5f ? -1 : 1);
-                n.SideUntil = now + SideLock * 2f; n.ClearLooks = 0;
+                n.SideUntil = now + SideLock * 2f * R; n.ClearLooks = 0;
                 if (Plugin.BrainLog.Value) Plugin.Log.LogInfo("Brain: " + n.Owner.name + " gets nowhere, tries the " + (n.Side > 0 ? "right" : "left"));
                 return true;
             }
             n.Flipped = false; n.Side = 0; n.BestDist = float.MaxValue;
-            n.ModeUntil = now + 3f;
+            n.ModeUntil = now + RestSeconds * R;
             SetMode(n, Mode.Rest, "gets nowhere, rests");
             return false;
         }
 
-        private const float SideLock = 2.5f, NoProgressSeconds = 5f;
+        private const float SideLock = 1.2f, NoProgressSeconds = 2.5f, RestSeconds = 1f, StuckWindow = 10f;
 
         private static bool LineOfSight(Npc n, GameObject target, Vector3 tp)
         {
@@ -608,32 +611,32 @@ namespace Apocaraiders
         {
             float now = Time.time;
             if (n.Mode == Mode.Hold || n.Mode == Mode.Rest || n.Mode == Mode.BackUp || n.Mode == Mode.Off) return;
-            if (now - n.FirstStuck > 20f) { n.FirstStuck = now; n.Stucks = 0; }
+            if (now - n.FirstStuck > StuckWindow * R) { n.FirstStuck = now; n.Stucks = 0; }
             n.Stucks++;
             var target = n.Target != null ? n.Target.Value : null;
             if (n.Ranged && target != null && n.Dist <= Tracers.RangeOf(n.Kind) && LineOfSight(n, target, target.transform.position))
             {
-                n.NextRecheck = now + Mathf.Max(0.1f, Plugin.HoldRecheckMax.Value);
+                n.NextRecheck = now + Mathf.Max(0.1f, Plugin.HoldRecheckMax.Value) * R;
                 SetMode(n, Mode.Hold, "stuck, shoots from here");
                 return;
             }
             if (n.Stucks >= Mathf.Max(1, Plugin.StuckGiveUpCount.Value))
             {
                 n.Stucks = 0;
-                n.ModeUntil = now + 3f;
+                n.ModeUntil = now + RestSeconds * R;
                 SetMode(n, Mode.Rest, "stuck for good, rests");
                 return;
             }
             float yaw = n.T.eulerAngles.y;
-            n.BlockedYaw = yaw; n.BlockedUntil = now + Mathf.Max(0f, Plugin.StuckMemorySeconds.Value);
+            n.BlockedYaw = yaw; n.BlockedUntil = now + Mathf.Max(0f, Plugin.StuckMemorySeconds.Value) * R;
             if (!n.Ranged || Plugin.ShooterPathing.Value)
             {
                 // the body hit something the feelers did not see (or saw too late): commit to the freer side now and keep it through the back-up
                 if (n.Side == 0) n.Side = n.FreeRight >= n.FreeLeft ? 1 : -1;
-                n.SideUntil = now + SideLock * 2f; n.ClearLooks = 0;
+                n.SideUntil = now + SideLock * 2f * R; n.ClearLooks = 0;
             }
             if (Plugin.BrainLog.Value) LogAhead(n);
-            n.ModeUntil = now + Mathf.Max(0.1f, Plugin.StuckBackupSeconds.Value);
+            n.ModeUntil = now + Mathf.Max(0.1f, Plugin.StuckBackupSeconds.Value) * R;
             SetMode(n, Mode.BackUp, "stuck " + n.Stucks + "x, backs up");
         }
 
@@ -702,7 +705,7 @@ namespace Apocaraiders
                 }
                 catch (Exception e) { Plugin.Verbose("Brain: no aim pose for " + owner.name + ": " + e.Message); }
             }
-            n.Stagger = (_created++ % 10) * 0.013f;
+            n.Stagger = (_created++ % 10) * 0.01f;
             n.NextTick = Time.time + n.Stagger;
             return n;
         }

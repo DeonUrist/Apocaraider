@@ -18,7 +18,7 @@ namespace Apocaraiders
     {
         public const string GUID = "com.denis.apocalypter.apocaraiders";
         public const string NAME = "Apocaraiders";
-        public const string VERSION = "0.9.4";
+        public const string VERSION = "0.10.0";
 
         internal static ManualLogSource Log;
         internal static string Dir;
@@ -37,8 +37,8 @@ namespace Apocaraiders
         internal static ConfigEntry<float> PistolRange, SmgRange, RifleRange, SniperRange, ShotgunRange, CrossbowRange, ShotgunPelletSpread, FullDamageUntil, NpcShotgunDamage, VehicleDamagePer1, MetalSparksScale, MetalSheetPopChance, NpcHitRadius, PlayerBodyRadius, PlayerHeadRadius, HeadshotMultiplier;
         internal static ConfigEntry<int> ShotgunPellets, MaxTracers;
         internal static ConfigEntry<string> MetalSheetNames;
-        internal static ConfigEntry<bool> BrainEnabled, DropCheck, BrainLog, AimPose, ShooterPathing;
-        internal static ConfigEntry<float> TurnRate, CrouchChance, SensorInterval, FeelerLength, MeleeFeelerLength, FeelerAngle, AdvanceChance, AdvanceMin, AdvanceMax, StuckBackupSeconds, StuckMemorySeconds, MaxDistance;
+        internal static ConfigEntry<bool> BrainEnabled, DropCheck, BrainLog, AimPose, ShooterPathing, ScaleWithActors;
+        internal static ConfigEntry<float> TurnRate, CrouchChance, SensorInterval, ReactionTime, FeelerLength, MeleeFeelerLength, FeelerAngle, AdvanceChance, AdvanceMin, AdvanceMax, StuckBackupSeconds, StuckMemorySeconds, MaxDistance;
         internal static ConfigEntry<int> FeelerCount, StuckGiveUpCount;
 
         private static GameObject _runner;
@@ -154,6 +154,11 @@ namespace Apocaraiders
             HoldRecheckMax = Config.Bind("NpcAim", "HoldRecheckMax", 4f, new ConfigDescription("See HoldRecheckMin.", new AcceptableValueRange<float>(0.1f, 30f)));
             BrainEnabled = Config.Bind("Brain", "Enabled", true,
                 "Humans and ground animals that have a target move with a brain: they run at you around obstacles (feelers) instead of the game's random swerving, gunmen stop where they can shoot and hold there, a stuck NPC backs out instead of spinning and hopping. Flyers and crews seated in cars (Apocapatrol) are untouched. Off = the game's own movement.");
+            ReactionTime = Config.Bind("Brain", "ReactionTime", 100f, new ConfigDescription(
+                "How quickly NPCs think and react, as % of the default: every wait of the brain (looks, backing out of a stuck, resting, keeping a way around an obstacle, rechecks while holding) is scaled by this. 50 = twice as quick, 500 = five times slower.",
+                new AcceptableValueRange<float>(1f, 500f)));
+            ScaleWithActors = Config.Bind("Brain", "ScaleWithActors", false,
+                "NPCs think less often when many are engaged at once (0.1 s up to 5 of them, 0.2 s up to 10, 0.3 s up to 20, 0.5 s beyond), to spare the CPU. Off = every engaged NPC thinks every 0.1 s.");
             TurnRate = Config.Bind("Brain", "TurnRate", 160f, new ConfigDescription(
                 "How fast an NPC turns its body, degrees per second - also to face you for a shot (the game snapped instantly).", new AcceptableValueRange<float>(30f, 720f)));
             AimPose = Config.Bind("Brain", "AimPose", true,
@@ -175,9 +180,9 @@ namespace Apocaraiders
                 "A gunman holding a shooting position rolls this % at every hold recheck ([NpcAim] HoldRecheckMin..Max s) to run toward you for AdvanceMin..AdvanceMax s instead.", new AcceptableValueRange<float>(0f, 100f)));
             AdvanceMin = Config.Bind("Brain", "AdvanceMin", 2f, new ConfigDescription("Shortest advance, s.", new AcceptableValueRange<float>(0.5f, 20f)));
             AdvanceMax = Config.Bind("Brain", "AdvanceMax", 4f, new ConfigDescription("Longest advance, s.", new AcceptableValueRange<float>(0.5f, 20f)));
-            StuckBackupSeconds = Config.Bind("Brain", "StuckBackupSeconds", 0.8f, new ConfigDescription("A stuck NPC backs up this long, s, before trying another way.", new AcceptableValueRange<float>(0.1f, 5f)));
-            StuckMemorySeconds = Config.Bind("Brain", "StuckMemorySeconds", 5f, new ConfigDescription("How long the heading it got stuck on is avoided, s.", new AcceptableValueRange<float>(0f, 60f)));
-            StuckGiveUpCount = Config.Bind("Brain", "StuckGiveUpCount", 3, new ConfigDescription("Stucks within 20 s after which the NPC stands still for 3 s (facing you) before trying again.", new AcceptableValueRange<int>(1, 20)));
+            StuckBackupSeconds = Config.Bind("Brain", "StuckBackupSeconds", 0.4f, new ConfigDescription("A stuck NPC backs up this long, s, before trying another way.", new AcceptableValueRange<float>(0.1f, 5f)));
+            StuckMemorySeconds = Config.Bind("Brain", "StuckMemorySeconds", 3f, new ConfigDescription("How long the heading it got stuck on is avoided, s.", new AcceptableValueRange<float>(0f, 60f)));
+            StuckGiveUpCount = Config.Bind("Brain", "StuckGiveUpCount", 3, new ConfigDescription("Stucks within 10 s after which the NPC stands still for a second (facing you) before trying again.", new AcceptableValueRange<int>(1, 20)));
             MaxDistance = Config.Bind("Brain", "MaxDistance", 150f, new ConfigDescription("NPCs farther than this from their target move the game's way (no cost).", new AcceptableValueRange<float>(20f, 1000f)));
             SpawnKey = Config.Bind("Debug", "SpawnKey", Key.F9,
                 "Spawns a Gungirl 6 m in front of you (a real raider: she fights and is saved). None = off.");
