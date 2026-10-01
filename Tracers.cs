@@ -927,6 +927,13 @@ namespace Apocaraiders
             for (var t = col.transform; t != null && !metal; t = t.parent) metal = t.CompareTag("vehPart") || t.CompareTag("vehPartRemoved");
             if (!metal) return;
             var fx = UnityEngine.Object.Instantiate(_metalImpact, point + normal * 0.01f, Quaternion.LookRotation(normal));
+            float k = Mathf.Clamp(Plugin.MetalSparksScale.Value, 0.05f, 4f);
+            if (Mathf.Abs(k - 1f) > 0.001f)
+            {
+                // the asset-store prefab is sized for a demo scene: scale the whole effect (sizes, speeds, the decal) through the hierarchy
+                foreach (var ps in fx.GetComponentsInChildren<ParticleSystem>(true)) { var main = ps.main; main.scalingMode = ParticleSystemScalingMode.Hierarchy; }
+                fx.transform.localScale *= k;
+            }
             UnityEngine.Object.Destroy(fx, 4f);                            // the prefab has no auto-destroy of its own
         }
 

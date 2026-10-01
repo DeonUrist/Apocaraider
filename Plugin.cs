@@ -18,7 +18,7 @@ namespace Apocaraiders
     {
         public const string GUID = "com.denis.apocalypter.apocaraiders";
         public const string NAME = "Apocaraiders";
-        public const string VERSION = "0.5.3";
+        public const string VERSION = "0.5.4";
 
         internal static ManualLogSource Log;
         internal static string Dir;
@@ -34,7 +34,7 @@ namespace Apocaraiders
         internal static ConfigEntry<float> AimBaseDistance, AimDelayPer5m, SpreadPer5m, EngagePercent, EngagePatience, HoldRecheckMin, HoldRecheckMax;
         internal static ConfigEntry<float> BulletSpeed, BoltSpeed, TracerWidth, TracerLength, BoltWidth, BoltLength, TracerGlow;
         internal static ConfigEntry<Color> TracerColor, BoltColor;
-        internal static ConfigEntry<float> PistolRange, SmgRange, RifleRange, SniperRange, ShotgunRange, CrossbowRange, ShotgunPelletSpread, FullDamageUntil, NpcShotgunDamage, VehicleDamagePer1, MetalSheetPopChance, NpcHitRadius, PlayerBodyRadius, PlayerHeadRadius, HeadshotMultiplier;
+        internal static ConfigEntry<float> PistolRange, SmgRange, RifleRange, SniperRange, ShotgunRange, CrossbowRange, ShotgunPelletSpread, FullDamageUntil, NpcShotgunDamage, VehicleDamagePer1, MetalSparksScale, MetalSheetPopChance, NpcHitRadius, PlayerBodyRadius, PlayerHeadRadius, HeadshotMultiplier;
         internal static ConfigEntry<int> ShotgunPellets, MaxTracers;
         internal static ConfigEntry<string> MetalSheetNames;
 
@@ -115,6 +115,7 @@ namespace Apocaraiders
                 "NPC bullets that hit the world show the same impact (sparks, sound) your own hits do; the game showed nothing for their misses.");
             MetalSparks = Config.Bind("Tracers", "MetalSparks", true,
                 "Extra sparks, smoke and a bullet mark on vehicle parts and metal plates (any bullet), using the game's MetalImpact effect when it is available.");
+            MetalSparksScale = Config.Bind("Tracers", "MetalSparksScale", 0.25f, new ConfigDescription("Size of the metal sparks effect (1 = the prefab's own, demo-scene size).", new AcceptableValueRange<float>(0.05f, 4f)));
             VehicleDamage = Config.Bind("Tracers", "VehicleDamage", true, "A bullet that hits a vehicle part damages it (see VehicleDamagePer1).");
             VehicleDamagePer1 = Config.Bind("Tracers", "VehicleDamagePer1", 20f, new ConfigDescription(
                 "Bullet damage that takes 1 % off a vehicle part's condition (20 = a -23 rifle round costs 1.15 %, a shotgun pellet about 0.4 %).", new AcceptableValueRange<float>(1f, 1000f)));

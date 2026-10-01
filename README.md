@@ -69,7 +69,7 @@ BepInEx\plugins\Apocaraiders\Sounds\Gungirl\*.wav / *.ogg
 - **[Gungirl] VoiceIntervalMin / VoiceIntervalMax**: the pause between her shouts in a fight, in seconds (default 2 to 8; Flexa uses 0.1 to 4).
 - **[Gungirl] HideParts**: Flexa's attachments she doesn't wear (default: beard, headband, armband).
 - **[Tracers]**: on/off (NPCs and, separately, your own guns), bullet and bolt speed, colour, width, length and glow,
-  the falloff range per weapon type, shotgun pellets and spread, ImpactEffects and MetalSparks, vehicle damage on/off and VehicleDamagePer1, the
+  the falloff range per weapon type, shotgun pellets and spread, ImpactEffects, MetalSparks and MetalSparksScale, vehicle damage on/off and VehicleDamagePer1, the
   metal-plate chance, and the most bullets in flight at once.
 - **[NpcAim]**: on/off, AimBaseDistance, AimDelayPer5m, SpreadPer5m, EngagePercent (fire within this % of the reach),
   EngagePatience, HoldRecheckMin/Max (1 to 4 s reaction time once you come into reach), LeadTargets, LeadAccuracy
