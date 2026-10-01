@@ -95,14 +95,12 @@ namespace Apocaraiders
         public static void Apply(GameObject root)
         {
             if (root == null) return;
-            if (_loaded && _clips.Count == 0) return;
             if (!_loaded || !TrySwap(root, false)) _pending.Add(new Pending { Go = root, Until = Time.unscaledTime + 10f });
         }
 
         public static void Tick()
         {
             if (!_loaded) return;
-            if (_clips.Count == 0) { _pending.Clear(); return; }
             for (int i = _pending.Count - 1; i >= 0; i--)
             {
                 var p = _pending[i];
@@ -117,16 +115,46 @@ namespace Apocaraiders
             if (!force)
                 foreach (var f in fsms)
                     if (f != null && f.gameObject.activeInHierarchy && (f.Fsm == null || !f.Fsm.Initialized)) return false;
-            int n = 0;
+            int n = 0, timers = 0;
             foreach (var f in fsms)
-                if (f != null && f.Fsm != null && f.Fsm.Initialized) n += SwapFsm(f.Fsm);
+                if (f != null && f.Fsm != null && f.Fsm.Initialized)
+                {
+                    if (_clips.Count > 0) n += SwapFsm(f.Fsm);
+                    if (f.FsmName == "Sound") timers += SetPause(f.Fsm);
+                }
+            if (_clips.Count > 0)
             foreach (var a in root.GetComponentsInChildren<AudioSource>(true))
             {
                 var r = Rep(a.clip);
                 if (r != null) { a.clip = r; n++; }
             }
-            Plugin.Verbose("Gungirl voice: " + root.name + " - " + n + " sound reference(s) replaced");
+            Plugin.Verbose("Gungirl voice: " + root.name + " - " + n + " sound reference(s) replaced, " + timers + " shout timer(s) set");
             return true;
+        }
+
+        // Flexa's Sound FSM (global Animal_Run -> randomWait): attack = play a random shout, wait for its end -> randomWait
+        // (RandomWait 0.1..4 s) -> attack ... for as long as she fights. [Gungirl] VoiceIntervalMin/Max replace that pause.
+        private static int SetPause(Fsm fsm)
+        {
+            float lo = Mathf.Max(0f, Plugin.GungirlVoiceIntervalMin.Value), hi = Mathf.Max(lo, Plugin.GungirlVoiceIntervalMax.Value);
+            int n = 0;
+            if (fsm.States == null) return 0;
+            foreach (var st in fsm.States)
+            {
+                if (st.Name != "randomWait") continue;
+                FsmStateAction[] acts;
+                try { acts = st.Actions; } catch (Exception) { continue; }
+                if (acts == null) continue;
+                foreach (var a in acts)
+                {
+                    var rw = a as HutongGames.PlayMaker.Actions.RandomWait;
+                    if (rw == null) continue;
+                    rw.min = new FsmFloat { Value = lo };
+                    rw.max = new FsmFloat { Value = hi };
+                    n++;
+                }
+            }
+            return n;
         }
 
         private static int SwapFsm(Fsm fsm)

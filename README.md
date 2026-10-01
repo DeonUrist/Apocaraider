@@ -31,6 +31,7 @@ BepInEx\plugins\Apocaraiders\Sounds\Gungirl\*.wav / *.ogg
   rigged to Flexa's skeleton (see below).
 - **[Gungirl] Voice**: the folder with her voice clips (see below).
 - **[Gungirl] VoiceMatchLoudness / VoiceVolume**: her clips are brought to Flexa's loudness, then scaled by VoiceVolume (1 = as loud as Flexa).
+- **[Gungirl] VoiceIntervalMin / VoiceIntervalMax**: the pause between her shouts in a fight, in seconds (default 2 to 8; Flexa uses 0.1 to 4).
 - **[Gungirl] HideParts**: Flexa's attachments she doesn't wear (default: the beard).
 - **[Debug] SpawnKey** (F9): spawns a Gungirl in front of you.
 

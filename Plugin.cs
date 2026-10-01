@@ -17,13 +17,13 @@ namespace Apocaraiders
     {
         public const string GUID = "com.denis.apocalypter.apocaraiders";
         public const string NAME = "Apocaraiders";
-        public const string VERSION = "0.2.2";
+        public const string VERSION = "0.2.3";
 
         internal static ManualLogSource Log;
         internal static string Dir;
 
         internal static ConfigEntry<bool> Enabled, VerboseLog, GungirlVoiceMatch;
-        internal static ConfigEntry<float> GungirlVoiceVolume;
+        internal static ConfigEntry<float> GungirlVoiceVolume, GungirlVoiceIntervalMin, GungirlVoiceIntervalMax;
         internal static ConfigEntry<int> GungirlChance;
         internal static ConfigEntry<string> GungirlModel, GungirlTexture, GungirlVoice, GungirlHideParts;
         internal static ConfigEntry<Key> SpawnKey;
@@ -52,6 +52,12 @@ namespace Apocaraiders
             GungirlVoiceVolume = Config.Bind("Gungirl", "VoiceVolume", 1f, new ConfigDescription(
                 "Her voice volume on top of that: 1 = as loud as Flexa, 0.5 = half, 2 = twice (louder than 1.5 starts to sound squashed). Read at game start.",
                 new AcceptableValueRange<float>(0f, 4f)));
+            GungirlVoiceIntervalMin = Config.Bind("Gungirl", "VoiceIntervalMin", 2f, new ConfigDescription(
+                "In a fight she shouts, waits a random pause between VoiceIntervalMin and VoiceIntervalMax seconds, shouts again ... (Flexa: 0.1 to 4). Applies to Gungirls spawned or loaded after the change.",
+                new AcceptableValueRange<float>(0f, 60f)));
+            GungirlVoiceIntervalMax = Config.Bind("Gungirl", "VoiceIntervalMax", 8f, new ConfigDescription(
+                "Longest pause between her shouts, seconds (Flexa: 4).",
+                new AcceptableValueRange<float>(0f, 60f)));
             GungirlHideParts = Config.Bind("Gungirl", "HideParts", "beard",
                 "Flexa's attachments to hide on a Gungirl, comma-separated name starts: beard, headband, armband, bag1, pouch1, armor2, machete.");
             SpawnKey = Config.Bind("Debug", "SpawnKey", Key.F9,
