@@ -63,6 +63,7 @@ namespace Apocaraiders
             public float BlockedYaw, BlockedUntil;
             public int Side, ClearLooks; public float SideUntil; public bool Flipped;     // pathing: the committed way around an obstacle
             public float FreeLeft, FreeRight;                                             // the last fan's free lengths per half
+            public Vector3 Waypoint; public bool HasWaypoint; public float WaypointUntil, NextScout;   // a scouted corner with a clear line to the target
             public float BestDist = float.MaxValue, NoProgressSince;
             public int Stucks; public float FirstStuck;
             public float LosLostAt = -1f; public bool Los; public float Dist;
@@ -217,7 +218,16 @@ namespace Apocaraiders
             }
             // moving: Chase or Advance
             if (!Progress(n, d, now)) return;
-            Steer(n, d3, d, now);
+            Vector3 goal = d3; float gd = d;
+            if (n.HasWaypoint)
+            {
+                Vector3 w = n.Waypoint - n.T.position; w.y = 0f;
+                float wd = w.magnitude;
+                if (wd < 1.2f || now > n.WaypointUntil) { n.HasWaypoint = false; if (Plugin.BrainLog.Value) Plugin.Log.LogInfo("Brain: " + n.Owner.name + (wd < 1.2f ? " reached the corner" : " gives up the corner")); }
+                else if (DirectClear(n, tp, d)) { n.HasWaypoint = false; if (Plugin.BrainLog.Value) Plugin.Log.LogInfo("Brain: " + n.Owner.name + " has a clear line, drops the corner"); }
+                else { goal = w; gd = wd; }
+            }
+            Steer(n, goal, gd, now, d3);
         }
 
         // ---------- feelers ----------
@@ -234,7 +244,7 @@ namespace Apocaraiders
         private static readonly Vector3[] _normals = new Vector3[32];
         private static readonly Collider[] _touch = new Collider[16];
 
-        private static void Steer(Npc n, Vector3 toTarget, float dist, float now)
+        private static void Steer(Npc n, Vector3 toTarget, float dist, float now, Vector3 toReal)
         {
             int count = Mathf.Clamp(Plugin.FeelerCount.Value, 3, 31);
             if (count % 2 == 0) count++;
@@ -309,7 +319,13 @@ namespace Apocaraiders
             {
                 bool straightBlocked = _free[centre] < len * 0.9f;
                 { float fl0 = 0f, fr0 = 0f; for (int i = 0; i < count; i++) { if (_angles[i] < 0f) fl0 += _free[i]; else if (_angles[i] > 0f) fr0 += _free[i]; } n.FreeLeft = fl0; n.FreeRight = fr0; }
-                if (n.Side == 0)
+                if (straightBlocked && !n.HasWaypoint && now >= n.NextScout)
+                {
+                    n.NextScout = now + 0.5f * R;
+                    if (Scout(n, origin, p1, p2, radius, mask, toReal, troot, now)) n.Side = 0;
+                }
+                if (n.HasWaypoint) { n.Side = 0; }
+                else if (n.Side == 0)
                 {
                     if (straightBlocked)
                     {
@@ -386,11 +402,84 @@ namespace Apocaraiders
                         if (Vector3.Dot(tangent, right * n.Side) < 0f) tangent = -tangent;
                         Vector3 follow = tangent + nrm * (_free[centre] < 1f ? 0.5f : 0.15f);
                         heading = Mathf.Atan2(follow.x, follow.z) * Mathf.Rad2Deg;
+                        // a corner: the way along the wall is blocked too -> turn around now, don't wait for the no-progress timer
+                        RaycastHit ch;
+                        if (Physics.CapsuleCast(p1, p2, radius, tangent, out ch, 1.2f, mask, QueryTriggerInteraction.Ignore) && ch.collider.transform.root != n.T && (troot == null || ch.collider.transform.root != troot))
+                        {
+                            n.Side = -n.Side; n.SideUntil = now + SideLock * 2f * R; n.ClearLooks = 0; n.NextScout = 0f;
+                            heading = Mathf.Atan2(-tangent.x, -tangent.z) * Mathf.Rad2Deg;
+                            if (Plugin.BrainLog.Value) Plugin.Log.LogInfo("Brain: " + n.Owner.name + " dead end, turns around");
+                        }
                     }
                 }
             }
             n.Heading = heading;
             n.HasHeading = true;
+        }
+
+        // The L-corner problem: a 2.5 m fan cannot tell which end of a wall leads to the target, and the wrong side is a dead end. When the
+        // straight line is blocked the NPC scouts: 12 long sweeps (ScoutLength m) around the direction to the target; the end of each free
+        // stretch is a candidate corner, kept only if the line from there to the target is clear; the corner with the shortest path
+        // (there + from there) becomes a waypoint the feelers steer to until it is reached, the straight line clears, or it times out.
+        private static readonly float[] _scoutAngles = { -15f, 15f, -40f, 40f, -65f, 65f, -90f, 90f, -115f, 115f, -140f, 140f };
+        private const float ScoutLength = 10f;
+
+        private static bool Scout(Npc n, Vector3 origin, Vector3 p1, Vector3 p2, float radius, int mask, Vector3 toReal, Transform troot, float now)
+        {
+            float yaw0 = Mathf.Atan2(toReal.x, toReal.z) * Mathf.Rad2Deg;
+            float dReal = toReal.magnitude;
+            Vector3 chestOff = p2 - origin;        // scouting at chest height
+            Vector3 targetChest = origin + toReal + Vector3.up * 0.3f;
+            bool blockedMem = now < n.BlockedUntil;
+            float bestCost = float.MaxValue; Vector3 bestEnd = Vector3.zero; float bestAngle = 0f;
+            RaycastHit hit;
+            for (int k = 0; k < _scoutAngles.Length; k++)
+            {
+                float yaw = yaw0 + _scoutAngles[k];
+                if (blockedMem && Mathf.Abs(Mathf.DeltaAngle(yaw, n.BlockedYaw)) < 30f) continue;
+                Vector3 dir = Quaternion.Euler(0f, yaw, 0f) * Vector3.forward;
+                float free = ScoutLength;
+                if (Physics.CapsuleCast(p1, p2, radius, dir, out hit, ScoutLength, mask, QueryTriggerInteraction.Ignore)
+                    && (troot == null || hit.collider.transform.root != troot) && hit.collider.transform.root != n.T
+                    && !(hit.collider.gameObject.layer == 14 && hit.normal.y > 0.6f))
+                    free = hit.distance;
+                // walk the free stretch from far to near: the first point with a clear line to the target is the corner
+                for (float along = free - radius - 0.3f; along >= 1.5f; along -= 1.5f)
+                {
+                    Vector3 end = origin + dir * along;
+                    Vector3 toT = targetChest - (end + chestOff);
+                    if (Physics.Raycast(end + chestOff, toT.normalized, out hit, toT.magnitude, mask, QueryTriggerInteraction.Ignore)
+                        && (troot == null || hit.collider.transform.root != troot) && hit.collider.transform.root != n.T
+                        && !(hit.collider.gameObject.layer == 14 && hit.normal.y > 0.6f)) continue;
+                    float cost = along + (origin + toReal - end).magnitude;
+                    if (cost < bestCost) { bestCost = cost; bestEnd = end; bestAngle = _scoutAngles[k]; }
+                    break;      // nearer points on this ray are worse than or equal to this one (they still have to pass here)
+                }
+            }
+            if (bestCost == float.MaxValue) return false;
+            n.Waypoint = bestEnd; n.HasWaypoint = true; n.WaypointUntil = now + 8f * R;
+            if (Plugin.BrainLog.Value) Plugin.Log.LogInfo("Brain: " + n.Owner.name + " scouts a corner " + (bestAngle < 0f ? "left" : "right") + " " + Mathf.Abs(bestAngle) + " deg, " + (bestEnd - origin).magnitude.ToString("0.0") + " m away (path " + bestCost.ToString("0.0") + " m, straight " + dReal.ToString("0.0") + ")");
+            return true;
+        }
+
+        // the straight line to the target is free for the body (one sweep)
+        private static bool DirectClear(Npc n, Vector3 tp, float dist)
+        {
+            if (n.Col == null) return true;
+            var b = n.Col.bounds;
+            float radius = Mathf.Clamp(Mathf.Min(b.extents.x, b.extents.z) * 1.15f, 0.12f, 0.45f);
+            float lo = b.min.y + Mathf.Min(0.05f, b.size.y * 0.05f) + radius, hi = b.min.y + b.size.y * 0.7f - radius;
+            if (hi < lo) hi = lo;
+            Vector3 p1 = new Vector3(b.center.x, lo, b.center.z), p2 = new Vector3(b.center.x, hi, b.center.z);
+            Vector3 dir = tp - n.T.position; dir.y = 0f;
+            if (dir.sqrMagnitude < 0.01f) return true;
+            dir.Normalize();
+            RaycastHit hit;
+            Transform troot = n.Target.Value != null ? n.Target.Value.transform.root : null;
+            if (!Physics.CapsuleCast(p1, p2, radius, dir, out hit, Mathf.Max(0.1f, dist - 0.5f), PathMask, QueryTriggerInteraction.Ignore)) return true;
+            if (troot != null && hit.collider.transform.root == troot) return true;
+            if (hit.collider.transform.root == n.T) return true;
+            return hit.collider.gameObject.layer == 14 && hit.normal.y > 0.6f;
         }
 
         // moving modes: is the NPC getting anywhere? (called from Think) - 5 s without coming nearer flips the side once, then rests
@@ -399,6 +488,7 @@ namespace Apocaraiders
             if (d < n.BestDist - 0.5f) { n.BestDist = d; n.NoProgressSince = now; return true; }
             if (now - n.NoProgressSince < NoProgressSeconds * R) return true;
             n.NoProgressSince = now;
+            n.HasWaypoint = false; n.NextScout = 0f;
             if (!n.Flipped)
             {
                 n.Flipped = true;
@@ -429,7 +519,7 @@ namespace Apocaraiders
         {
             Mode was = n.Mode;
             n.Mode = m;
-            if (m == Mode.Chase || m == Mode.Advance) { n.HasHeading = false; if (was != Mode.Chase && was != Mode.Advance && was != Mode.BackUp) { n.BestDist = float.MaxValue; n.NoProgressSince = Time.time; n.Flipped = false; n.Side = 0; } }
+            if (m == Mode.Chase || m == Mode.Advance) { n.HasHeading = false; if (was != Mode.Chase && was != Mode.Advance && was != Mode.BackUp) { n.BestDist = float.MaxValue; n.NoProgressSince = Time.time; n.Flipped = false; n.Side = 0; n.HasWaypoint = false; } }
             bool wasStill = was == Mode.Hold || was == Mode.Rest, still = m == Mode.Hold || m == Mode.Rest;
             if (m == Mode.Off) { if (wasStill) Move(n, true); }
             else if (still && !wasStill) Move(n, false);
@@ -629,6 +719,7 @@ namespace Apocaraiders
             }
             float yaw = n.T.eulerAngles.y;
             n.BlockedYaw = yaw; n.BlockedUntil = now + Mathf.Max(0f, Plugin.StuckMemorySeconds.Value) * R;
+            n.HasWaypoint = false; n.NextScout = 0f;
             if (!n.Ranged || Plugin.ShooterPathing.Value)
             {
                 // the body hit something the feelers did not see (or saw too late): commit to the freer side now and keep it through the back-up
