@@ -954,7 +954,7 @@ namespace Apocaraiders
             }
 
             if (!Plugin.VehicleDamage.Value) return;
-            float pct = Mathf.Abs(damage) / 10f;       // 10 damage = 1 % condition
+            float pct = Mathf.Abs(damage) / Mathf.Max(1f, Plugin.VehicleDamagePer1.Value);   // [Tracers] VehicleDamagePer1 bullet damage = 1 % condition
             if (pct <= 0f) return;
             foreach (var f in part.GetComponentsInChildren<PlayMakerFSM>(true))
             {
