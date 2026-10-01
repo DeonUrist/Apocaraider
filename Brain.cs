@@ -23,7 +23,8 @@ namespace Apocaraiders
     // - feelers: FeelerCount rays over +-FeelerAngle around the direction to the target, FeelerLength m, on the layers the game's bumper rays
     //   use; the clearest direction nearest the target wins (a blocked heading from a recent stuck is avoided for StuckMemorySeconds);
     // - a gunman (Tracers knows the gun) stops where it can shoot - line of sight and within [NpcAim] EngagePercent of the gun's reach - and
-    //   holds there (idle animation, facing the target; the game's own burst logic and the Aim pacing do the shooting); every HoldRecheck it
+    //   holds there with the gun up (AimPose: the shooting animation frozen on its first frame), facing the target; the game's own burst logic
+    //   and the Aim pacing do the shooting; every HoldRecheck it
     //   rolls AdvanceChance % to run at the target for AdvanceSeconds; it moves again when the line of sight is lost or the target walks out
     //   of the engage distance. Melee NPCs run at the target with the feelers.
     // - stuck (the Unstuck FSM's detector is kept, its spin + hop are not): a gunman with a line of sight and the target in reach holds and
@@ -48,6 +49,7 @@ namespace Apocaraiders
             public PlayMakerFSM Attack, Movement;
             public FsmGameObject Target;              // Detection.detectedObj
             public bool Ranged; public Tracers.Kind Kind;
+            public Animator Anim; public string AimState; public bool Frozen;   // the shooting animation held on its first frame = aiming
             public Mode Mode; public float ModeUntil;
             public float NextTick, NextRecheck, Stagger;
             public float Heading; public bool HasHeading;   // steered world yaw, degrees
@@ -114,6 +116,7 @@ namespace Apocaraiders
                     catch (Exception e) { Plugin.Log.LogError("Brain: " + e); n.Mode = Mode.Off; continue; }
                 }
                 if (n.Mode == Mode.Off || n.Mode == Mode.BackUp) continue;
+                if (n.Frozen && state != "trigger" && state != "run") Unfreeze(n);      // the burst (or a melee swing, a hide run): let the animation play
                 if (state != "trigger" && state != "run" && state != "attack_ranged") continue;   // melee swing, hide run ...: the game's own facing
                 var target = n.Target.Value;
                 if (target == null) continue;
@@ -270,6 +273,7 @@ namespace Apocaraiders
             if (m == Mode.Off) { if (wasStill) Move(n, true); }
             else if (still && !wasStill) Move(n, false);
             else if (!still && wasStill) Move(n, true);
+            if (m == Mode.Hold) Aim(n); else Unfreeze(n);
             if (Plugin.BrainLog.Value && (m != was))
                 Plugin.Log.LogInfo("Brain: " + n.Owner.name + " " + was + " -> " + m + " (" + why + ", " + n.Dist.ToString("0") + " m" + (n.Ranged ? ", " + n.Kind : "") + ")");
         }
@@ -282,6 +286,28 @@ namespace Apocaraiders
             string s = n.Attack.Fsm.ActiveStateName;
             if (s != "trigger" && s != "run") return;
             n.Movement.SendEvent(run ? "Animal_Run" : "Animal_Idle");
+        }
+
+        // A holding gunman keeps the gun up: the Movement FSM's shooting animation (attack 2 / attack 4: a 0.2-0.6 s clip that starts with the gun
+        // raised) is put on its first frame and the Animator frozen there. The burst plays it from the start again (Unfreeze in Tick), and after
+        // the burst the Attack FSM's Animal_Run comes back as Animal_Idle (BeforeSendEvent) followed by this pose again.
+        private static void Aim(Npc n)
+        {
+            if (!Plugin.AimPose.Value || n.Anim == null || string.IsNullOrEmpty(n.AimState)) return;
+            try
+            {
+                n.Anim.Play(n.AimState, 0, 0f);
+                n.Anim.speed = 0f;
+                n.Frozen = true;
+            }
+            catch (Exception) { n.AimState = null; }
+        }
+
+        private static void Unfreeze(Npc n)
+        {
+            if (!n.Frozen) return;
+            n.Frozen = false;
+            if (n.Anim != null) n.Anim.speed = 1f;
         }
 
         private static void OnStuck(Npc n)
@@ -356,6 +382,25 @@ namespace Apocaraiders
             Tracers.Kind kind;
             n.Ranged = Tracers.GunKindOf(owner, out kind);
             n.Kind = kind;
+            if (n.Ranged)
+            {
+                n.Anim = owner.GetComponentInChildren<Animator>(true);
+                try
+                {
+                    var mf = movement.Fsm;
+                    if (mf != null && mf.States != null)
+                        foreach (var st in mf.States)
+                        {
+                            if (st == null || st.Name != "AttackRanged" || st.Actions == null) continue;
+                            foreach (var a in st.Actions)
+                            {
+                                var ap = a as AnimatorPlay;
+                                if (ap != null && ap.stateName != null && !string.IsNullOrEmpty(ap.stateName.Value)) { n.AimState = ap.stateName.Value; break; }
+                            }
+                        }
+                }
+                catch (Exception e) { Plugin.Verbose("Brain: no aim pose for " + owner.name + ": " + e.Message); }
+            }
             n.Stagger = (_created++ % 10) * 0.013f;
             n.NextTick = Time.time + n.Stagger;
             return n;
@@ -444,6 +489,7 @@ namespace Apocaraiders
                     var n = NpcOf(__instance.Fsm, "Attack");
                     if (n == null || (n.Mode != Mode.Hold && n.Mode != Mode.Rest)) return true;
                     if (n.Movement != null) n.Movement.SendEvent("Animal_Idle");
+                    if (n.Mode == Mode.Hold) Aim(n);
                     __instance.Finish();
                     return false;
                 }

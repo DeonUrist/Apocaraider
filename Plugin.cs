@@ -18,7 +18,7 @@ namespace Apocaraiders
     {
         public const string GUID = "com.denis.apocalypter.apocaraiders";
         public const string NAME = "Apocaraiders";
-        public const string VERSION = "0.7.0";
+        public const string VERSION = "0.7.1";
 
         internal static ManualLogSource Log;
         internal static string Dir;
@@ -37,7 +37,7 @@ namespace Apocaraiders
         internal static ConfigEntry<float> PistolRange, SmgRange, RifleRange, SniperRange, ShotgunRange, CrossbowRange, ShotgunPelletSpread, FullDamageUntil, NpcShotgunDamage, VehicleDamagePer1, MetalSparksScale, MetalSheetPopChance, NpcHitRadius, PlayerBodyRadius, PlayerHeadRadius, HeadshotMultiplier;
         internal static ConfigEntry<int> ShotgunPellets, MaxTracers;
         internal static ConfigEntry<string> MetalSheetNames;
-        internal static ConfigEntry<bool> BrainEnabled, DropCheck, BrainLog;
+        internal static ConfigEntry<bool> BrainEnabled, DropCheck, BrainLog, AimPose;
         internal static ConfigEntry<float> TurnRate, FeelerLength, FeelerAngle, AdvanceChance, AdvanceMin, AdvanceMax, StuckBackupSeconds, StuckMemorySeconds, MaxDistance;
         internal static ConfigEntry<int> FeelerCount, StuckGiveUpCount;
 
@@ -153,6 +153,8 @@ namespace Apocaraiders
                 "Humans and ground animals that have a target move with a brain: they run at you around obstacles (feelers) instead of the game's random swerving, gunmen stop where they can shoot and hold there, a stuck NPC backs out instead of spinning and hopping. Flyers and crews seated in cars (Apocapatrol) are untouched. Off = the game's own movement.");
             TurnRate = Config.Bind("Brain", "TurnRate", 160f, new ConfigDescription(
                 "How fast an NPC turns its body, degrees per second - also to face you for a shot (the game snapped instantly).", new AcceptableValueRange<float>(30f, 720f)));
+            AimPose = Config.Bind("Brain", "AimPose", true,
+                "A gunman holding a shooting position keeps the gun up and aimed at you between bursts (the game lowered it to the idle pose and raised it only for the shot).");
             FeelerLength = Config.Bind("Brain", "FeelerLength", 3.5f, new ConfigDescription("How far ahead a moving NPC looks for obstacles, m.", new AcceptableValueRange<float>(1f, 10f)));
             FeelerAngle = Config.Bind("Brain", "FeelerAngle", 60f, new ConfigDescription("Half-angle of the feeler fan around the direction to the target, degrees.", new AcceptableValueRange<float>(15f, 120f)));
             FeelerCount = Config.Bind("Brain", "FeelerCount", 7, new ConfigDescription("Feeler rays per look (odd; fewer = cheaper, coarser).", new AcceptableValueRange<int>(3, 15)));
