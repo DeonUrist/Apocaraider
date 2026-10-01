@@ -335,12 +335,29 @@ namespace Apocaraiders
             Vector3 at = cam.transform.position + fwd * 6f;
             RaycastHit hit;
             if (Physics.Raycast(at + Vector3.up * 20f, Vector3.down, out hit, 60f, ~0, QueryTriggerInteraction.Ignore))
-                at = hit.point + Vector3.up * 0.1f;
+                at = hit.point;
+            // Flexa's pivot is ~1 m above her feet (capsule centre -0.23, height 1.5): lift the pivot so the capsule's
+            // bottom sits just above the ground - spawned with the pivot on the ground, she starts half inside the terrain
+            // and falls through it.
+            at += Vector3.up * (FootDepth(prefab) + 0.05f);
             var go = UnityEngine.Object.Instantiate(prefab, at, Quaternion.LookRotation(-fwd) * prefab.transform.rotation);
             Register(go, prefab.name);
             Mark(go.transform);
             bool ok = Apply(go, "debug key");
             Plugin.Log.LogInfo("Gungirl: spawned " + go.name + " at " + at.ToString("F1") + (ok ? "" : " - but the model could not be applied, see the errors above"));
+        }
+
+        // distance from the root pivot down to the bottom of its solid capsule collider (world units)
+        private static float FootDepth(GameObject prefab)
+        {
+            float depth = 0f;
+            float sy = Mathf.Abs(prefab.transform.localScale.y);
+            foreach (var cap in prefab.GetComponents<CapsuleCollider>())
+            {
+                if (cap.isTrigger || cap.direction != 1) continue;
+                depth = Mathf.Max(depth, (cap.height * 0.5f - cap.center.y) * sy);
+            }
+            return depth > 0f ? depth : 1f;
         }
 
         private static GameObject FlexaPrefab()
