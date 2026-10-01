@@ -18,7 +18,7 @@ namespace Apocaraiders
     {
         public const string GUID = "com.denis.apocalypter.apocaraiders";
         public const string NAME = "Apocaraiders";
-        public const string VERSION = "0.4.6";
+        public const string VERSION = "0.5.0";
 
         internal static ManualLogSource Log;
         internal static string Dir;
@@ -28,7 +28,8 @@ namespace Apocaraiders
         internal static ConfigEntry<int> GungirlChance;
         internal static ConfigEntry<string> GungirlModel, GungirlTexture, GungirlVoice, GungirlHideParts;
         internal static ConfigEntry<Key> SpawnKey;
-        internal static ConfigEntry<bool> TracersEnabled, VehicleDamage, PlayerTracers, NpcAimAtBody, AimEnabled;
+        internal static ConfigEntry<bool> TracersEnabled, VehicleDamage, PlayerTracers, NpcAimAtBody, AimEnabled, HitMarker;
+        internal static ConfigEntry<int> DamageNumbers, DamageFontSize, HitMarkerSize;
         internal static ConfigEntry<float> AimBaseDistance, AimDelayPer5m, SpreadPer5m, EngagePercent, EngagePatience, HoldRecheckMin, HoldRecheckMax;
         internal static ConfigEntry<float> BulletSpeed, BoltSpeed, TracerWidth, TracerLength, BoltWidth, BoltLength, TracerGlow;
         internal static ConfigEntry<Color> TracerColor, BoltColor;
@@ -132,6 +133,12 @@ namespace Apocaraiders
             HoldRecheckMax = Config.Bind("NpcAim", "HoldRecheckMax", 4f, new ConfigDescription("See HoldRecheckMin.", new AcceptableValueRange<float>(0.1f, 30f)));
             SpawnKey = Config.Bind("Debug", "SpawnKey", Key.F9,
                 "Spawns a Gungirl 6 m in front of you (a real raider: she fights and is saved). None = off.");
+            DamageNumbers = Config.Bind("Hud", "DamageNumbers", 2, new ConfigDescription(
+                "Damage your bullets do, shown as: 0 = nothing, 1 = a red list in the top right corner, 2 = numbers floating up from the hit point. A '!' marks a headshot.",
+                new AcceptableValueRange<int>(0, 2)));
+            DamageFontSize = Config.Bind("Hud", "DamageFontSize", 14, new ConfigDescription("Font size of the damage numbers, px.", new AcceptableValueRange<int>(8, 40)));
+            HitMarker = Config.Bind("Hud", "HitMarker", true, "A red diagonal cross flashes at the screen centre when your bullet hits a creature (yellow for a headshot).");
+            HitMarkerSize = Config.Bind("Hud", "HitMarkerSize", 22, new ConfigDescription("Hit marker size, px.", new AcceptableValueRange<int>(6, 100)));
             HitLog = Config.Bind("Debug", "HitLog", false, "Log every bullet hit on a creature: who, what, distance, damage, and its Health before and after.");
             VerboseLog = Config.Bind("Debug", "VerboseLog", false, "Log every Gungirl that is dressed (spawn, corpse, after a load).");
 
@@ -175,5 +182,6 @@ namespace Apocaraiders
     internal class Runner : MonoBehaviour
     {
         private void Update() { Voice.EnsureLoading(this); Gungirl.Tick(); Tracers.Tick(); }
+        private void OnGUI() { try { Hud.OnGUI(); } catch (Exception e) { Plugin.Log.LogError("Hud: " + e); } }
     }
 }

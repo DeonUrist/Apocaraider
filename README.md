@@ -25,6 +25,14 @@ visible bolts. Tracers look the same by day and by night.
 - A bullet that hits a vehicle part damages it (10 damage = 1 % of the part's condition), and a bolted-on metal plate
   can be knocked off (20 % per hit by default).
 - A hit on its target does exactly what the game's own hit does (blood/sparks, damage, armor, hit sounds).
+- Headshots on raiders work as in the game (their head capsule doubles the damage); the mod's bullets see the same
+  bodies the game's own shots do.
+
+## Hit feedback
+
+Your hits show as damage numbers (`[Hud] DamageNumbers`: 0 off, 1 a red list in the top right corner, 2 floating up from
+the hit point; a `!` marks a headshot) and a red diagonal hit marker flashes at the crosshair (`[Hud] HitMarker`, yellow
+for a headshot). Both can be turned off.
 
 ## NPC aim
 
@@ -61,6 +69,7 @@ BepInEx\plugins\Apocaraiders\Sounds\Gungirl\*.wav / *.ogg
   most bullets in flight at once.
 - **[NpcAim]**: on/off, AimBaseDistance, AimDelayPer5m, SpreadPer5m, EngagePercent (fire within this % of the reach),
   EngagePatience, HoldRecheckMin/Max (1 to 4 s reaction time once you come into reach).
+- **[Hud]**: DamageNumbers (0/1/2), DamageFontSize, HitMarker on/off, HitMarkerSize.
 - **[Debug] HitLog**: logs every bullet that hits a creature with its damage and the creature's health before and after.
 - **[Debug] SpawnKey** (F9): spawns a Gungirl in front of you.
 

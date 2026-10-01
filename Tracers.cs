@@ -158,6 +158,9 @@ namespace Apocaraiders
         {
             _shots.Clear();
             _shooters.Clear();
+            _counts.Clear();
+            _reported.Clear();
+            Hud.OnSceneLoaded();
             Aim.OnSceneLoaded();
             _guns.Clear();
             _notGun.Clear();
@@ -209,8 +212,7 @@ namespace Apocaraiders
                     dir.Normalize();
                     // aim where the camera ray points, fly from the muzzle
                     RaycastHit aimHit;
-                    Vector3 aim = Physics.Raycast(origin, dir, out aimHit, range, gun.Layers, QueryTriggerInteraction.Ignore) && !Ignored(aimHit.collider.transform, ft.root, _player)
-                                  ? aimHit.point : origin + dir * range;
+                    Vector3 aim = FirstHit(origin, dir, range, gun.Layers, ft.root, out aimHit) ? aimHit.point : origin + dir * range;
                     Vector3 d = aim - muzzle;
                     if (d.sqrMagnitude < 0.01f) d = dir;
                     var s = new Shot
@@ -277,6 +279,68 @@ namespace Apocaraiders
             return gun;
         }
 
+        // the nearest thing the camera ray meets, as the vanilla Raycast sees it (QueriesHitTriggers is on in this game: head
+        // triggers with a Bodypart FSM count, other triggers don't), skipping the player and their car
+        private static bool FirstHit(Vector3 origin, Vector3 dir, float range, int mask, Transform shooterRoot, out RaycastHit hit)
+        {
+            int n = Physics.RaycastNonAlloc(origin, dir, _hits, range, mask, QueryTriggerInteraction.Collide);
+            if (n >= _hits.Length) { return Physics.Raycast(origin, dir, out hit, range, mask, QueryTriggerInteraction.Ignore); }
+            if (n > 1) Array.Sort(_hits, 0, n, HitDistance.Instance);
+            for (int k = 0; k < n; k++)
+            {
+                var c = _hits[k].collider;
+                if (c == null || Ignored(c.transform, shooterRoot, _player) || !Counts(c)) continue;
+                hit = _hits[k];
+                return true;
+            }
+            hit = default(RaycastHit);
+            return false;
+        }
+
+        // Does a collider stop a bullet? Solid colliders always; trigger colliders only when their object has a Bodypart FSM
+        // (the NPC head capsules, the player's head sphere) - vanilla raycasts hit those (QueriesHitTriggers), FireDamageCollider
+        // and other triggers are not bodies. Cached per collider.
+        private static readonly Dictionary<int, bool> _counts = new Dictionary<int, bool>();
+        private static bool Counts(Collider c)
+        {
+            if (!c.isTrigger) return true;
+            bool ok;
+            int id = c.GetInstanceID();
+            if (_counts.TryGetValue(id, out ok)) return ok;
+            ok = HasBodypart(c.gameObject);
+            _counts[id] = ok;
+            if (ok) ReportHitbox(c);
+            return ok;
+        }
+
+        private static bool HasBodypart(GameObject go)
+        {
+            foreach (var f in go.GetComponents<PlayMakerFSM>()) if (f != null && f.FsmName == "Bodypart") return true;
+            return false;
+        }
+
+        // Verbose, once per creature type: where its head trigger and body capsule reach, against the visible model
+        private static readonly HashSet<string> _reported = new HashSet<string>();
+        private static void ReportHitbox(Collider head)
+        {
+            if (!Plugin.VerboseLog.Value) return;
+            var root = head.transform.root;
+            string name = root.name; int cut = name.IndexOf('('); if (cut > 0) name = name.Substring(0, cut);
+            if (!_reported.Add(name)) return;
+            try
+            {
+                var body = PlayerCapsule(root.gameObject);
+                float feet = body != null ? body.bounds.min.y : root.position.y;
+                float bodyTop = body != null ? body.bounds.max.y - feet : 0f;
+                float headTop = head.bounds.max.y - feet, headBottom = head.bounds.min.y - feet;
+                float meshTop = 0f;
+                foreach (var smr in root.GetComponentsInChildren<SkinnedMeshRenderer>()) meshTop = Mathf.Max(meshTop, smr.bounds.max.y - feet);
+                Plugin.Log.LogInfo("Hitbox " + name + ": body capsule 0.00-" + bodyTop.ToString("0.00") + " m above the feet, head " + headBottom.ToString("0.00")
+                    + "-" + headTop.ToString("0.00") + " (r " + head.bounds.extents.x.ToString("0.00") + "), model top " + meshTop.ToString("0.00"));
+            }
+            catch (Exception e) { Plugin.Verbose("Hitbox report failed: " + e.Message); }
+        }
+
         private static bool Ignored(Transform t, Transform shooterRoot, GameObject player)
         {
             if (shooterRoot != null && t.IsChildOf(shooterRoot)) return true;
@@ -295,16 +359,31 @@ namespace Apocaraiders
             var vo = fsm.Variables.GetFsmGameObject("hitObj"); if (vo != null) vo.Value = go;
             var vp = fsm.Variables.GetFsmVector3("hitPoint"); if (vp != null) vp.Value = h.point;
             var vn = fsm.Variables.GetFsmVector3("hitNormal"); if (vn != null) vn.Value = h.normal;
-            float before = Plugin.HitLog.Value ? HealthOf(go) : 0f;
+            bool creature = HasBodypart(go) || HasBodypart(go.transform.root.gameObject);
+            bool feedback = creature && (Plugin.DamageNumbers.Value != 0 || Plugin.HitMarker.Value);
+            float before = Plugin.HitLog.Value || feedback ? HealthOf(go) : 0f;
             Replay(fsm, go.layer == 10 && gun.ActorHit != null ? gun.ActorHit : gun.GetLayer, falloff);
             Replay(fsm, gun.Hit, falloff);
+            float after = Plugin.HitLog.Value || feedback ? HealthOf(go) : 0f;
+            if (feedback)
+            {
+                float nominal = gun.Damage != null ? gun.Damage.Value * falloff : 0f;
+                float dealt = !float.IsNaN(before) && !float.IsNaN(after) && after < before ? after - before : nominal;
+                bool head = col_isHead(go);
+                Hud.PlayerHit(go.transform.root.gameObject, h.point, dealt, head);
+            }
             if (Plugin.HitLog.Value)
             {
-                float after = HealthOf(go);
                 Plugin.Log.LogInfo("Hit: " + fsm.GameObject.name + " -> " + go.transform.root.name + "/" + go.name + " at " + (s.Travelled + h.distance).ToString("0.0") + " m, damage "
                     + (gun.Damage != null ? gun.Damage.Value * falloff : 0f).ToString("0.0") + " (x" + falloff.ToString("0.00") + ")"
                     + (float.IsNaN(before) ? ", no Health FSM" : ", Health " + before.ToString("0.0") + " -> " + after.ToString("0.0")));
             }
+        }
+
+        // the hit object is a creature's head when it is a child with its own Bodypart FSM (the player's "head", NPC mixamorig:Head)
+        private static bool col_isHead(GameObject go)
+        {
+            return go.transform.parent != null && HasBodypart(go);
         }
 
         private static void Replay(Fsm fsm, FsmStateAction[] actions, float falloff)
@@ -510,6 +589,7 @@ namespace Apocaraiders
                 catch (Exception e) { s.Alive = false; Plugin.Log.LogError("Tracers: bullet dropped: " + e); }
                 if (s.Alive) _shots[i] = s; else _shots.RemoveAt(i);
             }
+            Hud.Flush();
             if (Time.unscaledTime >= _nextSweep) { _nextSweep = Time.unscaledTime + 30f; Sweep(); }
             if (_pushes.Count > 0)
             {
@@ -556,8 +636,8 @@ namespace Apocaraiders
             float vt = float.MaxValue; bool vhead = false;
             if (vcap != null && !PlayerHit(s.Pos, s.Dir, move, radius, s.Target, vcap, out vt, out vhead)) vt = float.MaxValue;
             int n = radius > 0f
-                ? Physics.SphereCastNonAlloc(s.Pos, radius, s.Dir, _hits, move, s.Layers, QueryTriggerInteraction.Ignore)
-                : Physics.RaycastNonAlloc(s.Pos, s.Dir, _hits, move, s.Layers, QueryTriggerInteraction.Ignore);
+                ? Physics.SphereCastNonAlloc(s.Pos, radius, s.Dir, _hits, move, s.Layers, QueryTriggerInteraction.Collide)
+                : Physics.RaycastNonAlloc(s.Pos, s.Dir, _hits, move, s.Layers, QueryTriggerInteraction.Collide);
             if (n >= _hits.Length)
             {
                 // buffer full: NonAlloc returns the first N found, not the nearest N - take the guaranteed-nearest hit alone
@@ -570,7 +650,7 @@ namespace Apocaraiders
             {
                 var h = _hits[k];
                 var col = h.collider;
-                if (col == null) continue;
+                if (col == null || !Counts(col)) continue;
                 var tr = col.transform;
                 if (vcap != null && tr.IsChildOf(s.Target.transform)) continue;      // the real capsules: the virtual hitbox handles the player
                 if (vcap != null && h.distance > vt) break;                          // the player is hit before this obstruction
@@ -590,7 +670,7 @@ namespace Apocaraiders
                 if (!onTarget && detectable) continue;      // other creatures don't stop a vanilla shot either
                 float dist = s.Travelled + h.distance;
                 float falloff = Falloff(ref s, dist);
-                if (onTarget) HitTarget(ref s, h.point, s.Damage * falloff, s.Target, dist);
+                if (onTarget) HitTarget(ref s, h.point, s.Damage * falloff, col.isTrigger ? col.gameObject : s.Target, dist);   // a head trigger: its own Bodypart (x2)
                 else HitWorld(ref s, col, h.point, s.Damage * falloff);
                 s.Pos = h.point;
                 s.Travelled = dist;
