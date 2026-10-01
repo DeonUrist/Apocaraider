@@ -18,7 +18,7 @@ namespace Apocaraiders
     {
         public const string GUID = "com.denis.apocalypter.apocaraiders";
         public const string NAME = "Apocaraiders";
-        public const string VERSION = "0.6.0";
+        public const string VERSION = "0.7.0";
 
         internal static ManualLogSource Log;
         internal static string Dir;
@@ -37,6 +37,9 @@ namespace Apocaraiders
         internal static ConfigEntry<float> PistolRange, SmgRange, RifleRange, SniperRange, ShotgunRange, CrossbowRange, ShotgunPelletSpread, FullDamageUntil, NpcShotgunDamage, VehicleDamagePer1, MetalSparksScale, MetalSheetPopChance, NpcHitRadius, PlayerBodyRadius, PlayerHeadRadius, HeadshotMultiplier;
         internal static ConfigEntry<int> ShotgunPellets, MaxTracers;
         internal static ConfigEntry<string> MetalSheetNames;
+        internal static ConfigEntry<bool> BrainEnabled, DropCheck, BrainLog;
+        internal static ConfigEntry<float> TurnRate, FeelerLength, FeelerAngle, AdvanceChance, AdvanceMin, AdvanceMax, StuckBackupSeconds, StuckMemorySeconds, MaxDistance;
+        internal static ConfigEntry<int> FeelerCount, StuckGiveUpCount;
 
         private static GameObject _runner;
 
@@ -146,6 +149,22 @@ namespace Apocaraiders
             LeadError = Config.Bind("NpcAim", "LeadError", 30f, new ConfigDescription("Random error on the NPC's estimate of your speed, +/- %, per shot.", new AcceptableValueRange<float>(0f, 100f)));
             MaxLeadTime = Config.Bind("NpcAim", "MaxLeadTime", 1.5f, new ConfigDescription("Longest flight time NPCs lead for, s (bolts at long range).", new AcceptableValueRange<float>(0f, 5f)));
             HoldRecheckMax = Config.Bind("NpcAim", "HoldRecheckMax", 4f, new ConfigDescription("See HoldRecheckMin.", new AcceptableValueRange<float>(0.1f, 30f)));
+            BrainEnabled = Config.Bind("Brain", "Enabled", true,
+                "Humans and ground animals that have a target move with a brain: they run at you around obstacles (feelers) instead of the game's random swerving, gunmen stop where they can shoot and hold there, a stuck NPC backs out instead of spinning and hopping. Flyers and crews seated in cars (Apocapatrol) are untouched. Off = the game's own movement.");
+            TurnRate = Config.Bind("Brain", "TurnRate", 160f, new ConfigDescription(
+                "How fast an NPC turns its body, degrees per second - also to face you for a shot (the game snapped instantly).", new AcceptableValueRange<float>(30f, 720f)));
+            FeelerLength = Config.Bind("Brain", "FeelerLength", 3.5f, new ConfigDescription("How far ahead a moving NPC looks for obstacles, m.", new AcceptableValueRange<float>(1f, 10f)));
+            FeelerAngle = Config.Bind("Brain", "FeelerAngle", 60f, new ConfigDescription("Half-angle of the feeler fan around the direction to the target, degrees.", new AcceptableValueRange<float>(15f, 120f)));
+            FeelerCount = Config.Bind("Brain", "FeelerCount", 7, new ConfigDescription("Feeler rays per look (odd; fewer = cheaper, coarser).", new AcceptableValueRange<int>(3, 15)));
+            DropCheck = Config.Bind("Brain", "DropCheck", true, "A moving NPC also checks for ground 1.5 m along its chosen direction and picks another when there is a drop (one extra ray).");
+            AdvanceChance = Config.Bind("Brain", "AdvanceChance", 10f, new ConfigDescription(
+                "A gunman holding a shooting position rolls this % at every hold recheck ([NpcAim] HoldRecheckMin..Max s) to run toward you for AdvanceMin..AdvanceMax s instead.", new AcceptableValueRange<float>(0f, 100f)));
+            AdvanceMin = Config.Bind("Brain", "AdvanceMin", 2f, new ConfigDescription("Shortest advance, s.", new AcceptableValueRange<float>(0.5f, 20f)));
+            AdvanceMax = Config.Bind("Brain", "AdvanceMax", 4f, new ConfigDescription("Longest advance, s.", new AcceptableValueRange<float>(0.5f, 20f)));
+            StuckBackupSeconds = Config.Bind("Brain", "StuckBackupSeconds", 0.8f, new ConfigDescription("A stuck NPC backs up this long, s, before trying another way.", new AcceptableValueRange<float>(0.1f, 5f)));
+            StuckMemorySeconds = Config.Bind("Brain", "StuckMemorySeconds", 5f, new ConfigDescription("How long the heading it got stuck on is avoided, s.", new AcceptableValueRange<float>(0f, 60f)));
+            StuckGiveUpCount = Config.Bind("Brain", "StuckGiveUpCount", 3, new ConfigDescription("Stucks within 20 s after which the NPC stands still for 3 s (facing you) before trying again.", new AcceptableValueRange<int>(1, 20)));
+            MaxDistance = Config.Bind("Brain", "MaxDistance", 150f, new ConfigDescription("NPCs farther than this from their target move the game's way (no cost).", new AcceptableValueRange<float>(20f, 1000f)));
             SpawnKey = Config.Bind("Debug", "SpawnKey", Key.F9,
                 "Spawns a Gungirl 6 m in front of you (a real raider: she fights and is saved). None = off.");
             DamageNumbers = Config.Bind("Hud", "DamageNumbers", 2, new ConfigDescription(
@@ -156,6 +175,7 @@ namespace Apocaraiders
             HitMarkerSize = Config.Bind("Hud", "HitMarkerSize", 22, new ConfigDescription("Hit marker size, px.", new AcceptableValueRange<int>(6, 100)));
             HitLog = Config.Bind("Debug", "HitLog", false, "Log every bullet hit on a creature: who, what, distance, damage, and its Health before and after.");
             VerboseLog = Config.Bind("Debug", "VerboseLog", false, "Log every Gungirl that is dressed (spawn, corpse, after a load).");
+            BrainLog = Config.Bind("Debug", "BrainLog", false, "Log every NPC movement decision (chase, hold, advance, stuck, rest) with the reason and distance.");
 
             try
             {
@@ -176,8 +196,19 @@ namespace Apocaraiders
                     prefix: new HarmonyMethod(typeof(Aim), nameof(Aim.BeforeRandomWait)));
             }
             catch (Exception e) { Log.LogError("Harmony patch failed, no tracers: " + e); }
+            try
+            {
+                var h = new Harmony(GUID + ".brain");
+                h.Patch(AccessTools.Method(typeof(SetVelocity), "DoSetVelocity"), prefix: new HarmonyMethod(typeof(Brain), nameof(Brain.BeforeSetVelocity)));
+                h.Patch(AccessTools.Method(typeof(Rotate), "DoRotate"), prefix: new HarmonyMethod(typeof(Brain), nameof(Brain.BeforeRotate)));
+                h.Patch(AccessTools.Method(typeof(HutongGames.PlayMaker.Actions.Raycast), "DoRaycast"), prefix: new HarmonyMethod(typeof(Brain), nameof(Brain.BeforeRaycast)));
+                h.Patch(AccessTools.Method(typeof(LookAt), "DoLookAt"), prefix: new HarmonyMethod(typeof(Brain), nameof(Brain.BeforeLookAt)));
+                h.Patch(AccessTools.Method(typeof(SendEvent), "OnEnter"), prefix: new HarmonyMethod(typeof(Brain), nameof(Brain.BeforeSendEvent)));
+                h.Patch(AccessTools.Method(typeof(AddForce), "DoAddForce"), prefix: new HarmonyMethod(typeof(Brain), nameof(Brain.BeforeAddForce)));
+            }
+            catch (Exception e) { Log.LogError("Harmony patch failed, no NPC brain: " + e); }
 
-            SceneManager.sceneLoaded += (s, m) => { EnsureRunner(); Gungirl.OnSceneLoaded(); Tracers.OnSceneLoaded(); };
+            SceneManager.sceneLoaded += (s, m) => { EnsureRunner(); Gungirl.OnSceneLoaded(); Tracers.OnSceneLoaded(); Brain.OnSceneLoaded(); };
             EnsureRunner();
             Log.LogInfo(NAME + " " + VERSION + " loaded");
         }
@@ -196,7 +227,7 @@ namespace Apocaraiders
 
     internal class Runner : MonoBehaviour
     {
-        private void Update() { Voice.EnsureLoading(this); Gungirl.Tick(); Tracers.Tick(); }
+        private void Update() { Voice.EnsureLoading(this); Gungirl.Tick(); Tracers.Tick(); Brain.Tick(); }
         private void OnGUI() { try { Hud.OnGUI(); } catch (Exception e) { Plugin.Log.LogError("Hud: " + e); } }
     }
 }

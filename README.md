@@ -47,6 +47,20 @@ spread. They also lead a moving target: they aim where you will be when the bull
 can guess (some raiders are better shots than others, and all of them misjudge your speed a little), so running in a
 straight line is no longer safe at range, while a change of direction still throws them off. All of it is configurable.
 
+## NPC movement
+
+Humans and ground animals that have spotted you no longer run around like headless chickens. The game never turned
+their bodies toward you: a chasing NPC ran straight ahead at full speed while random turns, a pair of 1.2 m bumper rays
+and a "stuck" reflex (a spin and a hop) threw it about, and it reached you when the random walk happened to bring it
+close. Now every NPC with a target has a brain: it turns at a limited rate (160 deg/s, also to face you for a shot),
+feels its way around rocks, cars and camp walls with a fan of rays, and backs out of a dead end instead of spinning.
+Gunmen stop as soon as they have a line of sight on you within their gun's engage distance, stand and shoot from there
+(now and then one decides to run at you for a few seconds), and move again when you break the line of sight or get out
+of range; a gunman that gets stuck but can see you shoots from where it is. Melee NPCs run at you around things.
+Flyers (bats, wasps, Terror of the Night) and crews seated in Apocapatrol cars are left to the game until they bail out.
+The work per NPC is spread out (one look every 0.1 s with a few NPCs around, up to 0.5 s with more than twenty), and NPCs
+farther than 150 m move the game's way. `[Brain] Enabled = false` restores the game's own movement.
+
 ## Install
 
 Needs BepInEx 5. Copy the `Apocaraiders` folder into `BepInEx\plugins\`, so you have:
@@ -76,8 +90,11 @@ BepInEx\plugins\Apocaraiders\Sounds\Gungirl\*.wav / *.ogg
 - **[NpcAim]**: on/off, AimBaseDistance, AimDelayPer5m, SpreadPer5m, EngagePercent (fire within this % of the reach),
   EngagePatience, HoldRecheckMin/Max (1 to 4 s reaction time once you come into reach), LeadTargets, LeadAccuracy
   (0 = no lead, 1 = perfect), LeadError (% speed misjudgement), MaxLeadTime.
+- **[Brain]**: on/off, TurnRate (deg/s), FeelerLength / FeelerAngle / FeelerCount, DropCheck, AdvanceChance (% per hold
+  recheck that a holding gunman runs at you) and AdvanceMin/Max (s), StuckBackupSeconds, StuckMemorySeconds, StuckGiveUpCount, MaxDistance.
 - **[Hud]**: DamageNumbers (0/1/2), DamageFontSize, HitMarker on/off, HitMarkerSize.
 - **[Debug] HitLog**: logs every bullet that hits a creature with its damage and the creature's health before and after.
+- **[Debug] BrainLog**: logs every NPC movement decision (chase, hold, advance, stuck, rest) with the reason.
 - **[Debug] SpawnKey** (F9): spawns a Gungirl in front of you.
 
 ## Making your own body
