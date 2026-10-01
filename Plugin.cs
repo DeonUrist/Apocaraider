@@ -18,7 +18,7 @@ namespace Apocaraiders
     {
         public const string GUID = "com.denis.apocalypter.apocaraiders";
         public const string NAME = "Apocaraiders";
-        public const string VERSION = "0.3.0";
+        public const string VERSION = "0.3.1";
 
         internal static ManualLogSource Log;
         internal static string Dir;
@@ -31,7 +31,7 @@ namespace Apocaraiders
         internal static ConfigEntry<bool> TracersEnabled, VehicleDamage, PlayerTracers;
         internal static ConfigEntry<float> BulletSpeed, BoltSpeed, TracerWidth, TracerLength, BoltWidth, BoltLength, TracerGlow;
         internal static ConfigEntry<Color> TracerColor, BoltColor;
-        internal static ConfigEntry<float> PistolRange, SmgRange, RifleRange, SniperRange, ShotgunRange, CrossbowRange, ShotgunPelletSpread, MetalSheetPopChance;
+        internal static ConfigEntry<float> PistolRange, SmgRange, RifleRange, SniperRange, ShotgunRange, CrossbowRange, ShotgunPelletSpread, MetalSheetPopChance, NpcHitRadius;
         internal static ConfigEntry<int> ShotgunPellets, MaxTracers;
         internal static ConfigEntry<string> MetalSheetNames;
 
@@ -84,14 +84,20 @@ namespace Apocaraiders
             SmgRange = Config.Bind("Tracers", "SmgRange", 70f, new ConfigDescription("SMGs, falloff range in metres (half damage at half range).", new AcceptableValueRange<float>(5f, 1000f)));
             RifleRange = Config.Bind("Tracers", "RifleRange", 120f, new ConfigDescription("Automatic rifles and machine guns, falloff range in metres.", new AcceptableValueRange<float>(5f, 1000f)));
             SniperRange = Config.Bind("Tracers", "SniperRange", 250f, new ConfigDescription("Sniper/scoped rifles, falloff range in metres.", new AcceptableValueRange<float>(5f, 1000f)));
-            ShotgunRange = Config.Bind("Tracers", "ShotgunRange", 35f, new ConfigDescription("Shotguns, falloff range in metres.", new AcceptableValueRange<float>(5f, 1000f)));
+            ShotgunRange = Config.Bind("Tracers", "ShotgunRange", 50f, new ConfigDescription("Shotguns, falloff range in metres.", new AcceptableValueRange<float>(5f, 1000f)));
             CrossbowRange = Config.Bind("Tracers", "CrossbowRange", 90f, new ConfigDescription("Crossbows, falloff range in metres.", new AcceptableValueRange<float>(5f, 1000f)));
             ShotgunPellets = Config.Bind("Tracers", "ShotgunPellets", 2, new ConfigDescription("Pellets per vanilla shotgun ray (a vanilla blast is 4 rays; 2 = 8 pellets). The blast's damage is split between them.", new AcceptableValueRange<int>(1, 8)));
-            ShotgunPelletSpread = Config.Bind("Tracers", "ShotgunPelletSpread", 3f, new ConfigDescription("Extra spread of each pellet, degrees.", new AcceptableValueRange<float>(0f, 15f)));
+            ShotgunPelletSpread = Config.Bind("Tracers", "ShotgunPelletSpread", 1f, new ConfigDescription("Extra spread of each pellet, degrees.", new AcceptableValueRange<float>(0f, 15f)));
+            NpcHitRadius = Config.Bind("Tracers", "NpcHitRadius", 0.12f, new ConfigDescription(
+                "Thickness of NPC bullets, m: a bullet passing this close to you (or another target) counts as a hit. The player's body collider is only 0.4 m wide. 0 = hairline. Your own bullets are always a hairline.",
+                new AcceptableValueRange<float>(0f, 0.5f)));
             VehicleDamage = Config.Bind("Tracers", "VehicleDamage", true, "A bullet that hits a vehicle part damages it: 10 damage = 1 % of the part's condition.");
             MetalSheetPopChance = Config.Bind("Tracers", "MetalSheetPopChance", 20f, new ConfigDescription("% chance that a bullet hitting a bolted-on metal plate knocks it off.", new AcceptableValueRange<float>(0f, 100f)));
             MetalSheetNames = Config.Bind("Tracers", "MetalSheetNames", "metal_plate", "Which attached parts count as metal sheets (comma-separated name starts).");
             MaxTracers = Config.Bind("Tracers", "MaxTracers", 300, new ConfigDescription("Most bullets in flight at once; shots above this hit instantly (vanilla style) instead.", new AcceptableValueRange<int>(16, 2000)));
+            // 0.3.0 shipped ShotgunRange 35 / ShotgunPelletSpread 3 (too few hits); a cfg still at those values gets the new defaults
+            if (Mathf.Approximately(ShotgunRange.Value, 35f)) ShotgunRange.Value = 50f;
+            if (Mathf.Approximately(ShotgunPelletSpread.Value, 3f)) ShotgunPelletSpread.Value = 1f;
             SpawnKey = Config.Bind("Debug", "SpawnKey", Key.F9,
                 "Spawns a Gungirl 6 m in front of you (a real raider: she fights and is saved). None = off.");
             VerboseLog = Config.Bind("Debug", "VerboseLog", false, "Log every Gungirl that is dressed (spawn, corpse, after a load).");

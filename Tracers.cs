@@ -448,7 +448,12 @@ namespace Apocaraiders
         {
             float move = Mathf.Min(s.Speed * dt, s.Range - s.Travelled);
             if (move <= 0f) { s.Alive = false; return; }
-            int n = Physics.RaycastNonAlloc(s.Pos, s.Dir, _hits, move, s.Layers, QueryTriggerInteraction.Ignore);
+            // NPC bullets have a thickness: the player's body is two capsules only 0.34-0.40 m wide (head at the camera), so a
+            // hairline that visibly passes through your face misses the collider by centimetres. Player bullets stay a hairline.
+            float radius = s.Gun == null ? Mathf.Max(0f, Plugin.NpcHitRadius.Value) : 0f;
+            int n = radius > 0f
+                ? Physics.SphereCastNonAlloc(s.Pos, radius, s.Dir, _hits, move, s.Layers, QueryTriggerInteraction.Ignore)
+                : Physics.RaycastNonAlloc(s.Pos, s.Dir, _hits, move, s.Layers, QueryTriggerInteraction.Ignore);
             if (n > 1) Array.Sort(_hits, 0, n, HitDistance.Instance);
             for (int k = 0; k < n; k++)
             {
