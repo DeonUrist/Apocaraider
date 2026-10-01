@@ -76,7 +76,8 @@ hears or saw becomes a "ghost", a remembered spot it goes to check; one event ma
 NPC keeps the more trustworthy knowledge (sight over a hit, over a shout, over a gunshot, over a thrown item, over an engine; the
 newest of equal rank). At the spot it looks around for 15 s and, seeing nothing, loses interest and idles where it stands. Being
 shot tells it where that came from. The same rules run between NPC factions. Ghosts and alert states are saved with the game and
-restored after a load. `[Senses] Enabled = false` gives the game's own sensors back; `[Debug] ShowGhosts` draws every ghost and
+restored after a load. With Apocapatrol installed, a raider bailing out of a car keeps its crew's knowledge (it fights if it sees you,
+otherwise heads for where you were) and an exploding car is heard like a gunshot. `[Senses] Enabled = false` gives the game's own sensors back; `[Debug] ShowGhosts` draws every ghost and
 alert NPC's state in the world.
 
 ## Install
@@ -112,7 +113,7 @@ BepInEx\plugins\Apocaraiders\Sounds\Gungirl\*.wav / *.ogg
   recheck that a holding gunman runs at you) and AdvanceMin/Max (s), StuckBackupSeconds, StuckMemorySeconds, StuckGiveUpCount, MaxDistance.
 - **[Senses]**: on/off, SightCone, SightRange / DarkSightRange, DaylightIntensity, NoticeSeconds, LoseSeconds, SearchSeconds, ArriveDistance,
   LookInterval, MuffleSounds / MuffleFactor (off), ShotRange per weapon class, NpcShotRanges (per NPC type), TauntRange, HumanFactions,
-  EngineMinRange / EngineMaxRange / EngineMinHp / EngineMaxHp / EngineIdleFactor, ThrowRange.
+  EngineMinRange / EngineMaxRange / EngineMinHp / EngineMaxHp / EngineIdleFactor, ThrowRange, BailOutAware / BailOutAwareRange / ExplosionRange (with Apocapatrol).
 - **[Hud]**: DamageNumbers (0/1/2), DamageFontSize, HitMarker on/off, HitMarkerSize.
 - **[Debug] HitLog**: logs every bullet that hits a creature with its damage and the creature's health before and after.
 - **[Debug] SensesLog / ShowGhosts**: log every detection event; draw the ghosts and alert states in the world.

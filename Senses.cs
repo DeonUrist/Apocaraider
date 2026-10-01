@@ -97,6 +97,7 @@ namespace Apocaraiders
                     else if (!on && a.SensorsOff) Sensors(a, true);
                 }
                 foreach (var k in _dead) _agents.Remove(k);
+                if (_handover.Count > 0) { _dead.Clear(); foreach (var kv in _handover) if (now - kv.Value.Value > 30f) _dead.Add(kv.Key); foreach (var k in _dead) _handover.Remove(k); }
                 for (int i = _ghosts.Count - 1; i >= 0; i--)
                 {
                     var g = _ghosts[i];
@@ -106,6 +107,7 @@ namespace Apocaraiders
                 FindPlayer();
             }
             Persist.Tick(runner);
+            if (!_patrolChecked && Time.unscaledTime > 2f) HookApocapatrol();
             if (!on) return;
             if (_player == null) return;
 
@@ -639,6 +641,91 @@ namespace Apocaraiders
         internal static bool IsGhostTarget(GameObject owner) { int k = KindOf(owner); return k == 2 || k == 3; }
         internal static void ArrivedAt(GameObject owner) { var a = Get(owner); if (a != null && a.State == State.Investigate) Arrived(a, Time.time); }
 
+        // ---------- Apocapatrol (only when that mod is loaded) ----------
+        // A crew that bails out is a fresh NPC spawned beside the car (Patrol.BailOut instantiates the prefab and deletes the seated one), so
+        // it would start with no idea where the player is. A Harmony postfix on Patrol.BailOut hands the new NPC the crew's knowledge: the
+        // seated NPC's own target, or the player when within BailOutAwareRange of the car (the crews hunt the player). When the new NPC
+        // registers it fights at once if it sees that target, otherwise it gets a sight-ranked ghost at the target's position and searches.
+        // A postfix on Explode.Blast makes a car explosion a gunshot-ranked noise (ExplosionRange) at the wreck.
+        private static bool _patrolChecked;
+        private static readonly Dictionary<int, KeyValuePair<GameObject, float>> _handover = new Dictionary<int, KeyValuePair<GameObject, float>>();
+
+        private static void HookApocapatrol()
+        {
+            _patrolChecked = true;
+            try
+            {
+                if (!BepInEx.Bootstrap.Chainloader.PluginInfos.ContainsKey("com.denis.apocalypter.apocapatrol")) { Plugin.Verbose("Senses: Apocapatrol not loaded, no crew rules"); return; }
+                var patrol = HarmonyLib.AccessTools.TypeByName("Apocapatrol.Patrol");
+                var explode = HarmonyLib.AccessTools.TypeByName("Apocapatrol.Explode");
+                var h = new HarmonyLib.Harmony(Plugin.GUID + ".senses.patrol");
+                int n = 0;
+                var bail = patrol != null ? HarmonyLib.AccessTools.Method(patrol, "BailOut", new[] { typeof(GameObject), typeof(GameObject), typeof(string), typeof(float) }) : null;
+                if (bail != null) { h.Patch(bail, postfix: new HarmonyLib.HarmonyMethod(typeof(Senses), nameof(AfterBailOut))); n++; }
+                var blast = explode != null ? HarmonyLib.AccessTools.Method(explode, "Blast", new[] { typeof(GameObject) }) : null;
+                if (blast != null) { h.Patch(blast, postfix: new HarmonyLib.HarmonyMethod(typeof(Senses), nameof(AfterBlast))); n++; }
+                Plugin.Log.LogInfo("Senses: Apocapatrol found, " + n + "/2 crew rules hooked" + (bail == null ? " (no Patrol.BailOut)" : "") + (blast == null ? " (no Explode.Blast)" : ""));
+            }
+            catch (Exception e) { Plugin.Log.LogError("Senses: Apocapatrol hooks failed: " + e); }
+        }
+
+        public static void AfterBailOut(GameObject car, GameObject pax, GameObject __result)
+        {
+            try
+            {
+                if (!On || !Plugin.BailOutAware.Value || __result == null) return;
+                GameObject target = null;
+                if (pax != null)
+                    foreach (var f in pax.GetComponents<PlayMakerFSM>())
+                        if (f != null && f.FsmName == "Detection" && f.Fsm != null && f.Fsm.Initialized)
+                        {
+                            var v = f.FsmVariables.FindFsmGameObject("detectedObj");
+                            if (v != null && v.Value != null && v.Value.name.IndexOf("Apocaraiders.Ghost", StringComparison.Ordinal) < 0) target = v.Value.transform.root.gameObject;
+                            break;
+                        }
+                if (target == null || (_playerCar != null && target == _playerCar)) { FindPlayer(); target = _player; }
+                if (target == null) return;
+                Vector3 from = car != null ? car.transform.position : __result.transform.position;
+                if (target == _player && (target.transform.position - from).magnitude > Plugin.BailOutAwareRange.Value) return;
+                Inform(__result, target);
+            }
+            catch (Exception e) { Plugin.Log.LogError("Senses: bail-out handover: " + e); }
+        }
+
+        public static void AfterBlast(GameObject car)
+        {
+            try
+            {
+                if (!On || car == null || Plugin.ExplosionRange.Value <= 0f) return;
+                Noise(car, car.transform.position, Plugin.ExplosionRange.Value, Src.Gunshot, Prefab(car.name) + " exploding", null, null);
+            }
+            catch (Exception e) { Plugin.Log.LogError("Senses: explosion noise: " + e); }
+        }
+
+        // tell an NPC (now, or the moment it registers) that it knows about target
+        internal static void Inform(GameObject npc, GameObject target)
+        {
+            if (npc == null || target == null) return;
+            var a = Get(npc);
+            _handover[npc.GetInstanceID()] = new KeyValuePair<GameObject, float>(target, Time.time);
+            if (a != null) Handover(a);
+        }
+
+        private static void Handover(Agent a)
+        {
+            if (_handover.Count == 0) return;
+            KeyValuePair<GameObject, float> h;
+            int id = a.Owner.GetInstanceID();
+            if (!_handover.TryGetValue(id, out h)) return;
+            _handover.Remove(id);
+            if (h.Key == null || Time.time - h.Value > 30f) return;
+            if (Visible(a, Eye(a), h.Key, h.Key == _player)) { Engage(a, h.Key); Log(a, "bailed out and sees " + Name(h.Key)); return; }
+            float now = Time.time;
+            a.LastSeen = h.Key.transform.position;
+            var g = GetOrMake(Src.Vision, a.LastSeen, h.Key, "crew knew where " + Name(h.Key) + " was", 6f, 2f, now);
+            if (Assign(a, g, Src.Vision, now)) Log(a, "bailed out, goes where its crew last had " + Name(h.Key) + " (ghost #" + g.Id + ")");
+        }
+
         // ---------- registry ----------
         private static Agent Get(GameObject owner)
         {
@@ -656,6 +743,7 @@ namespace Apocaraiders
             a = Make(owner);
             if (a == null) { _ignored.Add(id); return null; }
             _agents[id] = a;
+            Handover(a);
             return a;
         }
 
