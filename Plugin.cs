@@ -18,7 +18,7 @@ namespace Apocaraiders
     {
         public const string GUID = "com.denis.apocalypter.apocaraiders";
         public const string NAME = "Apocaraiders";
-        public const string VERSION = "0.5.0";
+        public const string VERSION = "0.5.1";
 
         internal static ManualLogSource Log;
         internal static string Dir;
@@ -28,7 +28,8 @@ namespace Apocaraiders
         internal static ConfigEntry<int> GungirlChance;
         internal static ConfigEntry<string> GungirlModel, GungirlTexture, GungirlVoice, GungirlHideParts;
         internal static ConfigEntry<Key> SpawnKey;
-        internal static ConfigEntry<bool> TracersEnabled, VehicleDamage, PlayerTracers, NpcAimAtBody, AimEnabled, HitMarker;
+        internal static ConfigEntry<bool> TracersEnabled, VehicleDamage, PlayerTracers, NpcAimAtBody, AimEnabled, HitMarker, LeadTargets;
+        internal static ConfigEntry<float> LeadAccuracy, LeadError, MaxLeadTime;
         internal static ConfigEntry<int> DamageNumbers, DamageFontSize, HitMarkerSize;
         internal static ConfigEntry<float> AimBaseDistance, AimDelayPer5m, SpreadPer5m, EngagePercent, EngagePatience, HoldRecheckMin, HoldRecheckMax;
         internal static ConfigEntry<float> BulletSpeed, BoltSpeed, TracerWidth, TracerLength, BoltWidth, BoltLength, TracerGlow;
@@ -130,6 +131,13 @@ namespace Apocaraiders
             HoldRecheckMin = Config.Bind("NpcAim", "HoldRecheckMin", 1f, new ConfigDescription(
                 "While holding fire (target too far), the NPC looks again after a random pause between HoldRecheckMin and HoldRecheckMax seconds: its reaction time once you come into reach.",
                 new AcceptableValueRange<float>(0.1f, 30f)));
+            LeadTargets = Config.Bind("NpcAim", "LeadTargets", true,
+                "NPCs aim where a moving target will be when the bullet arrives (the game's hitscan never had to). Changing direction still beats them.");
+            LeadAccuracy = Config.Bind("NpcAim", "LeadAccuracy", 0.75f, new ConfigDescription(
+                "How much of the ideal lead NPCs apply: 1 = perfect prediction, 0 = none. Each NPC rolls a personal skill between half of this and all of it.",
+                new AcceptableValueRange<float>(0f, 1f)));
+            LeadError = Config.Bind("NpcAim", "LeadError", 30f, new ConfigDescription("Random error on the NPC's estimate of your speed, +/- %, per shot.", new AcceptableValueRange<float>(0f, 100f)));
+            MaxLeadTime = Config.Bind("NpcAim", "MaxLeadTime", 1.5f, new ConfigDescription("Longest flight time NPCs lead for, s (bolts at long range).", new AcceptableValueRange<float>(0f, 5f)));
             HoldRecheckMax = Config.Bind("NpcAim", "HoldRecheckMax", 4f, new ConfigDescription("See HoldRecheckMin.", new AcceptableValueRange<float>(0.1f, 30f)));
             SpawnKey = Config.Bind("Debug", "SpawnKey", Key.F9,
                 "Spawns a Gungirl 6 m in front of you (a real raider: she fights and is saved). None = off.");

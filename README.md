@@ -39,7 +39,9 @@ for a headshot). Both can be turned off.
 Gunmen pace their fire by distance. They don't shoot at all beyond their gun's reach (the Tracers ranges) and keep
 closing in until you are within 85 % of it (a few seconds of patience, then they fire anyway). Up to 5 m they aim and
 spread as the game made them; every 5 m beyond that adds 0.25 s to the pause between their bursts and 10 % to their
-spread. All of it is configurable.
+spread. They also lead a moving target: they aim where you will be when the bullet gets there, as well as each of them
+can guess (some raiders are better shots than others, and all of them misjudge your speed a little), so running in a
+straight line is no longer safe at range, while a change of direction still throws them off. All of it is configurable.
 
 ## Install
 
@@ -68,7 +70,8 @@ BepInEx\plugins\Apocaraiders\Sounds\Gungirl\*.wav / *.ogg
   the falloff range per weapon type, shotgun pellets and spread, vehicle damage on/off, the metal-plate chance, and the
   most bullets in flight at once.
 - **[NpcAim]**: on/off, AimBaseDistance, AimDelayPer5m, SpreadPer5m, EngagePercent (fire within this % of the reach),
-  EngagePatience, HoldRecheckMin/Max (1 to 4 s reaction time once you come into reach).
+  EngagePatience, HoldRecheckMin/Max (1 to 4 s reaction time once you come into reach), LeadTargets, LeadAccuracy
+  (0 = no lead, 1 = perfect), LeadError (% speed misjudgement), MaxLeadTime.
 - **[Hud]**: DamageNumbers (0/1/2), DamageFontSize, HitMarker on/off, HitMarkerSize.
 - **[Debug] HitLog**: logs every bullet that hits a creature with its damage and the creature's health before and after.
 - **[Debug] SpawnKey** (F9): spawns a Gungirl in front of you.

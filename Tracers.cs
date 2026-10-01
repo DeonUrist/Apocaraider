@@ -65,6 +65,7 @@ namespace Apocaraiders
             public GameObject Impact;
             public FsmFloat DamageVar;      // the attack state's SetFsmFloat.setValue (usually {Damage Value})
             public float DamageLiteral;
+            public float LeadSkill = 1f;    // this NPC's share of [NpcAim] LeadAccuracy (0.5..1, rolled once)
             public string EventName = "Damage";
             public string BodypartFsm = "Bodypart", BodypartVar = "Damage";
         }
@@ -106,10 +107,29 @@ namespace Apocaraiders
                     jitter *= Aim.SpreadFactor(Vector3.Distance(owner.transform.position, target.transform.position));
                 Vector3 aim;
                 var cap0 = root != null ? PlayerCapsule(root) : null;
-                if (cap0 != null && Plugin.NpcAimAtBody.Value) aim = cap0.transform.TransformPoint(cap0.center) + jitter;
-                else aim = (head != null ? head : target).transform.position + jitter;
+                if (cap0 != null && Plugin.NpcAimAtBody.Value) aim = cap0.transform.TransformPoint(cap0.center);
+                else aim = (head != null ? head : target).transform.position;
                 Transform muzzle = MuzzleOf(info, owner);
                 Vector3 from = muzzle != null ? muzzle.position : fsm.GetOwnerDefaultTarget(__instance.gameObject).transform.position;
+                float speed0 = info.Kind == Kind.Crossbow ? Plugin.BoltSpeed.Value : Plugin.BulletSpeed.Value;
+                // lead a moving target ([NpcAim] LeadTargets): where it will be when the bullet arrives, as well as this NPC can guess
+                if (Plugin.LeadTargets.Value)
+                {
+                    Vector3 v = VelocityOf(target, root);
+                    v.y *= 0.5f;                                   // a jump is not a direction
+                    if (v.sqrMagnitude > 0.25f && speed0 > 1f)
+                    {
+                        float t = Vector3.Distance(from, aim) / speed0;
+                        t = Vector3.Distance(from, aim + v * t) / speed0;   // one refinement: the far point takes longer
+                        t = Mathf.Min(t, Mathf.Max(0f, Plugin.MaxLeadTime.Value));
+                        float skill = Mathf.Clamp01(Plugin.LeadAccuracy.Value) * info.LeadSkill;
+                        float err = 1f + UnityEngine.Random.Range(-1f, 1f) * Mathf.Clamp(Plugin.LeadError.Value, 0f, 100f) / 100f;
+                        Vector3 lead = v * (t * skill * err);
+                        aim += lead;
+                        if (Plugin.HitLog.Value) Plugin.Log.LogInfo("Lead: " + owner.name + " leads " + lead.magnitude.ToString("0.00") + " m (target " + v.magnitude.ToString("0.0") + " m/s, flight " + t.ToString("0.00") + " s, skill " + skill.ToString("0.00") + ")");
+                    }
+                }
+                aim += jitter;
                 Vector3 dir = aim - from;
                 if (dir.sqrMagnitude < 1e-4f) dir = owner.transform.forward;
                 dir.Normalize();
@@ -125,7 +145,7 @@ namespace Apocaraiders
                     var s = new Shot
                     {
                         Pos = from, Start = from, Dir = d,
-                        Speed = info.Kind == Kind.Crossbow ? Plugin.BoltSpeed.Value : Plugin.BulletSpeed.Value,
+                        Speed = speed0,
                         Range = RangeOf(info.Kind),
                         Damage = damage / pellets * (info.Kind == Kind.Shotgun ? Mathf.Max(0f, Plugin.NpcShotgunDamage.Value) : 1f),
                         Target = target,
@@ -166,6 +186,7 @@ namespace Apocaraiders
             _notGun.Clear();
             _heads.Clear();
             _player = null;
+            _playerTracked = false;
             _pushes.Clear();
             _popped.Clear();
         }
@@ -174,6 +195,38 @@ namespace Apocaraiders
         private static readonly Dictionary<Fsm, PlayerGun> _guns = new Dictionary<Fsm, PlayerGun>();
         private static readonly Dictionary<Fsm, bool> _notGun = new Dictionary<Fsm, bool>();
         private static GameObject _player;
+
+        // ---------- target velocity (for the lead) ----------
+        // The player: sampled every frame by Tick and smoothed over ~0.1 s (works however the game moves them, on foot or in a car).
+        // Other targets (NPC vs NPC): their Rigidbody, which the Movement FSM drives with SetVelocity.
+        private static Vector3 _playerVel, _playerLast;
+        private static bool _playerTracked;
+        private static float _nextFind;
+
+        private static void TrackPlayer(float dt)
+        {
+            if (_player == null)
+            {
+                if (Time.unscaledTime < _nextFind) return;         // no player (menu): look once a second, not every frame
+                _nextFind = Time.unscaledTime + 1f;
+                _player = GameObject.Find("Player");
+                if (_player == null) { _playerTracked = false; return; }
+            }
+            Vector3 p = _player.transform.position;
+            if (!_playerTracked || dt <= 0f) { _playerLast = p; _playerVel = Vector3.zero; _playerTracked = true; return; }
+            Vector3 v = (p - _playerLast) / dt;
+            _playerLast = p;
+            if (v.sqrMagnitude > 50f * 50f) v = Vector3.zero;              // a teleport / load, not movement
+            float k = Mathf.Clamp01(dt / 0.1f);
+            _playerVel = Vector3.Lerp(_playerVel, v, k);
+        }
+
+        private static Vector3 VelocityOf(GameObject target, GameObject root)
+        {
+            if (_player != null && (target == _player || (root != null && root == _player))) return _playerTracked ? _playerVel : Vector3.zero;
+            var rb = target.GetComponentInParent<Rigidbody>();
+            return rb != null ? rb.velocity : Vector3.zero;
+        }
 
         // Harmony prefix on HutongGames.PlayMaker.Actions.Raycast.OnEnter. Only the "fire" Raycast of a first-person gun's Attack FSM
         // (an FSM named Attack whose GameObject also has a Reload FSM; melee weapons have none). false = vanilla skipped.
@@ -449,7 +502,7 @@ namespace Apocaraiders
             ShooterInfo info;
             int id = owner.GetInstanceID();
             if (_shooters.TryGetValue(id, out info) && (info.Weapon == null || info.Weapon.gameObject.activeInHierarchy)) return info;
-            info = new ShooterInfo { Owner = owner };
+            info = new ShooterInfo { Owner = owner, LeadSkill = UnityEngine.Random.Range(0.5f, 1f) };
             _shooters[id] = info;
 
             // the weapon in the hand: a model with a fire_effect child (guns) or an active "crossbow"
@@ -582,6 +635,7 @@ namespace Apocaraiders
             float dt = Time.deltaTime;
             Snapshot();
             if (dt <= 0f) { Draw(); return; }   // paused: keep drawing, don't move
+            if (Plugin.LeadTargets.Value) TrackPlayer(dt);
             for (int i = _shots.Count - 1; i >= 0; i--)
             {
                 var s = _shots[i];
