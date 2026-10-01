@@ -17,7 +17,7 @@ namespace Apocaraiders
     {
         public const string GUID = "com.denis.apocalypter.apocaraiders";
         public const string NAME = "Apocaraiders";
-        public const string VERSION = "0.1.1";
+        public const string VERSION = "0.1.2";
 
         internal static ManualLogSource Log;
         internal static string Dir;
@@ -40,7 +40,7 @@ namespace Apocaraiders
             GungirlChance = Config.Bind("Gungirl", "Chance", 50, new ConfigDescription(
                 "% of the Flexa raiders the game spawns that are Gungirls instead (same camps, same gear and fighting).",
                 new AcceptableValueRange<int>(0, 100)));
-            GungirlModel = Config.Bind("Gungirl", "Model", "Models/flexa_female.gltf",
+            GungirlModel = Config.Bind("Gungirl", "Model", "Models/Flexa_female.glb",
                 "Body model (.gltf or .glb), relative to the mod folder. Must be rigged to Flexa's skeleton (mixamorig bones). Read at game start.");
             GungirlTexture = Config.Bind("Gungirl", "Texture", "Models/flexa_female.png",
                 "Body texture (PNG/JPG), relative to the mod folder. Read at game start.");

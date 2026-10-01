@@ -16,8 +16,7 @@ Needs BepInEx 5. Copy the `Apocaraiders` folder into `BepInEx\plugins\`, so you 
 
 ```
 BepInEx\plugins\Apocaraiders\Apocaraiders.dll
-BepInEx\plugins\Apocaraiders\Models\flexa_female.gltf
-BepInEx\plugins\Apocaraiders\Models\Flexa.bin
+BepInEx\plugins\Apocaraiders\Models\Flexa_female.glb
 BepInEx\plugins\Apocaraiders\Models\flexa_female.png
 ```
 
