@@ -87,7 +87,7 @@ BepInEx\plugins\Apocaraiders\Sounds\Gungirl\*.wav / *.ogg
 - **[Tracers]**: on/off (NPCs and, separately, your own guns), bullet and bolt speed, colour, width, length and glow,
   the falloff range per weapon type, shotgun pellets and spread, ImpactEffects, MetalSparks and MetalSparksScale, vehicle damage on/off and VehicleDamagePer1, the
   metal-plate chance, and the most bullets in flight at once.
-- **[NpcAim]**: on/off, AimBaseDistance, AimDelayPer5m, SpreadPer5m, EngagePercent (fire within this % of the reach),
+- **[NpcAim]**: on/off, AimTimeScale (% of the game's pause between bursts, 50 = twice as fast), AimBaseDistance, AimDelayPer5m, SpreadPer5m, EngagePercent (fire within this % of the reach),
   EngagePatience, HoldRecheckMin/Max (1 to 4 s reaction time once you come into reach), LeadTargets, LeadAccuracy
   (0 = no lead, 1 = perfect), LeadError (% speed misjudgement), MaxLeadTime.
 - **[Brain]**: on/off, TurnRate (deg/s), AimPose (gun kept up while holding), CrouchChance (% of holds spent kneeling), FeelerLength / FeelerAngle / FeelerCount, DropCheck, AdvanceChance (% per hold

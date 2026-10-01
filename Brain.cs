@@ -70,7 +70,9 @@ namespace Apocaraiders
         private static readonly List<int> _dead = new List<int>();
         private static float _nextCount, _interval = 0.1f;
         private static int _active, _created;
-        private static readonly int Mask = (1 << 0) | (1 << 8) | (1 << 11) | (1 << 16);   // the game's bumper-ray layers (terrain, buildings, vehicle parts)
+        // layers (TagManager): 0 Default, 6 Player, 8 Car, 9 Item, 10 Actor, 11 Door, 14 Ground, 16 SeeTrough, 18 PhysicsLock
+        private static readonly int Mask = (1 << 0) | (1 << 8) | (1 << 11) | (1 << 16);   // the game's bumper-ray layers (buildings, cars, doors, fences)
+        private static readonly int GroundMask = (1 << 0) | (1 << 8) | (1 << 11) | (1 << 14) | (1 << 16);   // + Ground: for the drop check
         private static float[] _angles = new float[0];
         private static readonly float[] _scores = new float[32];
         private static readonly float[] _blocks = new float[32];
@@ -249,7 +251,7 @@ namespace Apocaraiders
                 {
                     Vector3 dir = Quaternion.Euler(0f, targetYaw + _angles[best], 0f) * Vector3.forward;
                     Vector3 ahead = origin + dir * Mathf.Min(1.5f, len);
-                    if (Physics.Raycast(ahead, Vector3.down, 4f, Mask, QueryTriggerInteraction.Ignore)) break;
+                    if (Physics.Raycast(ahead, Vector3.down, 4f, GroundMask, QueryTriggerInteraction.Ignore)) break;
                     _scores[best] = float.MinValue;
                     int nb = -1; float nbs = float.MinValue;
                     for (int i = 0; i < count; i++) if (_scores[i] > nbs) { nbs = _scores[i]; nb = i; }

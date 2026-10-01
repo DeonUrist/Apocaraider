@@ -141,7 +141,8 @@ namespace Apocaraiders
                     var target = owner != null ? TargetOf(owner) : null;
                     if (target != null)
                         extra = Steps(Vector3.Distance(owner.transform.position, target.transform.position)) * Plugin.AimDelayPer5m.Value;
-                    w.MyMin.Value = baseMin + extra; w.MyMax.Value = baseMax + extra;
+                    float scale = Mathf.Clamp(Plugin.AimTimeScale.Value, 1f, 300f) / 100f;    // [NpcAim] AimTimeScale: 50 % = twice as fast between bursts
+                    w.MyMin.Value = (baseMin + extra) * scale; w.MyMax.Value = (baseMax + extra) * scale;
                 }
                 __instance.min = w.MyMin; __instance.max = w.MyMax;
                 return true;

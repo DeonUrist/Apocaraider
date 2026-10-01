@@ -18,7 +18,7 @@ namespace Apocaraiders
     {
         public const string GUID = "com.denis.apocalypter.apocaraiders";
         public const string NAME = "Apocaraiders";
-        public const string VERSION = "0.8.0";
+        public const string VERSION = "0.8.1";
 
         internal static ManualLogSource Log;
         internal static string Dir;
@@ -31,7 +31,7 @@ namespace Apocaraiders
         internal static ConfigEntry<bool> TracersEnabled, VehicleDamage, PlayerTracers, NpcAimAtBody, AimEnabled, HitMarker, LeadTargets, ImpactEffects, MetalSparks;
         internal static ConfigEntry<float> LeadAccuracy, LeadError, MaxLeadTime;
         internal static ConfigEntry<int> DamageNumbers, DamageFontSize, HitMarkerSize;
-        internal static ConfigEntry<float> AimBaseDistance, AimDelayPer5m, SpreadPer5m, EngagePercent, EngagePatience, HoldRecheckMin, HoldRecheckMax;
+        internal static ConfigEntry<float> AimTimeScale, AimBaseDistance, AimDelayPer5m, SpreadPer5m, EngagePercent, EngagePatience, HoldRecheckMin, HoldRecheckMax;
         internal static ConfigEntry<float> BulletSpeed, BoltSpeed, TracerWidth, TracerLength, BoltWidth, BoltLength, TracerGlow;
         internal static ConfigEntry<Color> TracerColor, BoltColor;
         internal static ConfigEntry<float> PistolRange, SmgRange, RifleRange, SniperRange, ShotgunRange, CrossbowRange, ShotgunPelletSpread, FullDamageUntil, NpcShotgunDamage, VehicleDamagePer1, MetalSparksScale, MetalSheetPopChance, NpcHitRadius, PlayerBodyRadius, PlayerHeadRadius, HeadshotMultiplier;
@@ -127,6 +127,9 @@ namespace Apocaraiders
             MaxTracers = Config.Bind("Tracers", "MaxTracers", 300, new ConfigDescription("Most bullets in flight at once; shots above this hit instantly (vanilla style) instead.", new AcceptableValueRange<int>(16, 2000)));
             AimEnabled = Config.Bind("NpcAim", "Enabled", true,
                 "NPC gunmen pace their fire by distance: no shots beyond the gun's reach (the [Tracers] ranges), slower aiming and a wider spread far away.");
+            AimTimeScale = Config.Bind("NpcAim", "AimTimeScale", 50f, new ConfigDescription(
+                "How long NPCs take to aim between bursts, as % of the game's own pause (3-5 s, plus the distance delay): 50 = half the time, 100 = as the game, 300 = three times slower.",
+                new AcceptableValueRange<float>(1f, 300f)));
             AimBaseDistance = Config.Bind("NpcAim", "AimBaseDistance", 5f, new ConfigDescription(
                 "Up to this distance, m, NPCs aim and spread as the game does; every 5 m beyond it adds AimDelayPer5m and SpreadPer5m.", new AcceptableValueRange<float>(0f, 200f)));
             AimDelayPer5m = Config.Bind("NpcAim", "AimDelayPer5m", 0.25f, new ConfigDescription(
