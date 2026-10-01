@@ -18,7 +18,7 @@ namespace Apocaraiders
     {
         public const string GUID = "com.denis.apocalypter.apocaraiders";
         public const string NAME = "Apocaraiders";
-        public const string VERSION = "0.4.4";
+        public const string VERSION = "0.4.5";
 
         internal static ManualLogSource Log;
         internal static string Dir;
@@ -66,7 +66,7 @@ namespace Apocaraiders
             GungirlVoiceIntervalMax = Config.Bind("Gungirl", "VoiceIntervalMax", 8f, new ConfigDescription(
                 "Longest pause between her shouts, seconds (Flexa: 4).",
                 new AcceptableValueRange<float>(0f, 60f)));
-            GungirlHideParts = Config.Bind("Gungirl", "HideParts", "beard",
+            GungirlHideParts = Config.Bind("Gungirl", "HideParts", "beard, headband, armband",
                 "Flexa's attachments to hide on a Gungirl, comma-separated name starts: beard, headband, armband, bag1, pouch1, armor2, machete.");
             TracersEnabled = Config.Bind("Tracers", "Enabled", true,
                 "Gun-wielding NPCs (raiders, Coyotes ...) fire visible bullets with travel time instead of instant hits; crossbows fire visible bolts.");
@@ -77,25 +77,25 @@ namespace Apocaraiders
             TracerColor = Config.Bind("Tracers", "TracerColor", new Color(1f, 0.78f, 0.35f, 1f), "Bullet tracer colour (RGBA hex). Unlit: same brightness day and night.");
             BoltColor = Config.Bind("Tracers", "BoltColor", new Color(0.85f, 0.72f, 0.5f, 1f), "Crossbow bolt colour (RGBA hex).");
             TracerGlow = Config.Bind("Tracers", "Glow", 1.5f, new ConfigDescription("Brightness multiplier of tracers and bolts.", new AcceptableValueRange<float>(0f, 8f)));
-            TracerWidth = Config.Bind("Tracers", "TracerWidth", 0.03f, new ConfigDescription("Tracer line width, m.", new AcceptableValueRange<float>(0.005f, 0.5f)));
+            TracerWidth = Config.Bind("Tracers", "TracerWidth", 0.1f, new ConfigDescription("Tracer line width, m.", new AcceptableValueRange<float>(0.005f, 0.5f)));
             TracerLength = Config.Bind("Tracers", "TracerLength", 4f, new ConfigDescription("Tracer line length, m.", new AcceptableValueRange<float>(0.1f, 30f)));
-            BoltWidth = Config.Bind("Tracers", "BoltWidth", 0.03f, new ConfigDescription("Bolt line width, m.", new AcceptableValueRange<float>(0.005f, 0.5f)));
+            BoltWidth = Config.Bind("Tracers", "BoltWidth", 0.04f, new ConfigDescription("Bolt line width, m.", new AcceptableValueRange<float>(0.005f, 0.5f)));
             BoltLength = Config.Bind("Tracers", "BoltLength", 0.8f, new ConfigDescription("Bolt line length, m.", new AcceptableValueRange<float>(0.1f, 5f)));
             PistolRange = Config.Bind("Tracers", "PistolRange", 60f, new ConfigDescription("Pistols/revolvers: damage falls off linearly with distance - half at 50 % of this range, the bullet is gone at 100 %. Metres.", new AcceptableValueRange<float>(5f, 1000f)));
             SmgRange = Config.Bind("Tracers", "SmgRange", 70f, new ConfigDescription("SMGs, falloff range in metres (half damage at half range).", new AcceptableValueRange<float>(5f, 1000f)));
             RifleRange = Config.Bind("Tracers", "RifleRange", 120f, new ConfigDescription("Automatic rifles and machine guns, falloff range in metres.", new AcceptableValueRange<float>(5f, 1000f)));
             SniperRange = Config.Bind("Tracers", "SniperRange", 250f, new ConfigDescription("Sniper/scoped rifles, falloff range in metres.", new AcceptableValueRange<float>(5f, 1000f)));
-            ShotgunRange = Config.Bind("Tracers", "ShotgunRange", 50f, new ConfigDescription("Shotguns, falloff range in metres.", new AcceptableValueRange<float>(5f, 1000f)));
+            ShotgunRange = Config.Bind("Tracers", "ShotgunRange", 35f, new ConfigDescription("Shotguns, falloff range in metres.", new AcceptableValueRange<float>(5f, 1000f)));
             CrossbowRange = Config.Bind("Tracers", "CrossbowRange", 90f, new ConfigDescription("Crossbows, falloff range in metres.", new AcceptableValueRange<float>(5f, 1000f)));
-            ShotgunPellets = Config.Bind("Tracers", "ShotgunPellets", 2, new ConfigDescription("Pellets per vanilla shotgun ray (a vanilla blast is 4 rays; 2 = 8 pellets). The blast's damage is split between them.", new AcceptableValueRange<int>(1, 8)));
+            ShotgunPellets = Config.Bind("Tracers", "ShotgunPellets", 3, new ConfigDescription("Pellets per vanilla shotgun ray (a vanilla blast is 4 rays; 3 = 12 pellets). The blast's damage is split between them.", new AcceptableValueRange<int>(1, 8)));
             ShotgunPelletSpread = Config.Bind("Tracers", "ShotgunPelletSpread", 1f, new ConfigDescription("Extra spread of each pellet, degrees.", new AcceptableValueRange<float>(0f, 15f)));
             FullDamageUntil = Config.Bind("Tracers", "FullDamageUntil", 50f, new ConfigDescription(
                 "Every gun (NPC and yours) does full damage until this % of its range, then the damage falls off to 0 at the range. 0 = falloff from the muzzle (half damage at 50 %).",
                 new AcceptableValueRange<float>(0f, 99f)));
-            NpcShotgunDamage = Config.Bind("Tracers", "NpcShotgunDamage", 1f, new ConfigDescription(
+            NpcShotgunDamage = Config.Bind("Tracers", "NpcShotgunDamage", 1.7f, new ConfigDescription(
                 "Damage multiplier for NPC shotgun pellets (the game's shotgunners do 5-8 per ray x 4 rays per blast, a third of a rifle burst).",
                 new AcceptableValueRange<float>(0f, 5f)));
-            NpcHitRadius = Config.Bind("Tracers", "NpcHitRadius", 0.03f, new ConfigDescription(
+            NpcHitRadius = Config.Bind("Tracers", "NpcHitRadius", 0.05f, new ConfigDescription(
                 "Thickness of NPC bullets, m, added to the target's hitbox (your body/head shapes, other targets' colliders). 0 = hairline. Your own bullets are always a hairline.",
                 new AcceptableValueRange<float>(0f, 0.5f)));
             NpcAimAtBody = Config.Bind("Tracers", "NpcAimAtBody", true,
@@ -106,7 +106,7 @@ namespace Apocaraiders
             PlayerHeadRadius = Config.Bind("Tracers", "PlayerHeadRadius", 0.14f, new ConfigDescription(
                 "Your head as NPC bullets see it: a sphere of this radius at the top of your body, m.",
                 new AcceptableValueRange<float>(0.05f, 0.4f)));
-            HeadshotMultiplier = Config.Bind("Tracers", "HeadshotMultiplier", 1.5f, new ConfigDescription(
+            HeadshotMultiplier = Config.Bind("Tracers", "HeadshotMultiplier", 1.2f, new ConfigDescription(
                 "Damage multiplier for an NPC bullet that hits your head (the game itself has no headshots on the player: 1 = as before).",
                 new AcceptableValueRange<float>(0f, 5f)));
             VehicleDamage = Config.Bind("Tracers", "VehicleDamage", true, "A bullet that hits a vehicle part damages it: 10 damage = 1 % of the part's condition.");
@@ -115,13 +115,13 @@ namespace Apocaraiders
             MaxTracers = Config.Bind("Tracers", "MaxTracers", 300, new ConfigDescription("Most bullets in flight at once; shots above this hit instantly (vanilla style) instead.", new AcceptableValueRange<int>(16, 2000)));
             AimEnabled = Config.Bind("NpcAim", "Enabled", true,
                 "NPC gunmen pace their fire by distance: no shots beyond the gun's reach (the [Tracers] ranges), slower aiming and a wider spread far away.");
-            AimBaseDistance = Config.Bind("NpcAim", "AimBaseDistance", 10f, new ConfigDescription(
+            AimBaseDistance = Config.Bind("NpcAim", "AimBaseDistance", 5f, new ConfigDescription(
                 "Up to this distance, m, NPCs aim and spread as the game does; every 5 m beyond it adds AimDelayPer5m and SpreadPer5m.", new AcceptableValueRange<float>(0f, 200f)));
             AimDelayPer5m = Config.Bind("NpcAim", "AimDelayPer5m", 0.25f, new ConfigDescription(
                 "Seconds added to the pause between an NPC's bursts for every 5 m the target is beyond AimBaseDistance.", new AcceptableValueRange<float>(0f, 5f)));
             SpreadPer5m = Config.Bind("NpcAim", "SpreadPer5m", 10f, new ConfigDescription(
                 "% added to the NPC's aim spread for every 5 m the target is beyond AimBaseDistance.", new AcceptableValueRange<float>(0f, 100f)));
-            EngagePercent = Config.Bind("NpcAim", "EngagePercent", 75f, new ConfigDescription(
+            EngagePercent = Config.Bind("NpcAim", "EngagePercent", 85f, new ConfigDescription(
                 "NPCs open fire once the target is within this % of the gun's reach; farther away they keep closing in. Never beyond the reach itself.",
                 new AcceptableValueRange<float>(1f, 100f)));
             EngagePatience = Config.Bind("NpcAim", "EngagePatience", 5f, new ConfigDescription(

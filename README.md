@@ -17,10 +17,10 @@ tracer line flies from the muzzle, takes time to arrive, and hits whatever is re
 visible bolts. Tracers look the same by day and by night.
 
 - Damage falls off with distance: full damage up to half the weapon's range, then down to nothing at full range
-  (pistols 60 m, SMGs 70 m, rifles and machine guns 120 m, sniper rifles 250 m, shotguns 50 m, crossbows 90 m by default).
-- Shotguns fire a spread of pellets that together do the gun's damage. NPC shotgun damage can be scaled (`NpcShotgunDamage`).
+  (pistols 60 m, SMGs 70 m, rifles and machine guns 120 m, sniper rifles 250 m, shotguns 35 m, crossbows 90 m by default).
+- Shotguns fire a spread of pellets that together do the gun's damage. NPC shotgun pellets do 1.7x the game's damage by default (`NpcShotgunDamage`), so a shotgunner up close is a real threat.
 - NPC bullets see you as a realistic body (feet to neck, shoulder width) plus a head: the game's own player collider is a slim
-  0.4 m capsule that made many visible hits miss. A headshot does 1.5x damage by default (the game had no headshots on you).
+  0.4 m capsule that made many visible hits miss. A headshot does 1.2x damage by default (the game had no headshots on you).
   One bullet hits one thing, then it's gone.
 - A bullet that hits a vehicle part damages it (10 damage = 1 % of the part's condition), and a bolted-on metal plate
   can be knocked off (20 % per hit by default).
@@ -29,7 +29,7 @@ visible bolts. Tracers look the same by day and by night.
 ## NPC aim
 
 Gunmen pace their fire by distance. They don't shoot at all beyond their gun's reach (the Tracers ranges) and keep
-closing in until you are within 75 % of it (a few seconds of patience, then they fire anyway). Up to 10 m they aim and
+closing in until you are within 85 % of it (a few seconds of patience, then they fire anyway). Up to 5 m they aim and
 spread as the game made them; every 5 m beyond that adds 0.25 s to the pause between their bursts and 10 % to their
 spread. All of it is configurable.
 
@@ -55,7 +55,7 @@ BepInEx\plugins\Apocaraiders\Sounds\Gungirl\*.wav / *.ogg
 - **[Gungirl] Voice**: the folder with her voice clips (see below).
 - **[Gungirl] VoiceMatchLoudness / VoiceVolume**: her clips are brought to Flexa's loudness, then scaled by VoiceVolume (1 = as loud as Flexa).
 - **[Gungirl] VoiceIntervalMin / VoiceIntervalMax**: the pause between her shouts in a fight, in seconds (default 2 to 8; Flexa uses 0.1 to 4).
-- **[Gungirl] HideParts**: Flexa's attachments she doesn't wear (default: the beard).
+- **[Gungirl] HideParts**: Flexa's attachments she doesn't wear (default: beard, headband, armband).
 - **[Tracers]**: on/off (NPCs and, separately, your own guns), bullet and bolt speed, colour, width, length and glow,
   the falloff range per weapon type, shotgun pellets and spread, vehicle damage on/off, the metal-plate chance, and the
   most bullets in flight at once.
