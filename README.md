@@ -26,7 +26,7 @@ visible bolts. Tracers look the same by day and by night.
   can be knocked off (20 % per hit by default).
 - A hit on its target does exactly what the game's own hit does (blood/sparks, damage, armor, hit sounds), and a bullet
   that misses you and hits the world shows the same sparks and sound your own hits make (the game showed nothing for NPC
-  misses). Vehicle parts and metal plates throw extra sparks when the game's MetalImpact effect is available.
+  misses). Any part of a car except its wheels throws extra sparks.
 - Headshots on raiders work as in the game (their head capsule doubles the damage); the mod's bullets see the same
   bodies the game's own shots do.
 

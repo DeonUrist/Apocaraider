@@ -18,7 +18,7 @@ namespace Apocaraiders
     {
         public const string GUID = "com.denis.apocalypter.apocaraiders";
         public const string NAME = "Apocaraiders";
-        public const string VERSION = "0.5.4";
+        public const string VERSION = "0.5.5";
 
         internal static ManualLogSource Log;
         internal static string Dir;
@@ -114,7 +114,7 @@ namespace Apocaraiders
             ImpactEffects = Config.Bind("Tracers", "ImpactEffects", true,
                 "NPC bullets that hit the world show the same impact (sparks, sound) your own hits do; the game showed nothing for their misses.");
             MetalSparks = Config.Bind("Tracers", "MetalSparks", true,
-                "Extra sparks, smoke and a bullet mark on vehicle parts and metal plates (any bullet), using the game's MetalImpact effect when it is available.");
+                "Extra sparks, smoke and a bullet mark on anything that is part of a car - attached parts, the body and frame, loose parts - except wheels (any bullet), using the game's MetalImpact effect.");
             MetalSparksScale = Config.Bind("Tracers", "MetalSparksScale", 0.25f, new ConfigDescription("Size of the metal sparks effect (1 = the prefab's own, demo-scene size).", new AcceptableValueRange<float>(0.05f, 4f)));
             VehicleDamage = Config.Bind("Tracers", "VehicleDamage", true, "A bullet that hits a vehicle part damages it (see VehicleDamagePer1).");
             VehicleDamagePer1 = Config.Bind("Tracers", "VehicleDamagePer1", 20f, new ConfigDescription(

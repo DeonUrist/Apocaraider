@@ -180,6 +180,7 @@ namespace Apocaraiders
             _shooters.Clear();
             _counts.Clear();
             _rangedHit = null; _metalImpact = null; _effectsLooked = false;
+            _carRoots.Clear();
             _reported.Clear();
             Hud.OnSceneLoaded();
             Aim.OnSceneLoaded();
@@ -923,9 +924,7 @@ namespace Apocaraiders
             if (!Plugin.MetalSparks.Value) return;
             FindEffects();
             if (_metalImpact == null) return;
-            bool metal = false;
-            for (var t = col.transform; t != null && !metal; t = t.parent) metal = t.CompareTag("vehPart") || t.CompareTag("vehPartRemoved");
-            if (!metal) return;
+            if (!IsCarMetal(col.transform)) return;
             var fx = UnityEngine.Object.Instantiate(_metalImpact, point + normal * 0.01f, Quaternion.LookRotation(normal));
             float k = Mathf.Clamp(Plugin.MetalSparksScale.Value, 0.05f, 4f);
             if (Mathf.Abs(k - 1f) > 0.001f)
@@ -935,6 +934,27 @@ namespace Apocaraiders
                 fx.transform.localScale *= k;
             }
             UnityEngine.Object.Destroy(fx, 4f);                            // the prefab has no auto-destroy of its own
+        }
+
+        // Any part of a car (attached parts, the frame/body itself, loose parts) except wheels. A car = a root carrying NWH's VehicleController
+        // (looked up by name, no reference to the NWH assembly); cached per root.
+        private static readonly Dictionary<int, bool> _carRoots = new Dictionary<int, bool>();
+        private static bool IsCarMetal(Transform t)
+        {
+            bool onCar = false;
+            for (var p = t; p != null; p = p.parent)
+            {
+                string n = p.name;
+                if (n.IndexOf("wheel", StringComparison.OrdinalIgnoreCase) >= 0 || n.IndexOf("tire", StringComparison.OrdinalIgnoreCase) >= 0 || n.IndexOf("tyre", StringComparison.OrdinalIgnoreCase) >= 0)
+                    return false;                                   // a wheel item, its hinge, the hub collider: rubber, no sparks
+                if (!onCar && (p.CompareTag("vehPart") || p.CompareTag("vehPartRemoved"))) onCar = true;
+            }
+            if (onCar) return true;
+            var root = t.root;
+            int id = root.GetInstanceID();
+            bool car;
+            if (!_carRoots.TryGetValue(id, out car)) { car = root.GetComponent("VehicleController") != null; _carRoots[id] = car; }
+            return car;
         }
 
         private static void HitWorld(ref Shot s, Collider col, Vector3 point, float damage)
