@@ -84,6 +84,13 @@ namespace Apocaraiders
                 if (target == null) return true;
 
                 var st = StateOf(owner);
+                if (Senses.IsGhostTarget(owner))
+                {
+                    // the "target" is a ghost (a place the NPC goes to look at): nothing to shoot at
+                    st.Holding = true; st.Turning = false; st.HoldSince = -1f;
+                    __instance.Finish();
+                    return false;
+                }
                 float d = Vector3.Distance(owner.transform.position, target.transform.position);
                 float reach = Tracers.RangeOf(kind);
                 float engage = reach * Mathf.Clamp(Plugin.EngagePercent.Value, 1f, 100f) / 100f;

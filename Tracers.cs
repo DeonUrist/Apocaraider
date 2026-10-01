@@ -164,6 +164,7 @@ namespace Apocaraiders
                     else _shots.Add(s);
                 }
 
+                Senses.Shot(owner.transform.root.gameObject, from, info.Kind, false);
                 fsm.Event(__instance.isNotIntersectedEvent);    // vanilla goes down its miss branch: Wait rpm, next shot
                 return false;
             }
@@ -282,6 +283,7 @@ namespace Apocaraiders
                     if (_shots.Count >= Plugin.MaxTracers.Value) { Snapshot(); s.Speed = s.Range * 2f; Step(ref s, 1f); }
                     else _shots.Add(s);
                 }
+                Senses.Shot(_player, muzzle, gun.Kind, true);
                 __instance.Finish();         // vanilla: no hit -> FINISHED -> wait -> next shot, same rhythm
                 return false;
             }
@@ -416,6 +418,7 @@ namespace Apocaraiders
             var vp = fsm.Variables.GetFsmVector3("hitPoint"); if (vp != null) vp.Value = h.point;
             var vn = fsm.Variables.GetFsmVector3("hitNormal"); if (vn != null) vn.Value = h.normal;
             bool creature = HasBodypart(go) || HasBodypart(go.transform.root.gameObject);
+            if (creature) Senses.Hurt(go, s.Player);
             bool feedback = creature && (Plugin.DamageNumbers.Value != 0 || Plugin.HitMarker.Value);
             float before = Plugin.HitLog.Value || feedback ? HealthOf(go) : 0f;
             Replay(fsm, go.layer == 10 && gun.ActorHit != null ? gun.ActorHit : gun.GetLayer, falloff);
@@ -898,6 +901,7 @@ namespace Apocaraiders
                 }
             float before = Plugin.HitLog.Value ? HealthOf(target) : 0f;
             foreach (var f in fsms) f.SendEvent(s.EventName);
+            Senses.Hurt(target, s.ShooterRoot);
             if (Plugin.HitLog.Value)
                 Plugin.Log.LogInfo("Hit: " + (s.ShooterRoot != null ? s.ShooterRoot.name : "?") + " -> " + target.transform.root.name + "/" + target.name + " at "
                     + dist.ToString("0.0") + " m, damage " + damage.ToString("0.0")

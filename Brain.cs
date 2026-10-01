@@ -43,7 +43,7 @@ namespace Apocaraiders
     //   AddForce.DoAddForce (Unstuck) - no hop.
     internal static class Brain
     {
-        internal enum Mode { Off, Chase, Hold, Advance, BackUp, Rest }
+        internal enum Mode { Off, Chase, Hold, Advance, BackUp, Rest, Search }
 
         private sealed class Npc
         {
@@ -64,6 +64,7 @@ namespace Apocaraiders
             public int Side, ClearLooks; public float SideUntil; public bool Flipped;     // pathing: the committed way around an obstacle
             public float FreeLeft, FreeRight;                                             // the last fan's free lengths per half
             public Vector3 Waypoint; public bool HasWaypoint; public float WaypointUntil, NextScout;   // a scouted corner with a clear line to the target
+            public bool ToGhost; public float LookYaw, NextLookTurn;                       // Senses: going to a ghost / looking around at it
             public float BestDist = float.MaxValue, NoProgressSince;
             public int Stucks; public float FirstStuck;
             public float LosLostAt = -1f; public bool Los; public float Dist;
@@ -141,7 +142,16 @@ namespace Apocaraiders
                 var target = n.Target.Value;
                 if (target == null) continue;
                 Vector3 to;
-                if (n.Mode == Mode.Hold || n.Mode == Mode.Rest || state == "attack_ranged")
+                if (n.Mode == Mode.Search)
+                {
+                    if (now >= n.NextLookTurn)
+                    {
+                        n.NextLookTurn = now + UnityEngine.Random.Range(1f, 1.8f) * R;
+                        n.LookYaw = n.T.eulerAngles.y + (UnityEngine.Random.value < 0.5f ? -1f : 1f) * UnityEngine.Random.Range(80f, 160f);
+                    }
+                    to = Quaternion.Euler(0f, n.LookYaw, 0f) * Vector3.forward;
+                }
+                else if (n.Mode == Mode.Hold || n.Mode == Mode.Rest || state == "attack_ranged")
                     to = target.transform.position - n.T.position;
                 else if (n.HasHeading) to = Quaternion.Euler(0f, n.Heading, 0f) * Vector3.forward;
                 else to = target.transform.position - n.T.position;
@@ -172,12 +182,21 @@ namespace Apocaraiders
             float d = d3.magnitude;
             n.Dist = d;
             if (d > Plugin.MaxDistance.Value) { if (n.Mode != Mode.Off) SetMode(n, Mode.Off, "far"); return; }
-            if (n.Mode == Mode.Off) SetMode(n, Mode.Chase, "target at " + d.ToString("0") + " m");
+            int kind = Senses.KindOf(n.Owner);           // 0 vanilla / seen target, 1 seen target, 2 going to a ghost, 3 searching at it
+            if (kind == 3) { if (n.Mode != Mode.Search) { n.NextLookTurn = 0f; SetMode(n, Mode.Search, "looks around"); } return; }
+            n.ToGhost = kind == 2;
+            if (n.Mode == Mode.Off || n.Mode == Mode.Search) SetMode(n, Mode.Chase, (n.ToGhost ? "ghost" : "target") + " at " + d.ToString("0") + " m");
 
             if (n.Mode == Mode.BackUp) { if (now < n.ModeUntil) return; SetMode(n, Mode.Chase, "backed up"); }
             if (n.Mode == Mode.Rest) { if (now < n.ModeUntil) return; SetMode(n, Mode.Chase, "rested"); }
 
-            if (n.Ranged)
+            if (n.ToGhost)
+            {
+                // a ghost is a place, not a target: go there (melee style, around things), then look around
+                if (d <= Mathf.Max(0.5f, Plugin.ArriveDistance.Value)) { Senses.ArrivedAt(n.Owner); n.NextLookTurn = 0f; SetMode(n, Mode.Search, "at the ghost"); return; }
+                if (n.Mode == Mode.Hold || n.Mode == Mode.Advance) SetMode(n, Mode.Chase, "ghost");
+            }
+            else if (n.Ranged)
             {
                 bool los = LineOfSight(n, target, tp);
                 if (los) { n.Los = true; n.LosLostAt = -1f; }
@@ -254,8 +273,8 @@ namespace Apocaraiders
                 _angles = new float[count];
                 for (int i = 0; i < count; i++) _angles[i] = -half + half * 2f * i / (count - 1);   // symmetric, 0 in the middle
             }
-            bool adv = !n.Ranged || Plugin.ShooterPathing.Value;
-            float len = Mathf.Max(0.5f, n.Ranged ? Plugin.FeelerLength.Value : Plugin.MeleeFeelerLength.Value);
+            bool adv = !n.Ranged || Plugin.ShooterPathing.Value || n.ToGhost;
+            float len = Mathf.Max(0.5f, n.Ranged && !n.ToGhost ? Plugin.FeelerLength.Value : Plugin.MeleeFeelerLength.Value);
             if (dist < len) len = Mathf.Max(0.5f, dist);     // close to the target: don't "see" it as a wall
             Vector3 origin = n.Col != null ? n.Col.bounds.center : n.T.position;
             float targetYaw = Mathf.Atan2(toTarget.x, toTarget.z) * Mathf.Rad2Deg;
@@ -521,7 +540,7 @@ namespace Apocaraiders
             Mode was = n.Mode;
             n.Mode = m;
             if (m == Mode.Chase || m == Mode.Advance) { n.HasHeading = false; if (was != Mode.Chase && was != Mode.Advance && was != Mode.BackUp) { n.BestDist = float.MaxValue; n.NoProgressSince = Time.time; n.Flipped = false; n.Side = 0; n.HasWaypoint = false; } }
-            bool wasStill = was == Mode.Hold || was == Mode.Rest, still = m == Mode.Hold || m == Mode.Rest;
+            bool wasStill = was == Mode.Hold || was == Mode.Rest || was == Mode.Search, still = m == Mode.Hold || m == Mode.Rest || m == Mode.Search;
             if (m == Mode.Off) { if (wasStill) Move(n, true); }
             else if (still && !wasStill) Move(n, false);
             else if (!still && wasStill) Move(n, true);
@@ -701,11 +720,11 @@ namespace Apocaraiders
         private static void OnStuck(Npc n)
         {
             float now = Time.time;
-            if (n.Mode == Mode.Hold || n.Mode == Mode.Rest || n.Mode == Mode.BackUp || n.Mode == Mode.Off) return;
+            if (n.Mode == Mode.Hold || n.Mode == Mode.Rest || n.Mode == Mode.Search || n.Mode == Mode.BackUp || n.Mode == Mode.Off) return;
             if (now - n.FirstStuck > StuckWindow * R) { n.FirstStuck = now; n.Stucks = 0; }
             n.Stucks++;
             var target = n.Target != null ? n.Target.Value : null;
-            if (n.Ranged && target != null && n.Dist <= Tracers.RangeOf(n.Kind) && LineOfSight(n, target, target.transform.position))
+            if (n.Ranged && !n.ToGhost && target != null && n.Dist <= Tracers.RangeOf(n.Kind) && LineOfSight(n, target, target.transform.position))
             {
                 n.NextRecheck = now + Mathf.Max(0.1f, Plugin.HoldRecheckMax.Value) * R;
                 SetMode(n, Mode.Hold, "stuck, shoots from here");
@@ -822,7 +841,7 @@ namespace Apocaraiders
                 float z = __instance.z != null && !__instance.z.IsNone ? __instance.z.Value : (__instance.vector != null && !__instance.vector.IsNone ? __instance.vector.Value.z : 0f);
                 if (z <= 0f) return true;      // the Idle / attack states' "stop": vanilla
                 if (n.Rb == null) return true;
-                float speed = n.Mode == Mode.BackUp ? -Mathf.Min(z, 2.5f) : (n.Mode == Mode.Hold || n.Mode == Mode.Rest) ? 0f : z;
+                float speed = n.Mode == Mode.BackUp ? -Mathf.Min(z, 2.5f) : (n.Mode == Mode.Hold || n.Mode == Mode.Rest || n.Mode == Mode.Search) ? 0f : z;
                 Vector3 v = n.T.forward * speed;
                 v.y = n.Rb.velocity.y;
                 n.Rb.velocity = v;
@@ -901,7 +920,7 @@ namespace Apocaraiders
                 if (ev == "Animal_Run")
                 {
                     var n = NpcOf(__instance.Fsm, "Attack");
-                    if (n == null || (n.Mode != Mode.Hold && n.Mode != Mode.Rest)) return true;
+                    if (n == null || (n.Mode != Mode.Hold && n.Mode != Mode.Rest && n.Mode != Mode.Search)) return true;
                     if (n.Movement != null) n.Movement.SendEvent("Animal_Idle");
                     if (n.Mode == Mode.Hold) Aim(n);
                     __instance.Finish();

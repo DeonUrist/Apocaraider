@@ -18,7 +18,7 @@ namespace Apocaraiders
     {
         public const string GUID = "com.denis.apocalypter.apocaraiders";
         public const string NAME = "Apocaraiders";
-        public const string VERSION = "0.10.2";
+        public const string VERSION = "0.11.0";
 
         internal static ManualLogSource Log;
         internal static string Dir;
@@ -40,6 +40,10 @@ namespace Apocaraiders
         internal static ConfigEntry<bool> BrainEnabled, DropCheck, BrainLog, AimPose, ShooterPathing, ScaleWithActors;
         internal static ConfigEntry<float> TurnRate, CrouchChance, SensorInterval, ReactionTime, FeelerLength, MeleeFeelerLength, FeelerAngle, AdvanceChance, AdvanceMin, AdvanceMax, StuckBackupSeconds, StuckMemorySeconds, MaxDistance;
         internal static ConfigEntry<int> FeelerCount, StuckGiveUpCount;
+        internal static ConfigEntry<bool> SensesEnabled, MuffleSounds, SensesLog, ShowGhosts;
+        internal static ConfigEntry<float> SightCone, SightRange, DarkSightRange, DaylightIntensity, NoticeSeconds, LoseSeconds, SearchSeconds, LookInterval, ArriveDistance, MuffleFactor,
+            ShotRangePistol, ShotRangeSmg, ShotRangeRifle, ShotRangeSniper, ShotRangeShotgun, ShotRangeCrossbow, TauntRange, EngineMinRange, EngineMaxRange, EngineMinHp, EngineMaxHp, EngineIdleFactor, ThrowRange;
+        internal static ConfigEntry<string> NpcShotRanges, HumanFactions;
 
         private static GameObject _runner;
 
@@ -187,6 +191,35 @@ namespace Apocaraiders
             StuckMemorySeconds = Config.Bind("Brain", "StuckMemorySeconds", 3f, new ConfigDescription("How long the heading it got stuck on is avoided, s.", new AcceptableValueRange<float>(0f, 60f)));
             StuckGiveUpCount = Config.Bind("Brain", "StuckGiveUpCount", 3, new ConfigDescription("Stucks within 10 s after which the NPC stands still for a second (facing you) before trying again.", new AcceptableValueRange<int>(1, 20)));
             MaxDistance = Config.Bind("Brain", "MaxDistance", 150f, new ConfigDescription("NPCs farther than this from their target move the game's way (no cost).", new AcceptableValueRange<float>(20f, 1000f)));
+            SensesEnabled = Config.Bind("Senses", "Enabled", true,
+                "The mod's own detection replaces the game's: NPCs see with a cone from the head, worse in the dark, hear gunshots, taunts, thrown items and your engine, remember where you were and search there, and the alerts are shared and saved with the game. Off = the game's own sensors (a 240 deg look from the chest, no hearing).");
+            SightCone = Config.Bind("Senses", "SightCone", 100f, new ConfigDescription("Width of an NPC's field of view, degrees (the game: 240).", new AcceptableValueRange<float>(10f, 360f)));
+            SightRange = Config.Bind("Senses", "SightRange", 100f, new ConfigDescription("How far an NPC sees in daylight, m; also with your flashlight on, from any angle.", new AcceptableValueRange<float>(5f, 500f)));
+            DarkSightRange = Config.Bind("Senses", "DarkSightRange", 5f, new ConfigDescription("How far an NPC sees in full darkness, m. Dusk and moonlight lie in between.", new AcceptableValueRange<float>(0.5f, 500f)));
+            DaylightIntensity = Config.Bind("Senses", "DaylightIntensity", 0f, new ConfigDescription("Main-light intensity that counts as full daylight. 0 = Enviro's own sun setting. Raise it if nights feel too bright to NPCs, lower it if days feel dark (VerboseLog prints the light reading every minute).", new AcceptableValueRange<float>(0f, 20f)));
+            NoticeSeconds = Config.Bind("Senses", "NoticeSeconds", 0.2f, new ConfigDescription("How long a target has to be in view before the NPC reacts, s.", new AcceptableValueRange<float>(0f, 5f)));
+            LoseSeconds = Config.Bind("Senses", "LoseSeconds", 0.3f, new ConfigDescription("How long a target can be out of view before the NPC counts it as lost and goes to where it last saw it, s.", new AcceptableValueRange<float>(0f, 10f)));
+            SearchSeconds = Config.Bind("Senses", "SearchSeconds", 15f, new ConfigDescription("How long an NPC looks around at the place it went to check before it loses interest, s.", new AcceptableValueRange<float>(0f, 120f)));
+            ArriveDistance = Config.Bind("Senses", "ArriveDistance", 1.5f, new ConfigDescription("How close to the remembered spot counts as being there, m.", new AcceptableValueRange<float>(0.5f, 10f)));
+            LookInterval = Config.Bind("Senses", "LookInterval", 0.15f, new ConfigDescription("How often each NPC looks, s (a couple of rays per look).", new AcceptableValueRange<float>(0.05f, 2f)));
+            MuffleSounds = Config.Bind("Senses", "MuffleSounds", false, "Walls muffle sounds: an NPC with no line to the sound hears it only within MuffleFactor % of the range (one extra ray per NPC in range).");
+            MuffleFactor = Config.Bind("Senses", "MuffleFactor", 50f, new ConfigDescription("Hearing range through walls, % of the open-air range (with MuffleSounds).", new AcceptableValueRange<float>(0f, 100f)));
+            ShotRangePistol = Config.Bind("Senses", "ShotRangePistol", 80f, new ConfigDescription("A pistol or revolver shot is heard this far, m.", new AcceptableValueRange<float>(0f, 1000f)));
+            ShotRangeSmg = Config.Bind("Senses", "ShotRangeSmg", 120f, new ConfigDescription("An SMG shot is heard this far, m.", new AcceptableValueRange<float>(0f, 1000f)));
+            ShotRangeRifle = Config.Bind("Senses", "ShotRangeRifle", 150f, new ConfigDescription("A rifle or machine-gun shot is heard this far, m.", new AcceptableValueRange<float>(0f, 1000f)));
+            ShotRangeSniper = Config.Bind("Senses", "ShotRangeSniper", 150f, new ConfigDescription("A sniper rifle shot is heard this far, m.", new AcceptableValueRange<float>(0f, 1000f)));
+            ShotRangeShotgun = Config.Bind("Senses", "ShotRangeShotgun", 150f, new ConfigDescription("A shotgun blast is heard this far, m.", new AcceptableValueRange<float>(0f, 1000f)));
+            ShotRangeCrossbow = Config.Bind("Senses", "ShotRangeCrossbow", 15f, new ConfigDescription("A crossbow shot is heard this far, m.", new AcceptableValueRange<float>(0f, 1000f)));
+            NpcShotRanges = Config.Bind("Senses", "NpcShotRanges", "Flexa=150, Gungirl=150, Lugnut=150, Scrud=150, Boltjaw=120, Sprokka=80, Pistoleer=80, Gunnar=150, Lugger=150",
+                "How far each NPC type's gunfire is heard, m, as Type=metres pairs; a type not listed uses the range of its weapon class above.");
+            TauntRange = Config.Bind("Senses", "TauntRange", 15f, new ConfigDescription("A human's combat shout tells same-faction humans within this range where its target (or the ghost it is going to) is, and tells its enemies where it stands, m. 0 = off.", new AcceptableValueRange<float>(0f, 200f)));
+            HumanFactions = Config.Bind("Senses", "HumanFactions", "Scrapyard,Coyotes", "Which factions (object tags) count as humans for taunts.");
+            EngineMinRange = Config.Bind("Senses", "EngineMinRange", 50f, new ConfigDescription("Your running engine is heard this far with the weakest engine (EngineMinHp), m.", new AcceptableValueRange<float>(0f, 1000f)));
+            EngineMaxRange = Config.Bind("Senses", "EngineMaxRange", 150f, new ConfigDescription("... and this far with the strongest (EngineMaxHp), m.", new AcceptableValueRange<float>(0f, 1000f)));
+            EngineMinHp = Config.Bind("Senses", "EngineMinHp", 40f, new ConfigDescription("Horsepower that counts as the weakest engine.", new AcceptableValueRange<float>(1f, 2000f)));
+            EngineMaxHp = Config.Bind("Senses", "EngineMaxHp", 300f, new ConfigDescription("Horsepower that counts as the strongest engine.", new AcceptableValueRange<float>(1f, 2000f)));
+            EngineIdleFactor = Config.Bind("Senses", "EngineIdleFactor", 50f, new ConfigDescription("Engine range while idling (no throttle, standing), % of the driving range. A switched-off engine is silent.", new AcceptableValueRange<float>(0f, 100f)));
+            ThrowRange = Config.Bind("Senses", "ThrowRange", 10f, new ConfigDescription("An item you throw draws NPCs within this range of where it lands, m. 0 = off.", new AcceptableValueRange<float>(0f, 200f)));
             SpawnKey = Config.Bind("Debug", "SpawnKey", Key.F9,
                 "Spawns a Gungirl 6 m in front of you (a real raider: she fights and is saved). None = off.");
             DamageNumbers = Config.Bind("Hud", "DamageNumbers", 2, new ConfigDescription(
@@ -197,6 +230,8 @@ namespace Apocaraiders
             HitMarkerSize = Config.Bind("Hud", "HitMarkerSize", 22, new ConfigDescription("Hit marker size, px.", new AcceptableValueRange<int>(6, 100)));
             HitLog = Config.Bind("Debug", "HitLog", false, "Log every bullet hit on a creature: who, what, distance, damage, and its Health before and after.");
             VerboseLog = Config.Bind("Debug", "VerboseLog", false, "Log every Gungirl that is dressed (spawn, corpse, after a load).");
+            SensesLog = Config.Bind("Debug", "SensesLog", false, "Log every detection event: who sees, hears, loses, searches, gives up; every ghost made.");
+            ShowGhosts = Config.Bind("Debug", "ShowGhosts", false, "Draw the ghosts in the world (a diamond and a label: number, source, what it is about, holders, age) and each alert NPC's state above its head. Colours: red sight, magenta hit, orange taunt, yellow gunshot, green thrown item, blue engine.");
             BrainLog = Config.Bind("Debug", "BrainLog", false, "Log every NPC movement decision (chase, hold, advance, stuck, rest) with the reason and distance.");
 
             try
@@ -232,8 +267,17 @@ namespace Apocaraiders
                 h.Patch(AccessTools.Method(typeof(Micosmo.SensorToolkit.RangeSensor), "OnEnable"), postfix: new HarmonyMethod(typeof(Brain), nameof(Brain.AfterRangeEnable)));
             }
             catch (Exception e) { Log.LogError("Harmony patch failed, no NPC brain: " + e); }
+            try
+            {
+                var h = new Harmony(GUID + ".senses");
+                h.Patch(AccessTools.Method(typeof(Micosmo.SensorToolkit.PlayMaker.SensorGetDetections), "DoAction"), prefix: new HarmonyMethod(typeof(Senses), nameof(Senses.BeforeGetDetections)));
+                h.Patch(AccessTools.Method(typeof(Micosmo.SensorToolkit.PlayMaker.SensorGetLineOfSightResult), "OnEnter3D"), prefix: new HarmonyMethod(typeof(Senses), nameof(Senses.BeforeLosResult)));
+                h.Patch(AccessTools.Method(typeof(Micosmo.SensorToolkit.PlayMaker.SensorGetLineOfSightResult), "OnUpdate3D"), prefix: new HarmonyMethod(typeof(Senses), nameof(Senses.BeforeLosResult)));
+                h.Patch(AccessTools.Method(typeof(AudioPlay), "OnEnter"), prefix: new HarmonyMethod(typeof(Senses), nameof(Senses.BeforeAudioPlay)));
+            }
+            catch (Exception e) { Log.LogError("Harmony patch failed, no senses: " + e); }
 
-            SceneManager.sceneLoaded += (s, m) => { EnsureRunner(); Gungirl.OnSceneLoaded(); Tracers.OnSceneLoaded(); Brain.OnSceneLoaded(); };
+            SceneManager.sceneLoaded += (s, m) => { EnsureRunner(); Gungirl.OnSceneLoaded(); Tracers.OnSceneLoaded(); Brain.OnSceneLoaded(); Senses.OnSceneLoaded(); };
             EnsureRunner();
             Log.LogInfo(NAME + " " + VERSION + " loaded");
         }
@@ -252,7 +296,7 @@ namespace Apocaraiders
 
     internal class Runner : MonoBehaviour
     {
-        private void Update() { Voice.EnsureLoading(this); Gungirl.Tick(); Tracers.Tick(); Brain.Tick(); }
+        private void Update() { Voice.EnsureLoading(this); Gungirl.Tick(); Tracers.Tick(); try { Senses.Tick(this); } catch (Exception e) { Plugin.Log.LogError("Senses: " + e); } Brain.Tick(); }
         private void LateUpdate() { try { Brain.LateTick(); } catch (Exception e) { Plugin.Log.LogError("Brain: " + e); } }
         private void OnGUI() { try { Hud.OnGUI(); } catch (Exception e) { Plugin.Log.LogError("Hud: " + e); } }
     }
