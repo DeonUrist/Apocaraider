@@ -229,6 +229,7 @@ namespace Apocaraiders
         // Gunmen without ShooterPathing keep the plain rays (one height, bumper layers, angle-scored) of 0.7.0.
         private static readonly float[] _free = new float[32];
         private static readonly Vector3[] _normals = new Vector3[32];
+        private static readonly Collider[] _touch = new Collider[16];
 
         private static void Steer(Npc n, Vector3 toTarget, float dist, float now)
         {
@@ -266,11 +267,33 @@ namespace Apocaraiders
             }
             RaycastHit hit;
             int centre = count / 2;
+            int touching = 0;
+            if (adv)
+            {
+                // a sweep ignores whatever overlaps its start, so the thing the body is pressed against would be invisible: block the
+                // directions toward anything already touching the swept capsule
+                touching = Physics.OverlapCapsuleNonAlloc(p1, p2, radius, _touch, mask, QueryTriggerInteraction.Ignore);
+                for (int k = 0; k < touching; k++)
+                {
+                    var c = _touch[k];
+                    if (c == null || c.transform.root == n.T || (troot != null && c.transform.root == troot)) { _touch[k] = null; continue; }
+                    if (c.gameObject.layer == 14) { _touch[k] = null; continue; }      // the ground under the feet
+                }
+            }
             for (int i = 0; i < count; i++)
             {
                 float yaw = targetYaw + _angles[i];
                 Vector3 dir = Quaternion.Euler(0f, yaw, 0f) * Vector3.forward;
                 float free = len; Vector3 normal = Vector3.zero;
+                for (int k = 0; k < touching; k++)
+                {
+                    var c = _touch[k];
+                    if (c == null) continue;
+                    Vector3 cp = c.ClosestPoint(origin); Vector3 away = origin - cp; away.y = 0f;
+                    if (away.sqrMagnitude < 0.0001f) continue;
+                    if (Vector3.Angle(dir, -away) < 70f) { free = 0f; normal = away.normalized; }
+                }
+                if (free <= 0f) { _free[i] = 0f; _normals[i] = normal; _blocks[i] = 1f; continue; }
                 bool hitSomething = adv ? Physics.CapsuleCast(p1, p2, radius, dir, out hit, len, mask, QueryTriggerInteraction.Ignore)
                                         : Physics.Raycast(origin, dir, out hit, len, mask, QueryTriggerInteraction.Ignore);
                 if (hitSomething && (troot == null || hit.collider.transform.root != troot) && hit.collider.transform.root != n.T
@@ -751,6 +774,24 @@ namespace Apocaraiders
                 if (fsm == null || fsm.Name != "Attack") return true;
                 if (__instance.gameObject == null || __instance.gameObject.OwnerOption != OwnerDefaultOption.UseOwner) return true;   // the sensor children: vanilla
                 return NpcOf(fsm, "Attack") == null;
+            }
+            catch (Exception e) { Plugin.Log.LogError("Brain: " + e); return true; }
+        }
+
+        // SmoothLookAt.DoSmoothLookAt: the melee Attack FSMs (Scraffa, Spanna, the animals) turn the body toward the target every frame in the
+        // chase state itself (LateUpdate, after our rotation) - that is what kept a melee NPC running straight into the thing the feelers had
+        // told it to go around. Skipped while the brain steers (chase states only; the swing's own facing stays).
+        public static bool BeforeSmoothLookAt(SmoothLookAt __instance)
+        {
+            try
+            {
+                var fsm = __instance.Fsm;
+                if (fsm == null || fsm.Name != "Attack") return true;
+                if (__instance.gameObject == null || __instance.gameObject.OwnerOption != OwnerDefaultOption.UseOwner) return true;
+                var n = NpcOf(fsm, "Attack");
+                if (n == null) return true;
+                string st = fsm.ActiveStateName;
+                return st != "trigger" && st != "run";
             }
             catch (Exception e) { Plugin.Log.LogError("Brain: " + e); return true; }
         }
