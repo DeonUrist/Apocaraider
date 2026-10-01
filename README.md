@@ -19,7 +19,9 @@ visible bolts. Tracers look the same by day and by night.
 - Damage falls off with distance: half damage at half the weapon's range, gone at full range (pistols 60 m, SMGs 70 m,
   rifles and machine guns 120 m, sniper rifles 250 m, shotguns 50 m, crossbows 90 m by default).
 - Shotguns fire a spread of pellets that together do the gun's damage.
-- NPC bullets have a little thickness (12 cm by default): your body collider is slim, and a bullet that visibly grazes you counts.
+- NPC bullets see you as a realistic body (feet to neck, shoulder width) plus a head: the game's own player collider is a slim
+  0.4 m capsule that made many visible hits miss. A headshot does 1.5x damage by default (the game had no headshots on you).
+  One bullet hits one thing, then it's gone.
 - A bullet that hits a vehicle part damages it (10 damage = 1 % of the part's condition), and a bolted-on metal plate
   can be knocked off (20 % per hit by default).
 - A hit on its target does exactly what the game's own hit does (blood/sparks, damage, armor, hit sounds).

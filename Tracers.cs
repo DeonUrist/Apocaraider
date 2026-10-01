@@ -451,6 +451,13 @@ namespace Apocaraiders
             // NPC bullets have a thickness: the player's body is two capsules only 0.34-0.40 m wide (head at the camera), so a
             // hairline that visibly passes through your face misses the collider by centimetres. Player bullets stay a hairline.
             float radius = s.Gun == null ? Mathf.Max(0f, Plugin.NpcHitRadius.Value) : 0f;
+            // NPC bullet at the player: the virtual hitbox decides the hit on the player, physics only the obstructions in front of it
+            CapsuleCollider vcap = null;
+            float vt = float.MaxValue; bool vhead = false;
+            if (s.Gun == null && s.Target != null && (vcap = PlayerCapsule(s.Target)) != null)
+            {
+                if (!PlayerHit(s.Pos, s.Dir, move, radius, s.Target, vcap, out vt, out vhead)) vt = float.MaxValue;
+            }
             int n = radius > 0f
                 ? Physics.SphereCastNonAlloc(s.Pos, radius, s.Dir, _hits, move, s.Layers, QueryTriggerInteraction.Ignore)
                 : Physics.RaycastNonAlloc(s.Pos, s.Dir, _hits, move, s.Layers, QueryTriggerInteraction.Ignore);
@@ -461,6 +468,8 @@ namespace Apocaraiders
                 var col = h.collider;
                 if (col == null) continue;
                 var tr = col.transform;
+                if (vcap != null && tr.IsChildOf(s.Target.transform)) continue;      // the real capsules: the virtual hitbox handles the player
+                if (vcap != null && h.distance > vt) break;                          // the player is hit before this obstruction
                 if (s.Gun != null)
                 {
                     if (Ignored(tr, s.ShooterRoot != null ? s.ShooterRoot.transform : null, s.Player)) continue;
@@ -484,9 +493,102 @@ namespace Apocaraiders
                 s.Alive = false;
                 return;
             }
+            if (vcap != null && vt < float.MaxValue)
+            {
+                float dist = s.Travelled + vt;
+                float falloff = Mathf.Clamp01(1f - dist / s.Range);
+                float mult = vhead ? Mathf.Max(0f, Plugin.HeadshotMultiplier.Value) : 1f;
+                if (vhead) Plugin.Verbose("Tracers: headshot on " + s.Target.name + " at " + dist.ToString("0.0") + " m");
+                HitTarget(ref s, s.Pos + s.Dir * vt, s.Damage * falloff * mult);
+                s.Pos += s.Dir * vt;
+                s.Travelled = dist;
+                s.Alive = false;
+                return;
+            }
             s.Pos += s.Dir * move;
             s.Travelled += move;
             if (s.Travelled >= s.Range - 1e-3f) s.Alive = false;
+        }
+
+        // ---------- the player's hitbox for NPC bullets ----------
+        // The game's player collider is two slim physics capsules (r 0.17 / 0.20) with the camera on their axis and a trigger sphere
+        // for the head. Tracers aimed at the player use their own shapes instead, built each frame from the tallest real capsule so a
+        // crouch is followed: a body capsule (feet to neck, [Tracers] PlayerBodyRadius) and a head sphere ([Tracers] PlayerHeadRadius)
+        // at the top. A bullet hits whichever it reaches first, once.
+        private static CapsuleCollider PlayerCapsule(GameObject target)
+        {
+            CapsuleCollider best = null;
+            foreach (var c in target.GetComponents<CapsuleCollider>())
+                if (c.enabled && !c.isTrigger && (best == null || c.height > best.height)) best = c;
+            return best;
+        }
+
+        // segment p0 + d*t (0..len) vs the virtual shapes; returns the nearest hit distance along the bullet
+        private static bool PlayerHit(Vector3 p0, Vector3 d, float len, float thick, GameObject target, CapsuleCollider cap, out float t, out bool head)
+        {
+            t = 0f; head = false;
+            var tr = cap.transform;
+            Vector3 up = cap.direction == 1 ? tr.up : cap.direction == 0 ? tr.right : tr.forward;
+            float sc = Mathf.Abs(cap.direction == 1 ? tr.lossyScale.y : cap.direction == 0 ? tr.lossyScale.x : tr.lossyScale.z);
+            Vector3 center = tr.TransformPoint(cap.center);
+            float half = Mathf.Max(0f, cap.height * sc * 0.5f);
+            Vector3 feet = center - up * half, top = center + up * half;
+            float headR = Mathf.Max(0.03f, Plugin.PlayerHeadRadius.Value), bodyR = Mathf.Max(0.03f, Plugin.PlayerBodyRadius.Value);
+            Vector3 headC = top - up * headR;
+            Vector3 neck = headC - up * headR;
+            // body capsule: its rounded top ends exactly at the neck, so the head zone belongs to the head alone
+            Vector3 bodyLo = feet + up * bodyR, bodyHi = neck - up * bodyR;
+            if (Vector3.Dot(bodyHi - bodyLo, up) < 0f) bodyHi = bodyLo;         // crouched very low: a ball
+            float th, tb;
+            bool hh = RaySphere(p0, d, len, headC, headR + thick, out th);
+            bool hb = SegCapsule(p0, d, len, bodyLo, bodyHi, bodyR + thick, out tb);
+            if (!hh && !hb) return false;
+            if (hh && (!hb || th <= tb)) { t = th; head = true; } else t = tb;
+            return true;
+        }
+
+        private static bool RaySphere(Vector3 p0, Vector3 d, float len, Vector3 c, float r, out float t)
+        {
+            t = 0f;
+            Vector3 m = p0 - c;
+            float b = Vector3.Dot(m, d), cc = Vector3.Dot(m, m) - r * r;
+            if (cc > 0f && b > 0f) return false;
+            float disc = b * b - cc;
+            if (disc < 0f) return false;
+            t = -b - Mathf.Sqrt(disc);
+            if (t < 0f) t = 0f;            // starts inside
+            return t <= len;
+        }
+
+        // closest approach between the bullet segment and the capsule axis a..b (Ericson, Real-Time Collision Detection 5.1.9)
+        private static bool SegCapsule(Vector3 p0, Vector3 d, float len, Vector3 a, Vector3 b, float r, out float t)
+        {
+            Vector3 p1 = p0 + d * len;
+            Vector3 d1 = p1 - p0, d2 = b - a, rr = p0 - a;
+            float A = Vector3.Dot(d1, d1), e = Vector3.Dot(d2, d2), f = Vector3.Dot(d2, rr);
+            float s, u;
+            if (A <= 1e-8f && e <= 1e-8f) { s = u = 0f; }
+            else if (A <= 1e-8f) { s = 0f; u = Mathf.Clamp01(f / e); }
+            else
+            {
+                float c = Vector3.Dot(d1, rr);
+                if (e <= 1e-8f) { u = 0f; s = Mathf.Clamp01(-c / A); }
+                else
+                {
+                    float bb = Vector3.Dot(d1, d2), den = A * e - bb * bb;
+                    s = den != 0f ? Mathf.Clamp01((bb * f - c * e) / den) : 0f;
+                    u = (bb * s + f) / e;
+                    if (u < 0f) { u = 0f; s = Mathf.Clamp01(-c / A); }
+                    else if (u > 1f) { u = 1f; s = Mathf.Clamp01((bb - c) / A); }
+                }
+            }
+            Vector3 c1 = p0 + d1 * s, c2 = a + d2 * u;
+            if ((c1 - c2).sqrMagnitude > r * r) { t = 0f; return false; }
+            // back up from the closest approach to the surface along the bullet (entry point), never before the segment start
+            float along = s * len;
+            float gap = Mathf.Sqrt(Mathf.Max(0f, r * r - (c1 - c2).sqrMagnitude));
+            t = Mathf.Max(0f, along - gap);
+            return true;
         }
 
         private sealed class HitDistance : IComparer<RaycastHit>
