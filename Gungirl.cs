@@ -15,12 +15,15 @@ namespace Apocaraiders
     // CreateObject on death -> if the dying Flexa is a Gungirl, so is the corpse.
     //
     // Save/load without any save file of our own: the game (Easy Save 3) restores every enemy and corpse by prefab +
-    // name + Transform, localScale included. A Gungirl's root scale gets x = y * (1 + 1/4096) - invisible, but it survives
-    // the save. After a load the scan finds Flexa / Flexa_Dead roots with that ratio and swaps their body again.
-    // (Corpses drift by ~1e-7 from physics; the marker is 2.4e-4.)
+    // name + Transform, and nothing in the game reads the name (checked: the only "Flexa" string in any FSM is the corpse's
+    // mouse-over label). So a Gungirl is simply NAMED Gungirl: the hook renames the fresh instance "Flexa(Clone)" ->
+    // "Gungirl(Clone)" before the game's spawner appends its itemNameID number ("Gungirl(Clone)281"), the corpse likewise
+    // ("Gungirl_Dead(Clone)N"), and after a load the scan finds Gungirl* / Gungirl_Dead* roots and swaps their body again.
+    // Versions before 0.6.0 marked her with a root scale x = y * (1 + 1/4096) instead; such Flexas from older saves are
+    // renamed on sight (the scale is left alone - harmless).
     internal static class Gungirl
     {
-        private const float Marker = 1f + 1f / 4096f;
+        public const string Name = "Gungirl", CorpseName = "Gungirl_Dead";
 
         private static SkinModel _model;
         private static bool _modelTried;
@@ -32,8 +35,22 @@ namespace Apocaraiders
         private static GameObject _prefab;
         private static float _nextScan, _burstUntil;
 
-        // ---------- marker ----------
-        public static bool IsMarked(Transform t)
+        // ---------- identity = the name ----------
+        private static bool IsFlexa(string name) { return name == "Flexa" || name.StartsWith("Flexa(", StringComparison.Ordinal); }
+        private static bool IsFlexaCorpse(string name) { return name.StartsWith("Flexa_Dead", StringComparison.Ordinal); }
+        private static bool IsGungirlName(string name) { return name == Name || name.StartsWith(Name + "(", StringComparison.Ordinal); }
+        private static bool IsGungirlCorpse(string name) { return name.StartsWith(CorpseName, StringComparison.Ordinal); }
+
+        // "Flexa(Clone)281" -> "Gungirl(Clone)281", "Flexa_Dead(Clone)" -> "Gungirl_Dead(Clone)"
+        private static void Rename(GameObject go)
+        {
+            string n = go.name;
+            if (IsFlexaCorpse(n)) go.name = CorpseName + n.Substring("Flexa_Dead".Length);
+            else if (IsFlexa(n)) go.name = Name + n.Substring("Flexa".Length);
+        }
+
+        // the pre-0.6.0 marker (root scale x = y * (1 + 1/4096)) - read only, to convert Gungirls from older saves
+        private static bool IsOldMarked(Transform t)
         {
             if (t == null) return false;
             var s = t.localScale;
@@ -42,26 +59,16 @@ namespace Apocaraiders
             return r > 1.0001f && r < 1.0005f;
         }
 
-        private static void Mark(Transform t)
-        {
-            var s = t.localScale;
-            s.x = s.y * Marker;
-            t.localScale = s;
-        }
-
-        private static bool IsFlexa(string name) { return name == "Flexa" || name.StartsWith("Flexa(", StringComparison.Ordinal); }
-        private static bool IsFlexaCorpse(string name) { return name.StartsWith("Flexa_Dead", StringComparison.Ordinal); }
-
         // ---------- public API for other mods (reflection-friendly) ----------
         // Turns a live Flexa (or a Flexa_Dead corpse) into a Gungirl. Returns false if the model could not be applied.
         public static bool MakeGungirl(GameObject root)
         {
             if (root == null) return false;
-            Mark(root.transform);
+            Rename(root);
             return Apply(root, "api");
         }
 
-        public static bool IsGungirl(GameObject root) { return root != null && IsMarked(root.transform); }
+        public static bool IsGungirl(GameObject root) { return root != null && (IsGungirlName(root.name) || IsGungirlCorpse(root.name)); }
 
         // ---------- hooks ----------
         // Harmony postfix on HutongGames.PlayMaker.Actions.CreateObject.OnEnter
@@ -78,9 +85,9 @@ namespace Apocaraiders
                 if (IsFlexaCorpse(pn))
                 {
                     var owner = __instance.Fsm != null ? __instance.Fsm.GameObject : null;
-                    if (owner != null && IsMarked(owner.transform))
+                    if (owner != null && IsGungirlName(owner.name))
                     {
-                        Mark(go.transform);
+                        Rename(go);                 // "Gungirl_Dead(Clone)"; the Health FSM appends the itemNameID number next
                         Apply(go, "corpse");
                     }
                 }
@@ -88,7 +95,7 @@ namespace Apocaraiders
                 {
                     if (!Plugin.Enabled.Value) return;
                     if (UnityEngine.Random.Range(0, 100) >= Plugin.GungirlChance.Value) return;
-                    Mark(go.transform);
+                    Rename(go);                     // "Gungirl(Clone)"; the spawner appends the itemNameID number next
                     Apply(go, "spawn");
                 }
             }
@@ -120,17 +127,21 @@ namespace Apocaraiders
             catch (Exception e) { Plugin.Log.LogError("Scan: " + e); _nextScan = t + 10f; }
         }
 
-        // Re-dress Gungirls restored from a save (and anything a mod spawned with the marker).
+        // Re-dress Gungirls restored from a save (by name), and convert Flexas carrying the pre-0.6.0 scale mark.
         private static void Scan()
         {
             foreach (var smr in UnityEngine.Object.FindObjectsOfType<SkinnedMeshRenderer>())
             {
                 var m = smr.sharedMesh;
                 if (m == null || _ours.Contains(m)) continue;
-                Transform root = null;
+                Transform root = null; bool old = false;
                 for (var p = smr.transform; p != null; p = p.parent)
-                    if (IsFlexa(p.name) || IsFlexaCorpse(p.name)) root = p;
-                if (root == null || !IsMarked(root)) continue;
+                {
+                    if (IsGungirlName(p.name) || IsGungirlCorpse(p.name)) { root = p; old = false; }
+                    else if ((IsFlexa(p.name) || IsFlexaCorpse(p.name)) && IsOldMarked(p)) { root = p; old = true; }
+                }
+                if (root == null) continue;
+                if (old) { Rename(root.gameObject); Plugin.Verbose("Gungirl: " + root.name + " converted from the old scale mark"); }
                 Apply(root.gameObject, "restored");
             }
         }
@@ -151,9 +162,32 @@ namespace Apocaraiders
                 swapped++;
             }
             int hidden = HideParts(root);
-            if (swapped > 0) Voice.Apply(root);
+            if (swapped > 0) { Voice.Apply(root); Label(root); }
             if (swapped > 0) Plugin.Verbose("Gungirl: " + root.name + " (" + why + ") body swapped, " + hidden + " part(s) hidden");
             return swapped > 0;
+        }
+
+        // The corpse's mouse-over label (ItemName FSM, state "over": UiTextSetText "Flexa") -> "Gungirl". The FSM's actions exist once it
+        // is initialised; Voice's pending list calls this again after the body swap when the FSMs weren't ready yet.
+        internal static int Label(GameObject root)
+        {
+            int n = 0;
+            foreach (var f in root.GetComponents<PlayMakerFSM>())
+            {
+                if (f == null || f.FsmName != "ItemName" || f.Fsm == null || !f.Fsm.Initialized) continue;
+                foreach (var st in f.Fsm.States)
+                {
+                    if (st.Actions == null) continue;
+                    foreach (var a in st.Actions)
+                    {
+                        if (a == null || a.GetType().Name != "UiTextSetText") continue;     // by reflection: the action's field types pull in UnityEngine.UI
+                        var fld = a.GetType().GetField("text");
+                        var cur = fld != null ? fld.GetValue(a) as FsmString : null;
+                        if (cur != null && cur.Value == "Flexa") { fld.SetValue(a, new FsmString { Value = Name }); n++; }
+                    }
+                }
+            }
+            return n;
         }
 
         private static int HideParts(GameObject root)
@@ -345,8 +379,7 @@ namespace Apocaraiders
             // and falls through it.
             at += Vector3.up * (FootDepth(prefab) + 0.05f);
             var go = UnityEngine.Object.Instantiate(prefab, at, Quaternion.LookRotation(-fwd) * prefab.transform.rotation);
-            Register(go, prefab.name);
-            Mark(go.transform);
+            Register(go, Name);
             bool ok = Apply(go, "debug key");
             Plugin.Log.LogInfo("Gungirl: spawned " + go.name + " at " + at.ToString("F1") + (ok ? "" : " - but the model could not be applied, see the errors above"));
         }

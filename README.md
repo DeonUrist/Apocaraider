@@ -6,7 +6,8 @@ New raiders for Apocalypter, built on the game's own enemies, and better gunfigh
 
 A woman among the Flexa raiders. She shows up in the same camps and places as Flexa, carries the same guns, fights the
 same way, and leaves her own corpse when she dies. A share of the Flexas the game spawns are Gungirls instead
-(50 % by default). She and her corpse stay Gungirls after a save and load.
+(50 % by default). She and her corpse are named Gungirl in the game, stay Gungirls after a save and load, and her corpse
+is labelled Gungirl when you look at it.
 
 Only new spawns are affected: the Flexas already in your world stay as they are.
 

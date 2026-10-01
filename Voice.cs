@@ -128,7 +128,8 @@ namespace Apocaraiders
                 var r = Rep(a.clip);
                 if (r != null) { a.clip = r; n++; }
             }
-            Plugin.Verbose("Gungirl voice: " + root.name + " - " + n + " sound reference(s) replaced, " + timers + " shout timer(s) set");
+            int labels = Gungirl.Label(root);
+            Plugin.Verbose("Gungirl voice: " + root.name + " - " + n + " sound reference(s) replaced, " + timers + " shout timer(s) set" + (labels > 0 ? ", label set" : ""));
             return true;
         }
 
