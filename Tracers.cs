@@ -33,7 +33,7 @@ namespace Apocaraiders
             public GameObject Target, ShooterRoot;
             public GameObject Impact;
             public string EventName;
-            public bool Bolt, Alive;
+            public bool Bolt, Shotgun, Alive;
             public int Layers, DetectLayers;
             public PlayerGun Gun;            // non-null: the player's shot (first collider it meets is hit, like the vanilla camera ray)
             public GameObject Player;
@@ -125,13 +125,14 @@ namespace Apocaraiders
                         Pos = from, Start = from, Dir = d,
                         Speed = info.Kind == Kind.Crossbow ? Plugin.BoltSpeed.Value : Plugin.BulletSpeed.Value,
                         Range = RangeOf(info.Kind),
-                        Damage = damage / pellets,
+                        Damage = damage / pellets * (info.Kind == Kind.Shotgun ? Mathf.Max(0f, Plugin.NpcShotgunDamage.Value) : 1f),
                         Target = target,
                         Head = head,
                         ShooterRoot = owner.transform.root.gameObject,
                         Impact = info.Impact,
                         EventName = info.EventName,
                         Bolt = info.Kind == Kind.Crossbow,
+                        Shotgun = info.Kind == Kind.Shotgun,
                         Alive = true,
                         Layers = info.ObstructLayers | info.DetectLayers,
                         DetectLayers = info.DetectLayers,
@@ -213,7 +214,7 @@ namespace Apocaraiders
                     {
                         Pos = muzzle, Start = muzzle, Dir = d.normalized,
                         Speed = gun.Kind == Kind.Crossbow ? Plugin.BoltSpeed.Value : Plugin.BulletSpeed.Value,
-                        Range = range, Bolt = gun.Kind == Kind.Crossbow, Alive = true,
+                        Range = range, Bolt = gun.Kind == Kind.Crossbow, Shotgun = gun.Kind == Kind.Shotgun, Alive = true,
                         Layers = gun.Layers, Gun = gun, Player = _player,
                         ShooterRoot = ft.root.gameObject,
                     };
@@ -436,6 +437,20 @@ namespace Apocaraiders
             return true;
         }
 
+        // Damage multiplier by distance flown. Guns: 1 at the muzzle, linear to 0 at the range. Shotguns: full damage until
+        // [Tracers] ShotgunFullDamageUntil % of the range, then linear to 0 at the range (so at 50 % a shotgun does 1x where a gun does 0.5x).
+        private static float Falloff(ref Shot s, float dist)
+        {
+            float x = dist / s.Range;
+            if (s.Shotgun)
+            {
+                float k = Mathf.Clamp(Plugin.ShotgunFullDamageUntil.Value, 0f, 99f) / 100f;
+                if (x <= k) return 1f;
+                return Mathf.Clamp01((1f - x) / (1f - k));
+            }
+            return Mathf.Clamp01(1f - x);
+        }
+
         internal static float RangeOf(Kind k)
         {
             switch (k)
@@ -509,7 +524,7 @@ namespace Apocaraiders
                 {
                     if (Ignored(tr, s.ShooterRoot != null ? s.ShooterRoot.transform : null, s.Player)) continue;
                     float pd = s.Travelled + h.distance;
-                    float pf = Mathf.Clamp01(1f - pd / s.Range);
+                    float pf = Falloff(ref s, pd);
                     PlayerHit(ref s, h, pf);
                     HitWorld(ref s, col, h.point, (s.Gun.Damage != null ? s.Gun.Damage.Value : 0f) * pf);   // vehicle part / metal plate rules
                     s.Pos = h.point; s.Travelled = pd; s.Alive = false;
@@ -520,7 +535,7 @@ namespace Apocaraiders
                 bool detectable = (s.DetectLayers & (1 << col.gameObject.layer)) != 0;
                 if (!onTarget && detectable) continue;      // other creatures don't stop a vanilla shot either
                 float dist = s.Travelled + h.distance;
-                float falloff = Mathf.Clamp01(1f - dist / s.Range);
+                float falloff = Falloff(ref s, dist);
                 if (onTarget) HitTarget(ref s, h.point, s.Damage * falloff, s.Target);
                 else HitWorld(ref s, col, h.point, s.Damage * falloff);
                 s.Pos = h.point;
@@ -531,7 +546,7 @@ namespace Apocaraiders
             if (vcap != null && vt < float.MaxValue)
             {
                 float dist = s.Travelled + vt;
-                float falloff = Mathf.Clamp01(1f - dist / s.Range);
+                float falloff = Falloff(ref s, dist);
                 float mult = vhead ? Mathf.Max(0f, Plugin.HeadshotMultiplier.Value) : 1f;
                 if (vhead) Plugin.Verbose("Tracers: headshot on " + s.Target.name + " at " + dist.ToString("0.0") + " m");
                 HitTarget(ref s, s.Pos + s.Dir * vt, s.Damage * falloff * mult, vhead && s.Head != null ? s.Head : s.Target);

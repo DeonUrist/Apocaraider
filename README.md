@@ -18,7 +18,8 @@ visible bolts. Tracers look the same by day and by night.
 
 - Damage falls off with distance: half damage at half the weapon's range, gone at full range (pistols 60 m, SMGs 70 m,
   rifles and machine guns 120 m, sniper rifles 250 m, shotguns 50 m, crossbows 90 m by default).
-- Shotguns fire a spread of pellets that together do the gun's damage.
+- Shotguns fire a spread of pellets that together do the gun's damage, and keep their full damage up to half their range
+  (other guns lose damage from the muzzle on). NPC shotgun damage can be scaled (`NpcShotgunDamage`).
 - NPC bullets see you as a realistic body (feet to neck, shoulder width) plus a head: the game's own player collider is a slim
   0.4 m capsule that made many visible hits miss. A headshot does 1.5x damage by default (the game had no headshots on you).
   One bullet hits one thing, then it's gone.

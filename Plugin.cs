@@ -18,7 +18,7 @@ namespace Apocaraiders
     {
         public const string GUID = "com.denis.apocalypter.apocaraiders";
         public const string NAME = "Apocaraiders";
-        public const string VERSION = "0.4.1";
+        public const string VERSION = "0.4.2";
 
         internal static ManualLogSource Log;
         internal static string Dir;
@@ -32,7 +32,7 @@ namespace Apocaraiders
         internal static ConfigEntry<float> AimBaseDistance, AimDelayPer5m, SpreadPer5m, EngagePercent, EngagePatience, HoldRecheckMin, HoldRecheckMax;
         internal static ConfigEntry<float> BulletSpeed, BoltSpeed, TracerWidth, TracerLength, BoltWidth, BoltLength, TracerGlow;
         internal static ConfigEntry<Color> TracerColor, BoltColor;
-        internal static ConfigEntry<float> PistolRange, SmgRange, RifleRange, SniperRange, ShotgunRange, CrossbowRange, ShotgunPelletSpread, MetalSheetPopChance, NpcHitRadius, PlayerBodyRadius, PlayerHeadRadius, HeadshotMultiplier;
+        internal static ConfigEntry<float> PistolRange, SmgRange, RifleRange, SniperRange, ShotgunRange, CrossbowRange, ShotgunPelletSpread, ShotgunFullDamageUntil, NpcShotgunDamage, MetalSheetPopChance, NpcHitRadius, PlayerBodyRadius, PlayerHeadRadius, HeadshotMultiplier;
         internal static ConfigEntry<int> ShotgunPellets, MaxTracers;
         internal static ConfigEntry<string> MetalSheetNames;
 
@@ -89,6 +89,12 @@ namespace Apocaraiders
             CrossbowRange = Config.Bind("Tracers", "CrossbowRange", 90f, new ConfigDescription("Crossbows, falloff range in metres.", new AcceptableValueRange<float>(5f, 1000f)));
             ShotgunPellets = Config.Bind("Tracers", "ShotgunPellets", 2, new ConfigDescription("Pellets per vanilla shotgun ray (a vanilla blast is 4 rays; 2 = 8 pellets). The blast's damage is split between them.", new AcceptableValueRange<int>(1, 8)));
             ShotgunPelletSpread = Config.Bind("Tracers", "ShotgunPelletSpread", 1f, new ConfigDescription("Extra spread of each pellet, degrees.", new AcceptableValueRange<float>(0f, 15f)));
+            ShotgunFullDamageUntil = Config.Bind("Tracers", "ShotgunFullDamageUntil", 50f, new ConfigDescription(
+                "Shotguns (NPC and yours) do full damage until this % of their range, then fall off to 0 at the range. Other guns fall off from the muzzle (half damage at 50 %). 0 = like the other guns.",
+                new AcceptableValueRange<float>(0f, 99f)));
+            NpcShotgunDamage = Config.Bind("Tracers", "NpcShotgunDamage", 1f, new ConfigDescription(
+                "Damage multiplier for NPC shotgun pellets (the game's shotgunners do 5-8 per ray x 4 rays per blast, a third of a rifle burst).",
+                new AcceptableValueRange<float>(0f, 5f)));
             NpcHitRadius = Config.Bind("Tracers", "NpcHitRadius", 0.03f, new ConfigDescription(
                 "Thickness of NPC bullets, m, added to the target's hitbox (your body/head shapes, other targets' colliders). 0 = hairline. Your own bullets are always a hairline.",
                 new AcceptableValueRange<float>(0f, 0.5f)));
