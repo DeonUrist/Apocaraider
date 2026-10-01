@@ -18,7 +18,7 @@ namespace Apocaraiders
     {
         public const string GUID = "com.denis.apocalypter.apocaraiders";
         public const string NAME = "Apocaraiders";
-        public const string VERSION = "0.7.1";
+        public const string VERSION = "0.8.0";
 
         internal static ManualLogSource Log;
         internal static string Dir;
@@ -38,7 +38,7 @@ namespace Apocaraiders
         internal static ConfigEntry<int> ShotgunPellets, MaxTracers;
         internal static ConfigEntry<string> MetalSheetNames;
         internal static ConfigEntry<bool> BrainEnabled, DropCheck, BrainLog, AimPose;
-        internal static ConfigEntry<float> TurnRate, FeelerLength, FeelerAngle, AdvanceChance, AdvanceMin, AdvanceMax, StuckBackupSeconds, StuckMemorySeconds, MaxDistance;
+        internal static ConfigEntry<float> TurnRate, CrouchChance, FeelerLength, FeelerAngle, AdvanceChance, AdvanceMin, AdvanceMax, StuckBackupSeconds, StuckMemorySeconds, MaxDistance;
         internal static ConfigEntry<int> FeelerCount, StuckGiveUpCount;
 
         private static GameObject _runner;
@@ -155,6 +155,9 @@ namespace Apocaraiders
                 "How fast an NPC turns its body, degrees per second - also to face you for a shot (the game snapped instantly).", new AcceptableValueRange<float>(30f, 720f)));
             AimPose = Config.Bind("Brain", "AimPose", true,
                 "A gunman holding a shooting position keeps the gun up and aimed at you between bursts (the game lowered it to the idle pose and raised it only for the shot).");
+            CrouchChance = Config.Bind("Brain", "CrouchChance", 50f, new ConfigDescription(
+                "% chance that a gunman kneels when he takes a shooting position (humans only; he stands up when he moves again). He is harder to hit kneeling: his hitbox shrinks with him.",
+                new AcceptableValueRange<float>(0f, 100f)));
             FeelerLength = Config.Bind("Brain", "FeelerLength", 3.5f, new ConfigDescription("How far ahead a moving NPC looks for obstacles, m.", new AcceptableValueRange<float>(1f, 10f)));
             FeelerAngle = Config.Bind("Brain", "FeelerAngle", 60f, new ConfigDescription("Half-angle of the feeler fan around the direction to the target, degrees.", new AcceptableValueRange<float>(15f, 120f)));
             FeelerCount = Config.Bind("Brain", "FeelerCount", 7, new ConfigDescription("Feeler rays per look (odd; fewer = cheaper, coarser).", new AcceptableValueRange<int>(3, 15)));
@@ -230,6 +233,7 @@ namespace Apocaraiders
     internal class Runner : MonoBehaviour
     {
         private void Update() { Voice.EnsureLoading(this); Gungirl.Tick(); Tracers.Tick(); Brain.Tick(); }
+        private void LateUpdate() { try { Brain.LateTick(); } catch (Exception e) { Plugin.Log.LogError("Brain: " + e); } }
         private void OnGUI() { try { Hud.OnGUI(); } catch (Exception e) { Plugin.Log.LogError("Hud: " + e); } }
     }
 }

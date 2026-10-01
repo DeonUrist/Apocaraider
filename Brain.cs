@@ -23,7 +23,8 @@ namespace Apocaraiders
     // - feelers: FeelerCount rays over +-FeelerAngle around the direction to the target, FeelerLength m, on the layers the game's bumper rays
     //   use; the clearest direction nearest the target wins (a blocked heading from a recent stuck is avoided for StuckMemorySeconds);
     // - a gunman (Tracers knows the gun) stops where it can shoot - line of sight and within [NpcAim] EngagePercent of the gun's reach - and
-    //   holds there with the gun up (AimPose: the shooting animation frozen on its first frame), facing the target; the game's own burst logic
+    //   holds there with the gun up (AimPose: the shooting animation frozen on its first frame), kneeling with CrouchChance % (no crouch
+    //   animation exists: legs and hips re-posed by code in LateUpdate, capsule shortened), facing the target; the game's own burst logic
     //   and the Aim pacing do the shooting; every HoldRecheck it
     //   rolls AdvanceChance % to run at the target for AdvanceSeconds; it moves again when the line of sight is lost or the target walks out
     //   of the engage distance. Melee NPCs run at the target with the feelers.
@@ -50,6 +51,11 @@ namespace Apocaraiders
             public FsmGameObject Target;              // Detection.detectedObj
             public bool Ranged; public Tracers.Kind Kind;
             public Animator Anim; public string AimState; public bool Frozen;   // the shooting animation held on its first frame = aiming
+            public int CanCrouch;                     // 0 unknown, 1 has the leg bones, -1 no
+            public bool Crouched, PoseCaptured; public float Drop;
+            public Transform Hips, LUpLeg, LLeg, RUpLeg, RLeg;
+            public Vector3 HipsLocal; public Quaternion LUpLegRot, LLegRot, RUpLegRot, RLegRot;   // the standing pose the kneel is built on
+            public CapsuleCollider Capsule; public float CapHeight; public Vector3 CapCenter;
             public Mode Mode; public float ModeUntil;
             public float NextTick, NextRecheck, Stagger;
             public float Heading; public bool HasHeading;   // steered world yaw, degrees
@@ -103,6 +109,7 @@ namespace Apocaraiders
                     if (n.Mode != Mode.Off) SetMode(n, Mode.Off, "brain off");
                     continue;
                 }
+                if (n.Crouched && n.T.parent != null) Crouch(n, false);     // seated by Apocapatrol after all: stand up
                 string state;
                 if (!Engaged(n, out state))
                 {
@@ -273,7 +280,12 @@ namespace Apocaraiders
             if (m == Mode.Off) { if (wasStill) Move(n, true); }
             else if (still && !wasStill) Move(n, false);
             else if (!still && wasStill) Move(n, true);
-            if (m == Mode.Hold) Aim(n); else Unfreeze(n);
+            if (m == Mode.Hold)
+            {
+                Aim(n);
+                if (was != Mode.Hold && n.Ranged && Plugin.CrouchChance.Value > 0f && UnityEngine.Random.Range(0f, 100f) < Plugin.CrouchChance.Value) Crouch(n, true);
+            }
+            else { Unfreeze(n); Crouch(n, false); }
             if (Plugin.BrainLog.Value && (m != was))
                 Plugin.Log.LogInfo("Brain: " + n.Owner.name + " " + was + " -> " + m + " (" + why + ", " + n.Dist.ToString("0") + " m" + (n.Ranged ? ", " + n.Kind : "") + ")");
         }
@@ -309,6 +321,101 @@ namespace Apocaraiders
             n.Frozen = false;
             if (n.Anim != null) n.Anim.speed = 1f;
         }
+
+        // ---------- crouch ----------
+        // There is no crouch animation for NPCs, so a holding gunman that rolled [Brain] CrouchChance kneels by code: every LateUpdate (after the
+        // Animator wrote its pose) the hips are lowered and the legs re-posed on top of the animation - left leg forward with the shin vertical,
+        // right knee on the ground with the shin folded back (the same bone-swing technique as Apocapatrol's seated pose). The root capsule is
+        // shortened to the kneeling height so bullets aimed at the empty air above him miss; the head's own trigger collider follows the bone.
+        private static bool FindLegs(Npc n)
+        {
+            if (n.CanCrouch != 0) return n.CanCrouch > 0;
+            n.CanCrouch = -1;
+            if (n.Owner == null) return false;
+            var all = n.Owner.GetComponentsInChildren<Transform>(true);
+            n.Hips = Bone(all, "Hips"); n.LUpLeg = Bone(all, "LeftUpLeg"); n.LLeg = Bone(all, "LeftLeg");
+            n.RUpLeg = Bone(all, "RightUpLeg"); n.RLeg = Bone(all, "RightLeg");
+            if (n.Hips == null || n.LUpLeg == null || n.LLeg == null || n.RUpLeg == null || n.RLeg == null) return false;
+            n.Capsule = n.Owner.GetComponent<CapsuleCollider>();
+            if (n.Capsule != null) { n.CapHeight = n.Capsule.height; n.CapCenter = n.Capsule.center; }
+            n.CanCrouch = 1;
+            return true;
+        }
+
+        private static Transform Bone(Transform[] all, string bone)
+        {
+            foreach (var t in all)
+            {
+                string s = t.name;
+                int i = s.LastIndexOf(':'); if (i < 0) i = s.LastIndexOf('_');
+                if ((i >= 0 ? s.Substring(i + 1) : s) == bone) return t;
+            }
+            return null;
+        }
+
+        private static void Crouch(Npc n, bool on)
+        {
+            if (on == n.Crouched) return;
+            if (on)
+            {
+                if (!FindLegs(n)) return;
+                // kneeling: the hips end up about one thigh length above the ground (the right thigh stands on its knee)
+                float thigh = Vector3.Distance(n.LUpLeg.position, n.LLeg.position);
+                float ground = n.Col != null ? n.Col.bounds.min.y : n.T.position.y - 1f;
+                float hip = n.Hips.position.y - ground;
+                n.Drop = Mathf.Clamp(hip - thigh * 0.95f, 0.2f, 0.8f);
+                n.Crouched = true; n.PoseCaptured = false;
+                if (n.Capsule != null && n.CapHeight > 0f)
+                {
+                    float bottom = n.CapCenter.y - n.CapHeight * 0.5f;
+                    float h = Mathf.Max(n.Capsule.radius * 2f, n.CapHeight - n.Drop);
+                    n.Capsule.height = h;
+                    n.Capsule.center = new Vector3(n.CapCenter.x, bottom + h * 0.5f, n.CapCenter.z);
+                }
+                if (Plugin.BrainLog.Value) Plugin.Log.LogInfo("Brain: " + n.Owner.name + " kneels (hips down " + n.Drop.ToString("0.00") + " m)");
+            }
+            else
+            {
+                n.Crouched = false;
+                if (n.Capsule != null && n.CapHeight > 0f) { n.Capsule.height = n.CapHeight; n.Capsule.center = n.CapCenter; }
+            }
+        }
+
+        private static void Swing(Transform bone, float degrees, Vector3 axis)
+        {
+            if (bone != null) bone.rotation = Quaternion.AngleAxis(degrees, axis) * bone.rotation;
+        }
+
+        // Runner.LateUpdate: re-pose the crouched gunmen on top of the animation. The standing leg pose is captured once (the first frame
+        // after the kneel starts, i.e. the frozen aim pose) and the kneel is rebuilt from it every frame - absolute, so it neither drifts when
+        // the Animator stops writing (culled off screen) nor fights the burst animation's upper body.
+        public static void LateTick()
+        {
+            if (_npcs.Count == 0) return;
+            foreach (var kv in _npcs)
+            {
+                var n = kv.Value;
+                if (!n.Crouched || n.Owner == null) continue;
+                if (n.Hips == null || n.LUpLeg == null || n.LLeg == null || n.RUpLeg == null || n.RLeg == null) { n.Crouched = false; continue; }
+                if (!n.PoseCaptured)
+                {
+                    n.PoseCaptured = true;
+                    n.HipsLocal = n.Hips.localPosition;
+                    n.LUpLegRot = n.LUpLeg.localRotation; n.LLegRot = n.LLeg.localRotation;
+                    n.RUpLegRot = n.RUpLeg.localRotation; n.RLegRot = n.RLeg.localRotation;
+                }
+                Vector3 right = n.T.right;
+                var hp = n.Hips.parent;
+                n.Hips.localPosition = n.HipsLocal + (hp != null ? hp.InverseTransformVector(Vector3.down * n.Drop) : Vector3.down * n.Drop);
+                n.LUpLeg.localRotation = n.LUpLegRot; n.LLeg.localRotation = n.LLegRot;
+                n.RUpLeg.localRotation = n.RUpLegRot; n.RLeg.localRotation = n.RLegRot;
+                Swing(n.LUpLeg, -CrouchFrontThigh, right); Swing(n.LLeg, CrouchFrontKnee, right);
+                Swing(n.RUpLeg, CrouchBackThigh, right); Swing(n.RLeg, CrouchBackKnee, right);
+            }
+        }
+
+        // the kneeling pose, degrees about the body's right axis (minus = forward/up for a thigh; plus bends a knee back)
+        private const float CrouchFrontThigh = 90f, CrouchFrontKnee = 90f, CrouchBackThigh = 15f, CrouchBackKnee = 100f;
 
         private static void OnStuck(Npc n)
         {
