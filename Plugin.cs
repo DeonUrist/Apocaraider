@@ -18,7 +18,7 @@ namespace Apocaraiders
     {
         public const string GUID = "com.denis.apocalypter.apocaraiders";
         public const string NAME = "Apocaraiders";
-        public const string VERSION = "0.11.1";
+        public const string VERSION = "0.12.0";
 
         internal static ManualLogSource Log;
         internal static string Dir;
@@ -44,6 +44,8 @@ namespace Apocaraiders
         internal static ConfigEntry<float> SightCone, SightRange, DarkSightRange, DaylightIntensity, NoticeSeconds, LoseSeconds, SearchSeconds, LookInterval, ArriveDistance, MuffleFactor,
             ShotRangePistol, ShotRangeSmg, ShotRangeRifle, ShotRangeSniper, ShotRangeShotgun, ShotRangeCrossbow, TauntRange, EngineMinRange, EngineMaxRange, EngineMinHp, EngineMaxHp, EngineIdleFactor, ThrowRange, BailOutAwareRange, ExplosionRange;
         internal static ConfigEntry<string> NpcShotRanges, HumanFactions;
+        internal static ConfigEntry<bool> NavEnabled, NavLog, ShowNav;
+        internal static ConfigEntry<float> NavBakeRange, NavCellSize, NavMargin, NavMaxStep, NavBakeBudgetMs, NavFieldSeconds;
 
         private static GameObject _runner;
 
@@ -224,6 +226,14 @@ namespace Apocaraiders
             BailOutAwareRange = Config.Bind("Senses", "BailOutAwareRange", 150f, new ConfigDescription("With Apocapatrol: a crew bailing out knows where you are if you are within this range of its car, m.", new AcceptableValueRange<float>(0f, 1000f)));
             ExplosionRange = Config.Bind("Senses", "ExplosionRange", 150f, new ConfigDescription("With Apocapatrol: an exploding raider car is heard this far (like a gunshot), m. 0 = silent.", new AcceptableValueRange<float>(0f, 1000f)));
             ThrowRange = Config.Bind("Senses", "ThrowRange", 10f, new ConfigDescription("An item you throw draws NPCs within this range of where it lands, m. 0 = off.", new AcceptableValueRange<float>(0f, 200f)));
+            NavEnabled = Config.Bind("Nav", "Enabled", true,
+                "NPCs know the camps, buildings and caves: each one near you is mapped once (spread over frames) and NPCs inside it take the real way out through its exits and around its walls, spikes and props, instead of feeling their way. Off = feelers only.");
+            NavBakeRange = Config.Bind("Nav", "BakeRange", 200f, new ConfigDescription("A structure is mapped when you come within this distance of it, m.", new AcceptableValueRange<float>(30f, 1000f)));
+            NavCellSize = Config.Bind("Nav", "CellSize", 0.5f, new ConfigDescription("Map resolution, m (smaller = narrower gaps found, slower mapping). Very large structures get coarser cells automatically.", new AcceptableValueRange<float>(0.25f, 2f)));
+            NavMargin = Config.Bind("Nav", "Margin", 4f, new ConfigDescription("Open ground mapped around a structure's outline, m.", new AcceptableValueRange<float>(1f, 20f)));
+            NavMaxStep = Config.Bind("Nav", "MaxStep", 0.45f, new ConfigDescription("Largest height step between neighbouring map cells an NPC can walk, m.", new AcceptableValueRange<float>(0.1f, 2f)));
+            NavBakeBudgetMs = Config.Bind("Nav", "BakeBudgetMs", 1f, new ConfigDescription("CPU time per frame spent mapping a structure, ms.", new AcceptableValueRange<float>(0.2f, 10f)));
+            NavFieldSeconds = Config.Bind("Nav", "FieldSeconds", 1f, new ConfigDescription("How long a computed route to one goal is reused by every NPC heading there, s.", new AcceptableValueRange<float>(0.2f, 10f)));
             SpawnKey = Config.Bind("Debug", "SpawnKey", Key.F9,
                 "Spawns a Gungirl 6 m in front of you (a real raider: she fights and is saved). None = off.");
             DamageNumbers = Config.Bind("Hud", "DamageNumbers", 2, new ConfigDescription(
@@ -234,6 +244,8 @@ namespace Apocaraiders
             HitMarkerSize = Config.Bind("Hud", "HitMarkerSize", 22, new ConfigDescription("Hit marker size, px.", new AcceptableValueRange<int>(6, 100)));
             HitLog = Config.Bind("Debug", "HitLog", false, "Log every bullet hit on a creature: who, what, distance, damage, and its Health before and after.");
             VerboseLog = Config.Bind("Debug", "VerboseLog", false, "Log every Gungirl that is dressed (spawn, corpse, after a load).");
+            NavLog = Config.Bind("Debug", "NavLog", false, "Log the structures found and mapped (size, cells, time taken).");
+            ShowNav = Config.Bind("Debug", "ShowNav", false, "Draw each nearby structure's mapping state and, in cyan, the next map waypoint of every NPC routing through one.");
             SensesLog = Config.Bind("Debug", "SensesLog", false, "Log every detection event: who sees, hears, loses, searches, gives up; every ghost made.");
             ShowGhosts = Config.Bind("Debug", "ShowGhosts", false, "Draw the ghosts in the world (a diamond and a label: number, source, what it is about, holders, age) and each alert NPC's state above its head. Colours: red sight, magenta hit, orange taunt, yellow gunshot, green thrown item, blue engine.");
             BrainLog = Config.Bind("Debug", "BrainLog", false, "Log every NPC movement decision (chase, hold, advance, stuck, rest) with the reason and distance.");
@@ -281,7 +293,7 @@ namespace Apocaraiders
             }
             catch (Exception e) { Log.LogError("Harmony patch failed, no senses: " + e); }
 
-            SceneManager.sceneLoaded += (s, m) => { EnsureRunner(); Gungirl.OnSceneLoaded(); Tracers.OnSceneLoaded(); Brain.OnSceneLoaded(); Senses.OnSceneLoaded(); };
+            SceneManager.sceneLoaded += (s, m) => { EnsureRunner(); Gungirl.OnSceneLoaded(); Tracers.OnSceneLoaded(); Brain.OnSceneLoaded(); Senses.OnSceneLoaded(); Nav.OnSceneLoaded(); };
             EnsureRunner();
             Log.LogInfo(NAME + " " + VERSION + " loaded");
         }
@@ -300,7 +312,7 @@ namespace Apocaraiders
 
     internal class Runner : MonoBehaviour
     {
-        private void Update() { Voice.EnsureLoading(this); Gungirl.Tick(); Tracers.Tick(); try { Senses.Tick(this); } catch (Exception e) { Plugin.Log.LogError("Senses: " + e); } Brain.Tick(); }
+        private void Update() { Voice.EnsureLoading(this); Gungirl.Tick(); Tracers.Tick(); try { Senses.Tick(this); } catch (Exception e) { Plugin.Log.LogError("Senses: " + e); } try { Nav.Tick(); } catch (Exception e) { Plugin.Log.LogError("Nav: " + e); } Brain.Tick(); }
         private void LateUpdate() { try { Brain.LateTick(); } catch (Exception e) { Plugin.Log.LogError("Brain: " + e); } }
         private void OnGUI() { try { Hud.OnGUI(); } catch (Exception e) { Plugin.Log.LogError("Hud: " + e); } }
     }

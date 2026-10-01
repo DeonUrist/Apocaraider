@@ -110,6 +110,7 @@ namespace Apocaraiders
         {
             if (Event.current.type != EventType.Repaint) return;
             try { Senses.DrawDebug(); } catch (Exception e) { Plugin.Log.LogError("Senses overlay: " + e); }
+            try { Nav.DrawDebug(); } catch (Exception e) { Plugin.Log.LogError("Nav overlay: " + e); }
             float now = Time.unscaledTime;
             bool marker = now < _markerUntil;
             if (!marker && _floaters.Count == 0 && _lines.Count == 0) return;

@@ -1,0 +1,442 @@
+using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using UnityEngine;
+using UnityEngine.SceneManagement;
+
+namespace Apocaraiders
+{
+    // Structure navigation: NPCs know the camps, buildings and caves they are in.
+    //
+    // The world's structures are instances of 30 prefabs (Camp_1..16, Building_1..7, Cave_1..7; asset read 2026-10-02). When the player
+    // comes within [Nav] BakeRange of one, its footprint (the union of its solid colliders + Margin) is baked into a walkability grid
+    // (CellSize, world-aligned): per cell one downward ray for the floor nearest the structure's base height (caves have a roof above the
+    // floor), then a body-sized capsule from ankle (0.2 m) to head (1.7 m) height must be free of anything solid except cars, loose items
+    // and creatures - so spikes at a cave mouth, a brazier, crates and walls are obstacles, the clean opening is not. Neighbouring cells
+    // connect when their floors differ by at most MaxStep. Baking is spread over frames (BakeBudgetMs per frame) and kept per instance.
+    //
+    // Routing: an NPC standing inside a baked footprint whose goal (target or ghost) is not in straight sight on the grid follows a
+    // distance field built for that goal (Dijkstra over the grid: from the goal cell when the goal is inside, otherwise from every edge
+    // cell weighted by its distance to the goal, so the NPC leaves through the exit that is shortest overall). The next waypoint is the
+    // farthest cell along the descent that is in grid sight, handed to the brain's feelers as a waypoint. Fields are cached per goal
+    // (shared by every NPC heading there) for FieldSeconds. Outside any footprint nothing runs.
+    internal static class Nav
+    {
+        internal sealed class Structure
+        {
+            public Transform Root; public string Name;
+            public Bounds Box;                      // world bounds of the footprint incl. margin
+            public float Cell, RefY; public int W, H;
+            public float[] FloorY;                  // NaN = blocked
+            public bool Baked; public int Next;     // bake progress (cell index)
+            public int Walkable; public float BakeMs; public int BakeFrames;
+            public readonly Dictionary<long, Field> Fields = new Dictionary<long, Field>();
+        }
+
+        internal sealed class Field { public float[] Dist; public float Made; public bool GoalInside; }
+
+        private static readonly List<Structure> _structures = new List<Structure>();
+        private static readonly HashSet<int> _known = new HashSet<int>();
+        private static Structure _baking;
+        private static float _nextScan, _nextPick;
+        private static readonly Stopwatch _sw = new Stopwatch();
+        // solid for baking: everything the feelers see, minus cars (8) and loose items (9) - those move
+        private static readonly int BakeMask = ~((1 << 1) | (1 << 2) | (1 << 4) | (1 << 5) | (1 << 6) | (1 << 7) | (1 << 8) | (1 << 9) | (1 << 10) | (1 << 12) | (1 << 13) | (1 << 15) | (1 << 17) | (1 << 19) | (1 << 22));
+        private const float Radius = 0.3f, Ankle = 0.2f, HeadTop = 1.7f;
+
+        internal static bool On { get { return Plugin.NavEnabled != null && Plugin.NavEnabled.Value; } }
+
+        public static void OnSceneLoaded() { _structures.Clear(); _known.Clear(); _baking = null; _nextScan = 0f; _debug.Clear(); }
+
+        // ---------- discovery + baking (per frame) ----------
+        public static void Tick()
+        {
+            if (!On) return;
+            float now = Time.unscaledTime;
+            if (now >= _nextScan) { _nextScan = now + 10f; Discover(); }
+            var player = Player();
+            if (player == null) return;
+            if (_baking == null && now >= _nextPick)
+            {
+                _nextPick = now + 1f;
+                float best = float.MaxValue;
+                foreach (var s in _structures)
+                {
+                    if (s.Baked || s.Root == null) continue;
+                    float d = Mathf.Sqrt(s.Box.SqrDistance(player.position));
+                    if (d < Plugin.NavBakeRange.Value && d < best) { best = d; _baking = s; }
+                }
+                if (_baking != null) BeginBake(_baking);
+            }
+            if (_baking != null)
+            {
+                try { BakeStep(_baking); }
+                catch (Exception e) { Plugin.Log.LogError("Nav: bake of " + _baking.Name + " failed: " + e); _baking.Baked = true; _baking.FloorY = null; _baking = null; }
+            }
+        }
+
+        private static Transform _player; private static float _nextPlayer;
+        private static Transform Player()
+        {
+            if (_player == null && Time.unscaledTime >= _nextPlayer) { _nextPlayer = Time.unscaledTime + 2f; var g = GameObject.Find("Player"); _player = g != null ? g.transform : null; }
+            return _player;
+        }
+
+        // structures are found by name (Camp_N / Building_N / Cave_N, any "(Clone)" suffix) among the scene roots and their children
+        private static readonly List<GameObject> _roots = new List<GameObject>();
+        private static void Discover()
+        {
+            int added = 0;
+            for (int i = 0; i < SceneManager.sceneCount; i++)
+            {
+                var sc = SceneManager.GetSceneAt(i);
+                if (!sc.isLoaded) continue;
+                _roots.Clear(); sc.GetRootGameObjects(_roots);
+                foreach (var r in _roots) added += Scan(r.transform, 0);
+            }
+            if (added > 0 && Plugin.NavLog.Value) Plugin.Log.LogInfo("Nav: " + added + " new structure(s), " + _structures.Count + " known");
+        }
+
+        private static int Scan(Transform t, int depth)
+        {
+            if (IsStructure(t.name))
+            {
+                if (!t.gameObject.activeInHierarchy || !_known.Add(t.GetInstanceID())) return 0;
+                var s = Make(t);
+                if (s == null) return 0;
+                _structures.Add(s);
+                if (Plugin.NavLog.Value) Plugin.Log.LogInfo("Nav: found " + Path(t) + " at " + t.position + ", footprint " + s.Box.size.x.ToString("0") + " x " + s.Box.size.z.ToString("0") + " m");
+                return 1;
+            }
+            if (depth >= 4 || t.childCount > 3000) return 0;
+            if (t.GetComponent<Rigidbody>() != null) return 0;       // creatures, cars, items: never contain structures
+            int n = 0;
+            for (int i = 0; i < t.childCount; i++) n += Scan(t.GetChild(i), depth + 1);
+            return n;
+        }
+
+        private static bool IsStructure(string name)
+        {
+            string p = name.StartsWith("Camp_") ? "Camp_" : name.StartsWith("Building_") ? "Building_" : name.StartsWith("Cave_") ? "Cave_" : null;
+            if (p == null || name.Length <= p.Length || !char.IsDigit(name[p.Length])) return false;
+            for (int i = p.Length; i < name.Length; i++) { char c = name[i]; if (!char.IsDigit(c)) return c == '(' || c == ' '; }
+            return true;
+        }
+
+        private static string Path(Transform t) { return t.parent != null ? t.parent.name + "/" + t.name : t.name; }
+
+        private static Structure Make(Transform root)
+        {
+            bool any = false; Bounds b = new Bounds();
+            foreach (var c in root.GetComponentsInChildren<Collider>(true))
+            {
+                if (c == null || c.isTrigger || !c.enabled) continue;
+                int l = c.gameObject.layer;
+                if (((1 << l) & BakeMask) == 0) continue;
+                if (c.attachedRigidbody != null && !c.attachedRigidbody.isKinematic) continue;
+                if (!any) { b = c.bounds; any = true; } else b.Encapsulate(c.bounds);
+            }
+            if (!any) return null;
+            float margin = Mathf.Max(1f, Plugin.NavMargin.Value);
+            b.Expand(new Vector3(margin * 2f, 0f, margin * 2f));
+            float cell = Mathf.Max(0.25f, Plugin.NavCellSize.Value);
+            float maxSide = Mathf.Max(b.size.x, b.size.z);
+            if (maxSide / cell > 240f) cell = maxSide / 240f;           // very large footprints get coarser cells (<= 240 x 240)
+            var s = new Structure { Root = root, Name = root.name, Box = b, Cell = cell };
+            s.W = Mathf.Max(2, Mathf.CeilToInt(b.size.x / cell)); s.H = Mathf.Max(2, Mathf.CeilToInt(b.size.z / cell));
+            return s;
+        }
+
+        private static void BeginBake(Structure s)
+        {
+            s.FloorY = new float[s.W * s.H];
+            s.Next = 0; s.Walkable = 0; s.BakeMs = 0f; s.BakeFrames = 0;
+            // the base height: the floor under the structure's pivot (a ray from well above, first walkable surface below the pivot + 2 m)
+            Vector3 p = s.Root.position;
+            s.RefY = p.y;
+            RaycastHit h;
+            if (Physics.Raycast(new Vector3(p.x, p.y + 2f, p.z), Vector3.down, out h, 12f, BakeMask, QueryTriggerInteraction.Ignore)) s.RefY = h.point.y;
+        }
+
+        private static void BakeStep(Structure s)
+        {
+            if (s.Root == null) { _baking = null; return; }
+            _sw.Reset(); _sw.Start();
+            float budget = Mathf.Max(0.2f, Plugin.NavBakeBudgetMs.Value);
+            int n = s.W * s.H;
+            while (s.Next < n && _sw.Elapsed.TotalMilliseconds < budget)
+            {
+                int i = s.Next++;
+                s.FloorY[i] = Floor(s, i % s.W, i / s.W);
+                if (!float.IsNaN(s.FloorY[i])) s.Walkable++;
+            }
+            _sw.Stop();
+            s.BakeMs += (float)_sw.Elapsed.TotalMilliseconds; s.BakeFrames++;
+            if (s.Next >= n)
+            {
+                s.Baked = true; _baking = null;
+                if (Plugin.NavLog.Value) Plugin.Log.LogInfo("Nav: baked " + s.Name + ": " + s.W + " x " + s.H + " cells of " + s.Cell.ToString("0.00") + " m, " + s.Walkable + " walkable, "
+                    + s.BakeMs.ToString("0") + " ms over " + s.BakeFrames + " frames");
+            }
+        }
+
+        // the floor of a cell: the walkable surface (upward facing, room for a body above it) nearest to the structure's base height.
+        // Ray by ray from the top down (a multi-hit query reports one hit per collider, and a cave's roof and floor can be one mesh; ray
+        // casts skip back faces, so the inside of a cave roof is passed through and its floor is found).
+        private static float Floor(Structure s, int x, int z)
+        {
+            Vector3 c = CellCenter(s, x, z, s.RefY);
+            float y0 = s.Box.max.y + 1f, bottom = s.RefY - 8f;
+            float best = float.NaN, bestD = float.MaxValue;
+            RaycastHit h;
+            for (int k = 0; k < 8 && y0 > bottom; k++)
+            {
+                if (!Physics.Raycast(new Vector3(c.x, y0, c.z), Vector3.down, out h, y0 - bottom, BakeMask, QueryTriggerInteraction.Ignore)) break;
+                y0 = h.point.y - 0.05f;
+                if (h.normal.y < 0.6f) continue;                       // a wall or a steep rock face
+                float y = h.point.y;
+                float d = Mathf.Abs(y - s.RefY);
+                if (d >= bestD || d > 6f) { if (y < s.RefY - 6f) break; continue; }
+                Vector3 f = new Vector3(c.x, y, c.z);
+                if (Physics.CheckCapsule(f + Vector3.up * (Ankle + Radius), f + Vector3.up * (HeadTop - Radius), Radius, BakeMask, QueryTriggerInteraction.Ignore)) continue;
+                best = y; bestD = d;
+            }
+            return best;
+        }
+
+        private static Vector3 CellCenter(Structure s, int x, int z, float y)
+        {
+            return new Vector3(s.Box.min.x + (x + 0.5f) * s.Cell, y, s.Box.min.z + (z + 0.5f) * s.Cell);
+        }
+
+        private static bool CellOf(Structure s, Vector3 p, out int x, out int z)
+        {
+            x = Mathf.FloorToInt((p.x - s.Box.min.x) / s.Cell); z = Mathf.FloorToInt((p.z - s.Box.min.z) / s.Cell);
+            return x >= 0 && z >= 0 && x < s.W && z < s.H;
+        }
+
+        private static bool Inside(Structure s, Vector3 p) { int x, z; return CellOf(s, p, out x, out z); }
+
+        // the nearest walkable cell within r cells (an NPC hugging a wall stands in a blocked cell)
+        private static int NearestWalkable(Structure s, int x, int z, int r)
+        {
+            int best = -1; int bestD = int.MaxValue;
+            for (int dz = -r; dz <= r; dz++)
+                for (int dx = -r; dx <= r; dx++)
+                {
+                    int cx = x + dx, cz = z + dz;
+                    if (cx < 0 || cz < 0 || cx >= s.W || cz >= s.H) continue;
+                    int i = cz * s.W + cx;
+                    if (float.IsNaN(s.FloorY[i])) continue;
+                    int dd = dx * dx + dz * dz;
+                    if (dd < bestD) { bestD = dd; best = i; }
+                }
+            return best;
+        }
+
+        private static bool Step(Structure s, int a, int b)
+        {
+            float ya = s.FloorY[a], yb = s.FloorY[b];
+            return !float.IsNaN(ya) && !float.IsNaN(yb) && Mathf.Abs(ya - yb) <= Mathf.Max(0.1f, Plugin.NavMaxStep.Value);
+        }
+
+        // ---------- routing ----------
+        // A waypoint toward goal for an NPC at pos, or false when no structure is involved / the way is straight. pathLeft = path length to the
+        // goal (inside) or to the exit plus the straight rest (outside), for the brain's progress check.
+        internal static bool Next(GameObject owner, Vector3 pos, Vector3 goal, out Vector3 next, out float pathLeft)
+        {
+            next = goal; pathLeft = 0f;
+            if (!On) return false;
+            Structure s = null;
+            foreach (var t in _structures) if (t.Baked && t.FloorY != null && t.Root != null && Inside(t, pos)) { s = t; break; }
+            if (s == null) return false;
+            int x, z; CellOf(s, pos, out x, out z);
+            int from = NearestWalkable(s, x, z, 3);
+            if (from < 0) return false;
+            if (Mathf.Abs(pos.y - s.FloorY[from]) > 2.5f) return false;   // on the roof of a cave, on a rock above a camp: not on this map
+            int gx, gz;
+            bool goalInside = CellOf(s, goal, out gx, out gz);
+            int goalCell = goalInside ? NearestWalkable(s, gx, gz, 4) : -1;
+            if (goalInside && (goalCell < 0 || Mathf.Abs(goal.y - s.FloorY[goalCell]) > 3f)) goalInside = false;   // in a wall / above the map: outside
+            if (goalInside && GridSight(s, from, goalCell)) return false;  // straight across the floor: the feelers do the rest
+            if (!goalInside && IsEdge(s, from)) return false;             // already at the edge of the footprint: out we go
+
+            var f = FieldFor(s, goal, goalInside, goalCell);
+            float d0 = f.Dist[from];
+            if (float.IsInfinity(d0)) return false;                       // no way from here (walled-in spot): let the feelers try
+            pathLeft = d0;
+            // descend the field up to 16 cells, keep the farthest cell still in grid sight
+            int cur = from, pick = from;
+            for (int k = 0; k < 16; k++)
+            {
+                int nb = Downhill(s, f, cur);
+                if (nb < 0) break;
+                cur = nb;
+                if (GridSight(s, from, cur)) pick = cur; else break;
+            }
+            if (pick == from) { int nb = Downhill(s, f, from); if (nb < 0) return false; pick = nb; }
+            next = CellCenter(s, pick % s.W, pick / s.W, s.FloorY[pick]);
+            Remember(owner, next, s);
+            return true;
+        }
+
+        private static bool IsEdge(Structure s, int i) { int x = i % s.W, z = i / s.W; return x == 0 || z == 0 || x == s.W - 1 || z == s.H - 1; }
+
+        private static int Downhill(Structure s, Field f, int i)
+        {
+            int x = i % s.W, z = i / s.W; float best = f.Dist[i]; int bi = -1;
+            for (int dz = -1; dz <= 1; dz++)
+                for (int dx = -1; dx <= 1; dx++)
+                {
+                    if (dx == 0 && dz == 0) continue;
+                    int cx = x + dx, cz = z + dz;
+                    if (cx < 0 || cz < 0 || cx >= s.W || cz >= s.H) continue;
+                    int j = cz * s.W + cx;
+                    if (!Step(s, i, j)) continue;
+                    if (dx != 0 && dz != 0 && (!Step(s, i, z * s.W + cx) || !Step(s, i, cz * s.W + x))) continue;
+                    if (f.Dist[j] < best) { best = f.Dist[j]; bi = j; }
+                }
+            return bi;
+        }
+
+        // every cell on the grid line between two cells walkable and step-connected (a body-wide corridor, since cells are body-checked)
+        private static bool GridSight(Structure s, int a, int b)
+        {
+            int x0 = a % s.W, z0 = a / s.W, x1 = b % s.W, z1 = b / s.W;
+            int dx = Math.Abs(x1 - x0), dz = Math.Abs(z1 - z0), sx = x0 < x1 ? 1 : -1, sz = z0 < z1 ? 1 : -1, err = dx - dz;
+            int prev = a;
+            while (true)
+            {
+                if (x0 == x1 && z0 == z1) return true;
+                int e2 = 2 * err;
+                if (e2 > -dz) { err -= dz; x0 += sx; }
+                if (e2 < dx) { err += dx; z0 += sz; }
+                int i = z0 * s.W + x0;
+                if (!Step(s, prev, i)) return false;
+                prev = i;
+            }
+        }
+
+        private static Field FieldFor(Structure s, Vector3 goal, bool inside, int goalCell)
+        {
+            float now = Time.time;
+            long key = inside ? goalCell : (long)1 << 40 | (long)(Mathf.FloorToInt(goal.x / 4f) & 0xFFFFF) << 20 | (long)(Mathf.FloorToInt(goal.z / 4f) & 0xFFFFF);
+            Field f;
+            if (s.Fields.TryGetValue(key, out f) && now - f.Made < Mathf.Max(0.2f, Plugin.NavFieldSeconds.Value)) return f;
+            if (s.Fields.Count > 32) s.Fields.Clear();
+            f = Build(s, goal, inside, goalCell);
+            s.Fields[key] = f;
+            return f;
+        }
+
+        // Dijkstra over the grid (8 neighbours, no corner cutting, step limit)
+        private static Field Build(Structure s, Vector3 goal, bool inside, int goalCell)
+        {
+            int n = s.W * s.H;
+            var dist = new float[n];
+            for (int i = 0; i < n; i++) dist[i] = float.PositiveInfinity;
+            var heap = new Heap(Math.Max(64, n / 4));
+            if (inside) { dist[goalCell] = 0f; heap.Push(goalCell, 0f); }
+            else
+            {
+                for (int x = 0; x < s.W; x++) { Seed(s, x, 0, goal, dist, heap); Seed(s, x, s.H - 1, goal, dist, heap); }
+                for (int z = 1; z < s.H - 1; z++) { Seed(s, 0, z, goal, dist, heap); Seed(s, s.W - 1, z, goal, dist, heap); }
+            }
+            float c1 = s.Cell, c2 = s.Cell * 1.41421356f;
+            int i0; float d;
+            while (heap.Pop(out i0, out d))
+            {
+                if (d > dist[i0]) continue;
+                int x = i0 % s.W, z = i0 / s.W;
+                for (int dz = -1; dz <= 1; dz++)
+                    for (int dx = -1; dx <= 1; dx++)
+                    {
+                        if (dx == 0 && dz == 0) continue;
+                        int cx = x + dx, cz = z + dz;
+                        if (cx < 0 || cz < 0 || cx >= s.W || cz >= s.H) continue;
+                        int j = cz * s.W + cx;
+                        if (!Step(s, i0, j)) continue;
+                        if (dx != 0 && dz != 0 && (!Step(s, i0, z * s.W + cx) || !Step(s, i0, cz * s.W + x))) continue;
+                        float nd = d + (dx != 0 && dz != 0 ? c2 : c1);
+                        if (nd < dist[j]) { dist[j] = nd; heap.Push(j, nd); }
+                    }
+            }
+            return new Field { Dist = dist, Made = Time.time, GoalInside = inside };
+        }
+
+        private static void Seed(Structure s, int x, int z, Vector3 goal, float[] dist, Heap heap)
+        {
+            int i = z * s.W + x;
+            if (float.IsNaN(s.FloorY[i])) return;
+            Vector3 c = CellCenter(s, x, z, 0f); c.y = goal.y = 0f;
+            float d = Vector3.Distance(c, new Vector3(goal.x, 0f, goal.z));
+            if (d < dist[i]) { dist[i] = d; heap.Push(i, d); }
+        }
+
+        private sealed class Heap
+        {
+            private int[] _i; private float[] _k; private int _n;
+            public Heap(int cap) { _i = new int[cap]; _k = new float[cap]; }
+            public void Push(int i, float k)
+            {
+                if (_n == _i.Length) { Array.Resize(ref _i, _n * 2); Array.Resize(ref _k, _n * 2); }
+                int c = _n++;
+                while (c > 0) { int p = (c - 1) >> 1; if (_k[p] <= k) break; _i[c] = _i[p]; _k[c] = _k[p]; c = p; }
+                _i[c] = i; _k[c] = k;
+            }
+            public bool Pop(out int i, out float k)
+            {
+                if (_n == 0) { i = -1; k = 0f; return false; }
+                i = _i[0]; k = _k[0];
+                int li = _i[--_n]; float lk = _k[_n];
+                int c = 0;
+                while (true)
+                {
+                    int a = 2 * c + 1; if (a >= _n) break;
+                    int b = a + 1; int m = b < _n && _k[b] < _k[a] ? b : a;
+                    if (_k[m] >= lk) break;
+                    _i[c] = _i[m]; _k[c] = _k[m]; c = m;
+                }
+                if (_n > 0) { _i[c] = li; _k[c] = lk; }
+                return true;
+            }
+        }
+
+        // ---------- debug ([Debug] ShowNav) ----------
+        private struct Mark { public Vector3 Next; public string Where; public float At; }
+        private static readonly Dictionary<GameObject, Mark> _debug = new Dictionary<GameObject, Mark>();
+        private static void Remember(GameObject owner, Vector3 next, Structure s)
+        {
+            if (owner == null || !Plugin.ShowNav.Value) return;
+            _debug[owner] = new Mark { Next = next, Where = s.Name, At = Time.time };
+        }
+
+        internal static void DrawDebug()
+        {
+            if (!On || !Plugin.ShowNav.Value) return;
+            var cyan = new Color(0.3f, 0.9f, 1f);
+            foreach (var s in _structures)
+            {
+                if (s.Root == null) continue;
+                var p = Player();
+                if (p != null && s.Box.SqrDistance(p.position) > 150f * 150f) continue;
+                Hud.Label(new Vector3(s.Box.center.x, s.RefY + 3f, s.Box.center.z), s.Name + (s.Baked ? (s.FloorY != null ? " baked, " + s.Walkable + "/" + (s.W * s.H) + " cells" : " (bake failed)") : _baking == s ? " baking " + (100 * s.Next / Math.Max(1, s.W * s.H)) + " %" : " not baked"), cyan);
+            }
+            float now = Time.time;
+            var dead = new List<GameObject>();
+            foreach (var kv in _debug)
+            {
+                if (kv.Key == null || now - kv.Value.At > 1.5f) { dead.Add(kv.Key); continue; }
+                Hud.Mark(kv.Value.Next + Vector3.up * 0.3f, cyan, 8f);
+                Hud.Label(kv.Value.Next + Vector3.up * 0.7f, "nav " + kv.Value.Where, cyan);
+            }
+            foreach (var k in dead) _debug.Remove(k);
+        }
+
+        internal static string Status()
+        {
+            int b = 0; foreach (var s in _structures) if (s.Baked) b++;
+            return _structures.Count + " structures, " + b + " baked";
+        }
+    }
+}

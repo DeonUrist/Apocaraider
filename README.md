@@ -80,6 +80,14 @@ restored after a load. With Apocapatrol installed, a raider bailing out of a car
 otherwise heads for where you were) and an exploding car is heard like a gunshot. `[Senses] Enabled = false` gives the game's own sensors back; `[Debug] ShowGhosts` draws every ghost and
 alert NPC's state in the world.
 
+## Structure maps
+
+NPCs know their camps, buildings and caves. When you come within 200 m of one, it is mapped once in the background: a 0.5 m grid of
+where a body fits (spikes at a cave mouth, braziers, crates and walls are obstacles; the clean opening is not). An NPC inside a
+mapped structure takes the real way to you or to the spot it is checking: out through the exit that is shortest overall, around the
+walls, instead of feeling its way and running into a dead end. Outside structures nothing changes. `[Nav] Enabled = false` turns it
+off; `[Debug] ShowNav` shows the mapping state and each NPC's next map waypoint.
+
 ## Install
 
 Needs BepInEx 5. Copy the `Apocaraiders` folder into `BepInEx\plugins\`, so you have:
@@ -114,8 +122,10 @@ BepInEx\plugins\Apocaraiders\Sounds\Gungirl\*.wav / *.ogg
 - **[Senses]**: on/off, SightCone, SightRange / DarkSightRange, DaylightIntensity, NoticeSeconds, LoseSeconds, SearchSeconds, ArriveDistance,
   LookInterval, MuffleSounds / MuffleFactor (off), ShotRange per weapon class, NpcShotRanges (per NPC type), TauntRange, HumanFactions,
   EngineMinRange / EngineMaxRange / EngineMinHp / EngineMaxHp / EngineIdleFactor, ThrowRange, BailOutAware / BailOutAwareRange / ExplosionRange (with Apocapatrol).
+- **[Nav]**: on/off, BakeRange, CellSize, Margin, MaxStep, BakeBudgetMs, FieldSeconds.
 - **[Hud]**: DamageNumbers (0/1/2), DamageFontSize, HitMarker on/off, HitMarkerSize.
 - **[Debug] HitLog**: logs every bullet that hits a creature with its damage and the creature's health before and after.
+- **[Debug] NavLog / ShowNav**: log the structures mapped; draw their state and the NPCs' map waypoints.
 - **[Debug] SensesLog / ShowGhosts**: log every detection event; draw the ghosts and alert states in the world.
 - **[Debug] BrainLog**: logs every NPC movement decision (chase, hold, advance, stuck, rest) with the reason.
 - **[Debug] SpawnKey** (F9): spawns a Gungirl in front of you.

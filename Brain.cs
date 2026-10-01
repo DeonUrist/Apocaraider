@@ -64,7 +64,7 @@ namespace Apocaraiders
             public int Side, ClearLooks; public float SideUntil; public bool Flipped;     // pathing: the committed way around an obstacle
             public float FreeLeft, FreeRight;                                             // the last fan's free lengths per half
             public Vector3 Waypoint; public bool HasWaypoint; public float WaypointUntil, NextScout;   // a scouted corner with a clear line to the target
-            public bool ToGhost; public float LookYaw, NextLookTurn;                       // Senses: going to a ghost / looking around at it
+            public bool ToGhost, OnNav; public float LookYaw, NextLookTurn;                       // Senses: going to a ghost / looking around at it
             public float BestDist = float.MaxValue, NoProgressSince;
             public int Stucks; public float FirstStuck;
             public float LosLostAt = -1f; public bool Los; public float Dist;
@@ -236,9 +236,17 @@ namespace Apocaraiders
                 }
             }
             // moving: Chase or Advance
-            if (!Progress(n, d, now)) return;
+            // inside a baked camp / building / cave the structure's own map says the way (out through the right exit, around its walls)
+            Vector3 navNext; float pathLeft;
+            n.OnNav = Nav.Next(n.Owner, n.T.position, tp, out navNext, out pathLeft);
+            if (!Progress(n, n.OnNav ? pathLeft : d, now)) return;
             Vector3 goal = d3; float gd = d;
-            if (n.HasWaypoint)
+            if (n.OnNav)
+            {
+                goal = navNext - n.T.position; goal.y = 0f; gd = Mathf.Max(0.5f, goal.magnitude);
+                n.HasWaypoint = false;
+            }
+            else if (n.HasWaypoint)
             {
                 Vector3 w = n.Waypoint - n.T.position; w.y = 0f;
                 float wd = w.magnitude;
@@ -338,7 +346,7 @@ namespace Apocaraiders
             {
                 bool straightBlocked = _free[centre] < len * 0.9f;
                 { float fl0 = 0f, fr0 = 0f; for (int i = 0; i < count; i++) { if (_angles[i] < 0f) fl0 += _free[i]; else if (_angles[i] > 0f) fr0 += _free[i]; } n.FreeLeft = fl0; n.FreeRight = fr0; }
-                if (straightBlocked && !n.HasWaypoint && now >= n.NextScout)
+                if (straightBlocked && !n.HasWaypoint && !n.OnNav && now >= n.NextScout)
                 {
                     n.NextScout = now + 0.5f * R;
                     if (Scout(n, origin, p1, p2, radius, mask, toReal, troot, now)) n.Side = 0;
