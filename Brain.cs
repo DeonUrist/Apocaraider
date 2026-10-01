@@ -76,6 +76,9 @@ namespace Apocaraiders
         // layers (TagManager): 0 Default, 6 Player, 8 Car, 9 Item, 10 Actor, 11 Door, 14 Ground, 16 SeeTrough, 18 PhysicsLock
         private static readonly int Mask = (1 << 0) | (1 << 8) | (1 << 11) | (1 << 16);   // the game's bumper-ray layers (buildings, cars, doors, fences)
         private static readonly int GroundMask = (1 << 0) | (1 << 8) | (1 << 11) | (1 << 14) | (1 << 16);   // + Ground: for the drop check
+        // pathing feelers: everything solid except creatures, the player, weapons and the non-world layers; Ground counts only where it is
+        // steep (a rock, a prop placed on that layer), gentle terrain ahead is not an obstacle
+        private static readonly int PathMask = ~((1 << 1) | (1 << 2) | (1 << 4) | (1 << 5) | (1 << 6) | (1 << 7) | (1 << 10) | (1 << 12) | (1 << 13) | (1 << 15) | (1 << 17) | (1 << 19) | (1 << 22));
         private static float[] _angles = new float[0];
         private static readonly float[] _scores = new float[32];
         private static readonly float[] _blocks = new float[32];
@@ -244,17 +247,18 @@ namespace Apocaraiders
             Transform troot = n.Target.Value != null ? n.Target.Value.transform.root : null;
             bool blockedMem = now < n.BlockedUntil;
             Vector3 right = Quaternion.Euler(0f, targetYaw, 0f) * Vector3.right;
-            int mask = adv ? Mask | (1 << 9) : Mask;
+            int mask = adv ? PathMask : Mask;
             float radius = 0.3f;
             Vector3 p1 = origin, p2 = origin;
             if (adv)
             {
-                // the swept capsule: knee to chest of this body (small animals: whatever fits between their collider's top and bottom)
+                // the swept capsule: a little wider than the body, from step height (0.15 m) to chest, so a brazier, a tyre or a fence bar that
+                // the body would clip registers (small animals: whatever fits between their collider's top and bottom)
                 if (n.Col != null)
                 {
                     var b = n.Col.bounds;
-                    radius = Mathf.Clamp(Mathf.Min(b.extents.x, b.extents.z) * 0.9f, 0.1f, 0.35f);
-                    float lo = b.min.y + Mathf.Min(0.35f, b.size.y * 0.25f) + radius, hi = b.min.y + b.size.y * 0.7f - radius;
+                    radius = Mathf.Clamp(Mathf.Min(b.extents.x, b.extents.z) * 1.15f, 0.12f, 0.45f);
+                    float lo = b.min.y + Mathf.Min(0.15f, b.size.y * 0.1f) + radius, hi = b.min.y + b.size.y * 0.7f - radius;
                     if (hi < lo) hi = lo;
                     p1 = new Vector3(b.center.x, lo, b.center.z); p2 = new Vector3(b.center.x, hi, b.center.z);
                 }
@@ -268,7 +272,8 @@ namespace Apocaraiders
                 float free = len; Vector3 normal = Vector3.zero;
                 bool hitSomething = adv ? Physics.CapsuleCast(p1, p2, radius, dir, out hit, len, mask, QueryTriggerInteraction.Ignore)
                                         : Physics.Raycast(origin, dir, out hit, len, mask, QueryTriggerInteraction.Ignore);
-                if (hitSomething && (troot == null || hit.collider.transform.root != troot) && hit.collider.transform.root != n.T)
+                if (hitSomething && (troot == null || hit.collider.transform.root != troot) && hit.collider.transform.root != n.T
+                    && !(adv && hit.collider.gameObject.layer == 14 && hit.normal.y > 0.6f))      // gentle ground ahead is not a wall
                 { free = Mathf.Max(0f, hit.distance); normal = hit.normal; }
                 _free[i] = free; _normals[i] = normal; _blocks[i] = 1f - free / len;
             }
@@ -316,7 +321,7 @@ namespace Apocaraiders
                     if (n.Side != 0 && Mathf.Sign(_angles[i]) == -n.Side && _angles[i] != 0f) score -= 1.0f;
                 }
                 else score = Mathf.Cos(_angles[i] * Mathf.Deg2Rad) - _blocks[i] * 2.5f;
-                if (blockedMem && Mathf.Abs(Mathf.DeltaAngle(yaw, n.BlockedYaw)) < 35f) score -= 1.5f;
+                if (blockedMem && Mathf.Abs(Mathf.DeltaAngle(yaw, n.BlockedYaw)) < 40f) score -= 2f;
                 if (n.HasHeading && Mathf.Abs(Mathf.DeltaAngle(yaw, n.Heading)) < 12f) score += 0.1f;   // no flicker between near-equal rays
                 _scores[i] = score;
                 if (score > bestScore) { bestScore = score; best = i; }
@@ -538,6 +543,25 @@ namespace Apocaraiders
         // the kneeling pose, degrees about the body's right axis (minus = forward/up for a thigh; plus bends a knee back)
         private const float CrouchFrontThigh = 90f, CrouchFrontKnee = 90f, CrouchBackThigh = 15f, CrouchBackKnee = 100f;
 
+        // [Debug] BrainLog, at a stuck: what is in front of the body (any layer, triggers too) - names the thing the feelers missed
+        private static void LogAhead(Npc n)
+        {
+            try
+            {
+                Vector3 origin = n.Col != null ? new Vector3(n.Col.bounds.center.x, n.Col.bounds.min.y + 0.3f, n.Col.bounds.center.z) : n.T.position;
+                var hits = Physics.RaycastAll(origin, n.T.forward, 1.5f, ~0, QueryTriggerInteraction.Collide);
+                var sb = new System.Text.StringBuilder();
+                foreach (var h in hits)
+                {
+                    if (h.collider == null || h.collider.transform.root == n.T) continue;
+                    sb.Append(h.collider.name).Append(" [").Append(LayerMask.LayerToName(h.collider.gameObject.layer)).Append(h.collider.isTrigger ? ", trigger" : "")
+                      .Append(", ").Append(h.distance.ToString("0.0")).Append(" m] ");
+                }
+                Plugin.Log.LogInfo("Brain: " + n.Owner.name + " ahead at knee height: " + (sb.Length > 0 ? sb.ToString() : "nothing"));
+            }
+            catch (Exception) { }
+        }
+
         private static void OnStuck(Npc n)
         {
             float now = Time.time;
@@ -560,6 +584,7 @@ namespace Apocaraiders
             }
             float yaw = n.T.eulerAngles.y;
             n.BlockedYaw = yaw; n.BlockedUntil = now + Mathf.Max(0f, Plugin.StuckMemorySeconds.Value);
+            if (Plugin.BrainLog.Value) LogAhead(n);
             n.ModeUntil = now + Mathf.Max(0.1f, Plugin.StuckBackupSeconds.Value);
             SetMode(n, Mode.BackUp, "stuck " + n.Stucks + "x, backs up");
         }
