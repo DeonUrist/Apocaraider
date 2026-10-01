@@ -30,6 +30,7 @@ BepInEx\plugins\Apocaraiders\Sounds\Gungirl\*.wav / *.ogg
 - **[Gungirl] Model / Texture**: her body model and texture in the mod folder. You can make your own: the model has to be
   rigged to Flexa's skeleton (see below).
 - **[Gungirl] Voice**: the folder with her voice clips (see below).
+- **[Gungirl] VoiceMatchLoudness / VoiceVolume**: her clips are brought to Flexa's loudness, then scaled by VoiceVolume (1 = as loud as Flexa).
 - **[Gungirl] HideParts**: Flexa's attachments she doesn't wear (default: the beard).
 - **[Debug] SpawnKey** (F9): spawns a Gungirl in front of you.
 
@@ -51,5 +52,7 @@ same names, not moved. Export as glTF (.gltf or .glb) with Skinning on and point
 
 Out of the box they are Flexa's own clips (WAV). Replace any of them with a recording of your own and restart the game:
 either overwrite the .wav (8/16/24-bit PCM or 32-bit float), or put an .ogg (Ogg Vorbis) with the same name next to it,
-which wins over the .wav. Mono or stereo, any sample rate, any length. Files with other names are ignored. A missing file means she uses Flexa's
+which wins over the .wav. Mono or stereo, any sample rate, any length. Files with other names are ignored.
+Your recordings don't need to be as loud as the game's: each one is matched to the loudness of the clip it replaces,
+and `[Gungirl] VoiceVolume` makes her louder or quieter overall. A missing file means she uses Flexa's
 sound for that clip. Only Gungirls use these files: Flexa, the other raiders and the player keep their voices.

@@ -21,6 +21,7 @@ namespace Apocaraiders
         private struct Pending { public GameObject Go; public float Until; }
 
         private static readonly Dictionary<string, AudioClip> _clips = new Dictionary<string, AudioClip>(StringComparer.OrdinalIgnoreCase);
+        private static readonly Dictionary<string, AudioClip> _ready = new Dictionary<string, AudioClip>(StringComparer.OrdinalIgnoreCase);   // leveled
         private static bool _loaded;
         private static MonoBehaviour _loader;     // the runner the load coroutine runs on (null = not started / runner destroyed)
         private static readonly List<Pending> _pending = new List<Pending>();
@@ -39,6 +40,7 @@ namespace Apocaraiders
         private static IEnumerator Load()
         {
             _clips.Clear();
+            _ready.Clear();
             string dir = Gungirl.ModPath(Plugin.GungirlVoice.Value);
             if (!Directory.Exists(dir))
             {
@@ -187,7 +189,50 @@ namespace Apocaraiders
             var ac = o as AudioClip;
             if (ac == null) return null;
             AudioClip r;
-            return _clips.TryGetValue(ac.name, out r) && r != ac ? r : null;
+            if (_ready.TryGetValue(ac.name, out r)) return r != ac ? r : null;
+            if (!_clips.TryGetValue(ac.name, out r) || r == ac) return null;
+            r = Leveled(ac, r);
+            _ready[ac.name] = r;
+            return r;
+        }
+
+        // Once per clip: [Gungirl] VoiceMatchLoudness brings the replacement to the loudness of the game clip it replaces
+        // (the game's voice clips peak at 0 dBFS, home recordings are often 5-15 dB quieter), then [Gungirl] VoiceVolume
+        // scales it; a soft limiter keeps the peaks below full scale. The result is a new clip (the loaded one stays as read).
+        private static AudioClip Leveled(AudioClip original, AudioClip mine)
+        {
+            try
+            {
+                bool match = Plugin.GungirlVoiceMatch.Value;
+                double volume = Plugin.GungirlVoiceVolume.Value;
+                if (!match && Math.Abs(volume - 1.0) < 1e-4) return mine;
+                var d = new float[mine.samples * mine.channels];
+                if (d.Length == 0 || !mine.GetData(d, 0)) return mine;
+                double target = 0;
+                if (match)
+                {
+                    if (original.loadState != AudioDataLoadState.Loaded) original.LoadAudioData();
+                    var o = new float[original.samples * original.channels];
+                    if (o.Length > 0 && original.GetData(o, 0)) target = Level.ActiveRms(o);
+                    else Plugin.Log.LogWarning("Gungirl voice: could not read the game's " + original.name + " to match its loudness (only VoiceVolume applies)");
+                }
+                int limited;
+                double gain = Level.Process(d, target, volume, out limited);
+                if (Math.Abs(gain - 1.0) < 1e-4) return mine;
+                var c = AudioClip.Create(mine.name, mine.samples, mine.channels, mine.frequency, false);
+                c.SetData(d, 0);
+                c.hideFlags = HideFlags.DontUnloadUnusedAsset;
+                Plugin.Log.LogInfo(string.Format(System.Globalization.CultureInfo.InvariantCulture,
+                    "Gungirl voice: {0} {1:+0.0;-0.0} dB{2}{3}", mine.name, 20.0 * Math.Log10(gain),
+                    target > 0 ? " (matched to the game's clip)" : "",
+                    limited > 0 ? string.Format(System.Globalization.CultureInfo.InvariantCulture, ", {0:0.0} % of samples limited", 100.0 * limited / d.Length) : ""));
+                return c;
+            }
+            catch (Exception e)
+            {
+                Plugin.Log.LogWarning("Gungirl voice: leveling " + mine.name + " failed, used as is: " + e.Message);
+                return mine;
+            }
         }
 
         private static int SwapObj(FsmObject v)

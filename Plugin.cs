@@ -17,12 +17,13 @@ namespace Apocaraiders
     {
         public const string GUID = "com.denis.apocalypter.apocaraiders";
         public const string NAME = "Apocaraiders";
-        public const string VERSION = "0.2.1";
+        public const string VERSION = "0.2.2";
 
         internal static ManualLogSource Log;
         internal static string Dir;
 
-        internal static ConfigEntry<bool> Enabled, VerboseLog;
+        internal static ConfigEntry<bool> Enabled, VerboseLog, GungirlVoiceMatch;
+        internal static ConfigEntry<float> GungirlVoiceVolume;
         internal static ConfigEntry<int> GungirlChance;
         internal static ConfigEntry<string> GungirlModel, GungirlTexture, GungirlVoice, GungirlHideParts;
         internal static ConfigEntry<Key> SpawnKey;
@@ -46,6 +47,11 @@ namespace Apocaraiders
                 "Body texture (PNG/JPG), relative to the mod folder. Read at game start.");
             GungirlVoice = Config.Bind("Gungirl", "Voice", "Sounds/Gungirl",
                 "Folder with her voice, relative to the mod folder: WAV or OGG files named like Flexa's clips (death_1, human_hurt, enemy_human_single_1 ...; .ogg wins over .wav of the same name). A clip without a file keeps Flexa's sound. Read at game start.");
+            GungirlVoiceMatch = Config.Bind("Gungirl", "VoiceMatchLoudness", true,
+                "Bring each of her voice files to the loudness of the Flexa clip it replaces (quiet recordings get louder, a soft limiter stops distortion). Read at game start.");
+            GungirlVoiceVolume = Config.Bind("Gungirl", "VoiceVolume", 1f, new ConfigDescription(
+                "Her voice volume on top of that: 1 = as loud as Flexa, 0.5 = half, 2 = twice (louder than 1.5 starts to sound squashed). Read at game start.",
+                new AcceptableValueRange<float>(0f, 4f)));
             GungirlHideParts = Config.Bind("Gungirl", "HideParts", "beard",
                 "Flexa's attachments to hide on a Gungirl, comma-separated name starts: beard, headband, armband, bag1, pouch1, armor2, machete.");
             SpawnKey = Config.Bind("Debug", "SpawnKey", Key.F9,
