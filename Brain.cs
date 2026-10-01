@@ -443,8 +443,9 @@ namespace Apocaraiders
                     && (troot == null || hit.collider.transform.root != troot) && hit.collider.transform.root != n.T
                     && !(hit.collider.gameObject.layer == 14 && hit.normal.y > 0.6f))
                     free = hit.distance;
-                // walk the free stretch from far to near: the first point with a clear line to the target is the corner
-                for (float along = free - radius - 0.3f; along >= 1.5f; along -= 1.5f)
+                // walk the free stretch from near to far: the first point with a clear line to the target is the corner
+                float reach = free - radius - 0.3f;
+                for (float along = 1.5f; along <= reach; along += 1.5f)
                 {
                     Vector3 end = origin + dir * along;
                     Vector3 toT = targetChest - (end + chestOff);
@@ -453,7 +454,7 @@ namespace Apocaraiders
                         && !(hit.collider.gameObject.layer == 14 && hit.normal.y > 0.6f)) continue;
                     float cost = along + (origin + toReal - end).magnitude;
                     if (cost < bestCost) { bestCost = cost; bestEnd = end; bestAngle = _scoutAngles[k]; }
-                    break;      // nearer points on this ray are worse than or equal to this one (they still have to pass here)
+                    break;      // farther points on this ray only add path
                 }
             }
             if (bestCost == float.MaxValue) return false;
@@ -973,6 +974,20 @@ namespace Apocaraiders
             if (_sensorLogged.Contains(key)) return;
             _sensorLogged.Add(key);
             Plugin.Log.LogInfo("Brain: " + key + " sensor " + mode + " every " + interval + " s" + extra);
+        }
+
+        // For Aim: how far the body still has to turn to face its target, degrees; -1 when the brain is not steering this NPC (the game
+        // snaps it to the target itself then). A burst is held until this is within [NpcAim] FacingTolerance.
+        internal static float FacingError(GameObject owner)
+        {
+            if (!On) return -1f;
+            var n = Get(owner);
+            if (n == null || n.Mode == Mode.Off || n.Target == null) return -1f;
+            var t = n.Target.Value;
+            if (t == null) return -1f;
+            Vector3 to = t.transform.position - n.T.position; to.y = 0f;
+            if (to.sqrMagnitude < 0.01f) return 0f;
+            return Vector3.Angle(n.T.forward, to);
         }
 
         internal static string Status() { return _npcs.Count + " NPCs, " + _active + " engaged, tick " + _interval + " s"; }

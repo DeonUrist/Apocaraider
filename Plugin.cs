@@ -18,7 +18,7 @@ namespace Apocaraiders
     {
         public const string GUID = "com.denis.apocalypter.apocaraiders";
         public const string NAME = "Apocaraiders";
-        public const string VERSION = "0.10.1";
+        public const string VERSION = "0.10.2";
 
         internal static ManualLogSource Log;
         internal static string Dir;
@@ -31,7 +31,7 @@ namespace Apocaraiders
         internal static ConfigEntry<bool> TracersEnabled, VehicleDamage, PlayerTracers, NpcAimAtBody, AimEnabled, HitMarker, LeadTargets, ImpactEffects, MetalSparks;
         internal static ConfigEntry<float> LeadAccuracy, LeadError, MaxLeadTime;
         internal static ConfigEntry<int> DamageNumbers, DamageFontSize, HitMarkerSize;
-        internal static ConfigEntry<float> AimTimeScale, AimBaseDistance, AimDelayPer5m, SpreadPer5m, EngagePercent, EngagePatience, HoldRecheckMin, HoldRecheckMax;
+        internal static ConfigEntry<float> AimTimeScale, FacingTolerance, AimBaseDistance, AimDelayPer5m, SpreadPer5m, EngagePercent, EngagePatience, HoldRecheckMin, HoldRecheckMax;
         internal static ConfigEntry<float> BulletSpeed, BoltSpeed, TracerWidth, TracerLength, BoltWidth, BoltLength, TracerGlow;
         internal static ConfigEntry<Color> TracerColor, BoltColor;
         internal static ConfigEntry<float> PistolRange, SmgRange, RifleRange, SniperRange, ShotgunRange, CrossbowRange, ShotgunPelletSpread, FullDamageUntil, NpcShotgunDamage, VehicleDamagePer1, MetalSparksScale, MetalSheetPopChance, NpcHitRadius, PlayerBodyRadius, PlayerHeadRadius, HeadshotMultiplier;
@@ -130,6 +130,9 @@ namespace Apocaraiders
             AimTimeScale = Config.Bind("NpcAim", "AimTimeScale", 50f, new ConfigDescription(
                 "How long NPCs take to aim between bursts, as % of the game's own pause (3-5 s, plus the distance delay): 50 = half the time, 100 = as the game, 300 = three times slower.",
                 new AcceptableValueRange<float>(1f, 300f)));
+            FacingTolerance = Config.Bind("NpcAim", "FacingTolerance", 8f, new ConfigDescription(
+                "An NPC fires only once its body faces you within this many degrees (it turns at [Brain] TurnRate); until then it keeps turning and checks again every 0.1-0.2 s.",
+                new AcceptableValueRange<float>(0f, 90f)));
             AimBaseDistance = Config.Bind("NpcAim", "AimBaseDistance", 5f, new ConfigDescription(
                 "Up to this distance, m, NPCs aim and spread as the game does; every 5 m beyond it adds AimDelayPer5m and SpreadPer5m.", new AcceptableValueRange<float>(0f, 200f)));
             AimDelayPer5m = Config.Bind("NpcAim", "AimDelayPer5m", 0.25f, new ConfigDescription(
@@ -159,7 +162,7 @@ namespace Apocaraiders
                 new AcceptableValueRange<float>(1f, 500f)));
             ScaleWithActors = Config.Bind("Brain", "ScaleWithActors", false,
                 "NPCs think less often when many are engaged at once (0.1 s up to 5 of them, 0.2 s up to 10, 0.3 s up to 20, 0.5 s beyond), to spare the CPU. Off = every engaged NPC thinks every 0.1 s.");
-            TurnRate = Config.Bind("Brain", "TurnRate", 160f, new ConfigDescription(
+            TurnRate = Config.Bind("Brain", "TurnRate", 220f, new ConfigDescription(
                 "How fast an NPC turns its body, degrees per second - also to face you for a shot (the game snapped instantly).", new AcceptableValueRange<float>(30f, 720f)));
             AimPose = Config.Bind("Brain", "AimPose", true,
                 "A gunman holding a shooting position keeps the gun up and aimed at you between bursts (the game lowered it to the idle pose and raised it only for the shot).");

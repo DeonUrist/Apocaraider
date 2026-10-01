@@ -52,7 +52,7 @@ straight line is no longer safe at range, while a change of direction still thro
 Humans and ground animals that have spotted you no longer run around like headless chickens. The game never turned
 their bodies toward you: a chasing NPC ran straight ahead at full speed while random turns, a pair of 1.2 m bumper rays
 and a "stuck" reflex (a spin and a hop) threw it about, and it reached you when the random walk happened to bring it
-close. Now every NPC with a target has a brain: it turns at a limited rate (160 deg/s, also to face you for a shot),
+close. Now every NPC with a target has a brain: it turns at a limited rate (220 deg/s, and fires only once it actually faces you),
 feels its way around rocks, cars and camp walls with a fan of rays, and backs out of a dead end instead of spinning.
 Gunmen stop as soon as they have a line of sight on you within their gun's engage distance, stand - or kneel, half of the time - with the gun up and shoot from there
 (now and then one decides to run at you for a few seconds), and move again when you break the line of sight or get out
@@ -91,7 +91,7 @@ BepInEx\plugins\Apocaraiders\Sounds\Gungirl\*.wav / *.ogg
 - **[Tracers]**: on/off (NPCs and, separately, your own guns), bullet and bolt speed, colour, width, length and glow,
   the falloff range per weapon type, shotgun pellets and spread, ImpactEffects, MetalSparks and MetalSparksScale, vehicle damage on/off and VehicleDamagePer1, the
   metal-plate chance, and the most bullets in flight at once.
-- **[NpcAim]**: on/off, AimTimeScale (% of the game's pause between bursts, 50 = twice as fast), AimBaseDistance, AimDelayPer5m, SpreadPer5m, EngagePercent (fire within this % of the reach),
+- **[NpcAim]**: on/off, FacingTolerance (no burst until the body faces you within this many degrees), AimTimeScale (% of the game's pause between bursts, 50 = twice as fast), AimBaseDistance, AimDelayPer5m, SpreadPer5m, EngagePercent (fire within this % of the reach),
   EngagePatience, HoldRecheckMin/Max (1 to 4 s reaction time once you come into reach), LeadTargets, LeadAccuracy
   (0 = no lead, 1 = perfect), LeadError (% speed misjudgement), MaxLeadTime.
 - **[Brain]**: on/off, ReactionTime (% of the default thinking/waiting times, 1-500), ScaleWithActors (think less often with many NPCs engaged, off), TurnRate (deg/s), AimPose (gun kept up while holding), CrouchChance (% of holds spent kneeling), SensorInterval (how often NPC eyes look, 0.1 s), FeelerLength / MeleeFeelerLength / FeelerAngle / FeelerCount, DropCheck, ShooterPathing, AdvanceChance (% per hold

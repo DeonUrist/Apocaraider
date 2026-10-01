@@ -28,6 +28,7 @@ namespace Apocaraiders
             public GameObject Owner;
             public float HoldSince = -1f;    // when the NPC first held fire inside reach (beyond EngagePercent)
             public bool Holding;             // last decision: hold fire -> short recheck
+            public bool Turning;             // last decision: not facing the target yet -> very short recheck
             public float LastLog;
         }
 
@@ -95,6 +96,13 @@ namespace Apocaraiders
                 }
                 else { hold = false; st.HoldSince = -1f; }
                 st.Holding = hold;
+                st.Turning = false;
+                if (!hold)
+                {
+                    // the brain turns the body at a limited rate: no burst until it actually faces the target
+                    float err = Brain.FacingError(owner);
+                    if (err > Mathf.Max(0f, Plugin.FacingTolerance.Value)) { hold = true; st.Turning = true; }
+                }
                 if (hold && Time.time - st.LastLog > 5f)
                 {
                     st.LastLog = Time.time;
@@ -130,7 +138,11 @@ namespace Apocaraiders
                 var owner = fsm.GameObject;
                 float extra = 0f;
                 State st = owner != null && _states.TryGetValue(owner.GetInstanceID(), out st) ? st : null;
-                if (st != null && st.Holding)
+                if (st != null && st.Turning)
+                {
+                    w.MyMin.Value = 0.1f; w.MyMax.Value = 0.2f;     // still turning toward the target: look again almost at once
+                }
+                else if (st != null && st.Holding)
                 {
                     // too far: look again in HoldRecheckMin..Max s (the NPC is on its way; a reaction time, and no per-frame work)
                     float lo = Mathf.Max(0.1f, Plugin.HoldRecheckMin.Value), hi = Mathf.Max(lo, Plugin.HoldRecheckMax.Value);
