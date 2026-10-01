@@ -62,6 +62,7 @@ namespace Apocaraiders
             public float Heading; public bool HasHeading;   // steered world yaw, degrees
             public float BlockedYaw, BlockedUntil;
             public int Side, ClearLooks; public float SideUntil; public bool Flipped;     // pathing: the committed way around an obstacle
+            public float FreeLeft, FreeRight;                                             // the last fan's free lengths per half
             public float BestDist = float.MaxValue, NoProgressSince;
             public int Stucks; public float FirstStuck;
             public float LosLostAt = -1f; public bool Los; public float Dist;
@@ -281,6 +282,7 @@ namespace Apocaraiders
             if (adv)
             {
                 bool straightBlocked = _free[centre] < len * 0.9f;
+                { float fl0 = 0f, fr0 = 0f; for (int i = 0; i < count; i++) { if (_angles[i] < 0f) fl0 += _free[i]; else if (_angles[i] > 0f) fr0 += _free[i]; } n.FreeLeft = fl0; n.FreeRight = fr0; }
                 if (n.Side == 0)
                 {
                     if (straightBlocked)
@@ -321,7 +323,7 @@ namespace Apocaraiders
                     if (n.Side != 0 && Mathf.Sign(_angles[i]) == -n.Side && _angles[i] != 0f) score -= 1.0f;
                 }
                 else score = Mathf.Cos(_angles[i] * Mathf.Deg2Rad) - _blocks[i] * 2.5f;
-                if (blockedMem && Mathf.Abs(Mathf.DeltaAngle(yaw, n.BlockedYaw)) < 40f) score -= 2f;
+                if (blockedMem && Mathf.Abs(Mathf.DeltaAngle(yaw, n.BlockedYaw)) < 50f) score -= 2f;
                 if (n.HasHeading && Mathf.Abs(Mathf.DeltaAngle(yaw, n.Heading)) < 12f) score += 0.1f;   // no flicker between near-equal rays
                 _scores[i] = score;
                 if (score > bestScore) { bestScore = score; best = i; }
@@ -401,7 +403,7 @@ namespace Apocaraiders
         {
             Mode was = n.Mode;
             n.Mode = m;
-            if (m == Mode.Chase || m == Mode.Advance) { n.HasHeading = false; if (was != Mode.Chase && was != Mode.Advance) { n.BestDist = float.MaxValue; n.NoProgressSince = Time.time; n.Flipped = false; n.Side = 0; } }
+            if (m == Mode.Chase || m == Mode.Advance) { n.HasHeading = false; if (was != Mode.Chase && was != Mode.Advance && was != Mode.BackUp) { n.BestDist = float.MaxValue; n.NoProgressSince = Time.time; n.Flipped = false; n.Side = 0; } }
             bool wasStill = was == Mode.Hold || was == Mode.Rest, still = m == Mode.Hold || m == Mode.Rest;
             if (m == Mode.Off) { if (wasStill) Move(n, true); }
             else if (still && !wasStill) Move(n, false);
@@ -558,6 +560,23 @@ namespace Apocaraiders
                       .Append(", ").Append(h.distance.ToString("0.0")).Append(" m] ");
                 }
                 Plugin.Log.LogInfo("Brain: " + n.Owner.name + " ahead at knee height: " + (sb.Length > 0 ? sb.ToString() : "nothing"));
+                // what touches the body right now (the body capsule grown by 0.15 m, any layer, triggers too)
+                if (n.Col != null)
+                {
+                    var b = n.Col.bounds;
+                    float r = Mathf.Max(b.extents.x, b.extents.z) + 0.15f;
+                    var touching = Physics.OverlapCapsule(new Vector3(b.center.x, b.min.y + r, b.center.z), new Vector3(b.center.x, b.max.y - r, b.center.z), r, ~0, QueryTriggerInteraction.Collide);
+                    sb.Length = 0;
+                    foreach (var c in touching)
+                    {
+                        if (c == null || c.transform.root == n.T) continue;
+                        Vector3 cp = c.ClosestPoint(b.center);
+                        Vector3 rel = n.T.InverseTransformPoint(cp);
+                        sb.Append(c.name).Append(" [").Append(LayerMask.LayerToName(c.gameObject.layer)).Append(c.isTrigger ? ", trigger" : "").Append(", ")
+                          .Append(c.GetType().Name).Append(", at ").Append(rel.x.ToString("0.0")).Append("/").Append(rel.y.ToString("0.0")).Append("/").Append(rel.z.ToString("0.0")).Append("] ");
+                    }
+                    Plugin.Log.LogInfo("Brain: " + n.Owner.name + " touching: " + (sb.Length > 0 ? sb.ToString() : "nothing") + " | vel " + (n.Rb != null ? n.Rb.velocity.magnitude.ToString("0.0") : "?") + " | fan free L " + n.FreeLeft.ToString("0.0") + " R " + n.FreeRight.ToString("0.0") + " side " + n.Side);
+                }
             }
             catch (Exception) { }
         }
@@ -584,6 +603,12 @@ namespace Apocaraiders
             }
             float yaw = n.T.eulerAngles.y;
             n.BlockedYaw = yaw; n.BlockedUntil = now + Mathf.Max(0f, Plugin.StuckMemorySeconds.Value);
+            if (!n.Ranged || Plugin.ShooterPathing.Value)
+            {
+                // the body hit something the feelers did not see (or saw too late): commit to the freer side now and keep it through the back-up
+                if (n.Side == 0) n.Side = n.FreeRight >= n.FreeLeft ? 1 : -1;
+                n.SideUntil = now + SideLock * 2f; n.ClearLooks = 0;
+            }
             if (Plugin.BrainLog.Value) LogAhead(n);
             n.ModeUntil = now + Mathf.Max(0.1f, Plugin.StuckBackupSeconds.Value);
             SetMode(n, Mode.BackUp, "stuck " + n.Stucks + "x, backs up");
