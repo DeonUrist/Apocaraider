@@ -18,7 +18,7 @@ namespace Apocaraiders
     {
         public const string GUID = "com.denis.apocalypter.apocaraiders";
         public const string NAME = "Apocaraiders";
-        public const string VERSION = "0.5.1";
+        public const string VERSION = "0.5.2";
 
         internal static ManualLogSource Log;
         internal static string Dir;
@@ -28,7 +28,7 @@ namespace Apocaraiders
         internal static ConfigEntry<int> GungirlChance;
         internal static ConfigEntry<string> GungirlModel, GungirlTexture, GungirlVoice, GungirlHideParts;
         internal static ConfigEntry<Key> SpawnKey;
-        internal static ConfigEntry<bool> TracersEnabled, VehicleDamage, PlayerTracers, NpcAimAtBody, AimEnabled, HitMarker, LeadTargets;
+        internal static ConfigEntry<bool> TracersEnabled, VehicleDamage, PlayerTracers, NpcAimAtBody, AimEnabled, HitMarker, LeadTargets, ImpactEffects, MetalSparks;
         internal static ConfigEntry<float> LeadAccuracy, LeadError, MaxLeadTime;
         internal static ConfigEntry<int> DamageNumbers, DamageFontSize, HitMarkerSize;
         internal static ConfigEntry<float> AimBaseDistance, AimDelayPer5m, SpreadPer5m, EngagePercent, EngagePatience, HoldRecheckMin, HoldRecheckMax;
@@ -111,6 +111,10 @@ namespace Apocaraiders
             HeadshotMultiplier = Config.Bind("Tracers", "HeadshotMultiplier", 1.2f, new ConfigDescription(
                 "Damage multiplier for an NPC bullet that hits your head (the game itself has no headshots on the player: 1 = as before).",
                 new AcceptableValueRange<float>(0f, 5f)));
+            ImpactEffects = Config.Bind("Tracers", "ImpactEffects", true,
+                "NPC bullets that hit the world show the same impact (sparks, sound) your own hits do; the game showed nothing for their misses.");
+            MetalSparks = Config.Bind("Tracers", "MetalSparks", true,
+                "Extra sparks, smoke and a bullet mark on vehicle parts and metal plates (any bullet), using the game's MetalImpact effect when it is available.");
             VehicleDamage = Config.Bind("Tracers", "VehicleDamage", true, "A bullet that hits a vehicle part damages it: 10 damage = 1 % of the part's condition.");
             MetalSheetPopChance = Config.Bind("Tracers", "MetalSheetPopChance", 20f, new ConfigDescription("% chance that a bullet hitting a bolted-on metal plate knocks it off.", new AcceptableValueRange<float>(0f, 100f)));
             MetalSheetNames = Config.Bind("Tracers", "MetalSheetNames", "metal_plate", "Which attached parts count as metal sheets (comma-separated name starts).");

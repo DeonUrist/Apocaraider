@@ -179,6 +179,7 @@ namespace Apocaraiders
             _shots.Clear();
             _shooters.Clear();
             _counts.Clear();
+            _rangedHit = null; _metalImpact = null; _effectsLooked = false;
             _reported.Clear();
             Hud.OnSceneLoaded();
             Aim.OnSceneLoaded();
@@ -714,6 +715,7 @@ namespace Apocaraiders
                     float pd = s.Travelled + h.distance;
                     float pf = Falloff(ref s, pd);
                     PlayerHit(ref s, h, pf);
+                    MetalSparks(col, h.point, h.normal);
                     HitWorld(ref s, col, h.point, (s.Gun.Damage != null ? s.Gun.Damage.Value : 0f) * pf);   // vehicle part / metal plate rules
                     s.Pos = h.point; s.Travelled = pd; s.Alive = false;
                     return;
@@ -725,7 +727,7 @@ namespace Apocaraiders
                 float dist = s.Travelled + h.distance;
                 float falloff = Falloff(ref s, dist);
                 if (onTarget) HitTarget(ref s, h.point, s.Damage * falloff, col.isTrigger ? col.gameObject : s.Target, dist);   // a head trigger: its own Bodypart (x2)
-                else HitWorld(ref s, col, h.point, s.Damage * falloff);
+                else { WorldImpact(col, h.point, h.normal, s.Dir); HitWorld(ref s, col, h.point, s.Damage * falloff); }
                 s.Pos = h.point;
                 s.Travelled = dist;
                 s.Alive = false;
@@ -879,6 +881,55 @@ namespace Apocaraiders
         }
 
         // obstruction: a vehicle part loses condition, a bolted metal plate may come off
+        // ---------- impact effects ----------
+        // The player's own world hit (vanilla): RangedHit_Effect (sparks + its own sound) created twice - by the Attack hit state and again
+        // by the HitEffect FSM - at hitPoint with rotation Euler(hitNormal), and 400 N along the camera forward on the thing hit.
+        // NPC bullets that miss did nothing at all in vanilla; here they get exactly the same look. MetalImpact (an unused asset-store
+        // prefab in the build: sparks, smoke, a bullet decal) is added on vehicle parts and metal plates when the game has it loaded.
+        private static GameObject _rangedHit, _metalImpact;
+        private static bool _effectsLooked;
+
+        private static void FindEffects()
+        {
+            if (_effectsLooked) return;
+            _effectsLooked = true;
+            foreach (var go in Resources.FindObjectsOfTypeAll<GameObject>())
+            {
+                if (go == null || go.scene.IsValid()) continue;          // prefabs only, not scene instances
+                if (_rangedHit == null && go.name == "RangedHit_Effect") _rangedHit = go;
+                else if (_metalImpact == null && go.name == "MetalImpact" && go.transform.parent == null) _metalImpact = go;
+                if (_rangedHit != null && _metalImpact != null) break;
+            }
+            Plugin.Verbose("Tracers: impact effects " + (_rangedHit != null ? "RangedHit_Effect" : "none") + (_metalImpact != null ? " + MetalImpact" : ""));
+        }
+
+        private static void WorldImpact(Collider col, Vector3 point, Vector3 normal, Vector3 dir)
+        {
+            if (!Plugin.ImpactEffects.Value) return;
+            FindEffects();
+            if (_rangedHit != null)
+            {
+                var rot = Quaternion.Euler(normal);                       // what the vanilla CreateObject does with {hitNormal}
+                UnityEngine.Object.Instantiate(_rangedHit, point, rot);
+                UnityEngine.Object.Instantiate(_rangedHit, point, rot);   // vanilla spawns it twice (hit state + HitEffect FSM)
+            }
+            var rb = col.attachedRigidbody;
+            if (rb != null && !rb.isKinematic) rb.AddForceAtPosition(dir * 400f, point, ForceMode.Force);
+            MetalSparks(col, point, normal);
+        }
+
+        private static void MetalSparks(Collider col, Vector3 point, Vector3 normal)
+        {
+            if (!Plugin.MetalSparks.Value) return;
+            FindEffects();
+            if (_metalImpact == null) return;
+            bool metal = false;
+            for (var t = col.transform; t != null && !metal; t = t.parent) metal = t.CompareTag("vehPart") || t.CompareTag("vehPartRemoved");
+            if (!metal) return;
+            var fx = UnityEngine.Object.Instantiate(_metalImpact, point + normal * 0.01f, Quaternion.LookRotation(normal));
+            UnityEngine.Object.Destroy(fx, 4f);                            // the prefab has no auto-destroy of its own
+        }
+
         private static void HitWorld(ref Shot s, Collider col, Vector3 point, float damage)
         {
             Transform part = null;

@@ -24,7 +24,9 @@ visible bolts. Tracers look the same by day and by night.
   One bullet hits one thing, then it's gone.
 - A bullet that hits a vehicle part damages it (10 damage = 1 % of the part's condition), and a bolted-on metal plate
   can be knocked off (20 % per hit by default).
-- A hit on its target does exactly what the game's own hit does (blood/sparks, damage, armor, hit sounds).
+- A hit on its target does exactly what the game's own hit does (blood/sparks, damage, armor, hit sounds), and a bullet
+  that misses you and hits the world shows the same sparks and sound your own hits make (the game showed nothing for NPC
+  misses). Vehicle parts and metal plates throw extra sparks when the game's MetalImpact effect is available.
 - Headshots on raiders work as in the game (their head capsule doubles the damage); the mod's bullets see the same
   bodies the game's own shots do.
 
@@ -67,8 +69,8 @@ BepInEx\plugins\Apocaraiders\Sounds\Gungirl\*.wav / *.ogg
 - **[Gungirl] VoiceIntervalMin / VoiceIntervalMax**: the pause between her shouts in a fight, in seconds (default 2 to 8; Flexa uses 0.1 to 4).
 - **[Gungirl] HideParts**: Flexa's attachments she doesn't wear (default: beard, headband, armband).
 - **[Tracers]**: on/off (NPCs and, separately, your own guns), bullet and bolt speed, colour, width, length and glow,
-  the falloff range per weapon type, shotgun pellets and spread, vehicle damage on/off, the metal-plate chance, and the
-  most bullets in flight at once.
+  the falloff range per weapon type, shotgun pellets and spread, ImpactEffects and MetalSparks, vehicle damage on/off, the
+  metal-plate chance, and the most bullets in flight at once.
 - **[NpcAim]**: on/off, AimBaseDistance, AimDelayPer5m, SpreadPer5m, EngagePercent (fire within this % of the reach),
   EngagePatience, HoldRecheckMin/Max (1 to 4 s reaction time once you come into reach), LeadTargets, LeadAccuracy
   (0 = no lead, 1 = perfect), LeadError (% speed misjudgement), MaxLeadTime.
