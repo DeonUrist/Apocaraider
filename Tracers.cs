@@ -38,6 +38,7 @@ namespace Apocaraiders
             public PlayerGun Gun;            // non-null: the player's shot (first collider it meets is hit, like the vanilla camera ray)
             public GameObject Player;
             public GameObject Head;          // the target's head object (own Bodypart FSM), for head hits
+            public CapsuleCollider Cap;      // the player's body capsule (virtual hitbox) - only for shots at the Player
         }
 
         // A first-person gun under PlayerCamera/WeaponsArm/Parent/<gun>: its Attack FSM, the Raycast it fires and the states that
@@ -57,6 +58,7 @@ namespace Apocaraiders
         private sealed class ShooterInfo
         {
             public Transform Muzzle, Weapon;
+            public GameObject Owner;
             public Kind Kind;
             public bool IsGun;
             public int ObstructLayers = 19201, DetectLayers = 1088;
@@ -69,7 +71,7 @@ namespace Apocaraiders
 
         private static readonly List<Shot> _shots = new List<Shot>(256);
         private static readonly Dictionary<int, ShooterInfo> _shooters = new Dictionary<int, ShooterInfo>();
-        private static readonly RaycastHit[] _hits = new RaycastHit[16];
+        private static readonly RaycastHit[] _hits = new RaycastHit[64];
         private static readonly List<KeyValuePair<Rigidbody, Vector3>> _pushes = new List<KeyValuePair<Rigidbody, Vector3>>();
         private static readonly List<KeyValuePair<GameObject, Vector3>> _popped = new List<KeyValuePair<GameObject, Vector3>>();
         private static int _poppedFrame;
@@ -128,6 +130,7 @@ namespace Apocaraiders
                         Damage = damage / pellets * (info.Kind == Kind.Shotgun ? Mathf.Max(0f, Plugin.NpcShotgunDamage.Value) : 1f),
                         Target = target,
                         Head = head,
+                        Cap = cap0,
                         ShooterRoot = owner.transform.root.gameObject,
                         Impact = info.Impact,
                         EventName = info.EventName,
@@ -137,7 +140,7 @@ namespace Apocaraiders
                         Layers = info.ObstructLayers | info.DetectLayers,
                         DetectLayers = info.DetectLayers,
                     };
-                    if (_shots.Count >= Plugin.MaxTracers.Value) { s.Speed = s.Range * 2f; Step(ref s, 1f); }   // over the cap: hitscan
+                    if (_shots.Count >= Plugin.MaxTracers.Value) { Snapshot(); s.Speed = s.Range * 2f; Step(ref s, 1f); }   // over the cap: hitscan
                     else _shots.Add(s);
                 }
 
@@ -218,7 +221,7 @@ namespace Apocaraiders
                         Layers = gun.Layers, Gun = gun, Player = _player,
                         ShooterRoot = ft.root.gameObject,
                     };
-                    if (_shots.Count >= Plugin.MaxTracers.Value) { s.Speed = s.Range * 2f; Step(ref s, 1f); }
+                    if (_shots.Count >= Plugin.MaxTracers.Value) { Snapshot(); s.Speed = s.Range * 2f; Step(ref s, 1f); }
                     else _shots.Add(s);
                 }
                 __instance.Finish();         // vanilla: no hit -> FINISHED -> wait -> next shot, same rhythm
@@ -367,7 +370,7 @@ namespace Apocaraiders
             ShooterInfo info;
             int id = owner.GetInstanceID();
             if (_shooters.TryGetValue(id, out info) && (info.Weapon == null || info.Weapon.gameObject.activeInHierarchy)) return info;
-            info = new ShooterInfo();
+            info = new ShooterInfo { Owner = owner };
             _shooters[id] = info;
 
             // the weapon in the hand: a model with a fire_effect child (guns) or an active "crossbow"
@@ -454,7 +457,7 @@ namespace Apocaraiders
         private static float Falloff(ref Shot s, float dist)
         {
             float x = dist / s.Range;
-            float k = Mathf.Clamp(Plugin.FullDamageUntil.Value, 0f, 99f) / 100f;
+            float k = _fullUntil;
             if (x <= k) return 1f;
             return Mathf.Clamp01((1f - x) / (1f - k));
         }
@@ -482,16 +485,32 @@ namespace Apocaraiders
         }
 
         // ---------- simulation ----------
+        // settings read once per frame (not per bullet)
+        private static float _npcRadius, _fullUntil, _headMult, _bodyR, _headR;
+        private static float _nextSweep;
+
+        private static void Snapshot()
+        {
+            _npcRadius = Mathf.Max(0f, Plugin.NpcHitRadius.Value);
+            _fullUntil = Mathf.Clamp(Plugin.FullDamageUntil.Value, 0f, 99f) / 100f;
+            _headMult = Mathf.Max(0f, Plugin.HeadshotMultiplier.Value);
+            _bodyR = Mathf.Max(0.03f, Plugin.PlayerBodyRadius.Value);
+            _headR = Mathf.Max(0.03f, Plugin.PlayerHeadRadius.Value);
+        }
+
         public static void Tick()
         {
             float dt = Time.deltaTime;
+            Snapshot();
             if (dt <= 0f) { Draw(); return; }   // paused: keep drawing, don't move
             for (int i = _shots.Count - 1; i >= 0; i--)
             {
                 var s = _shots[i];
-                Step(ref s, dt);
+                try { Step(ref s, dt); }
+                catch (Exception e) { s.Alive = false; Plugin.Log.LogError("Tracers: bullet dropped: " + e); }
                 if (s.Alive) _shots[i] = s; else _shots.RemoveAt(i);
             }
+            if (Time.unscaledTime >= _nextSweep) { _nextSweep = Time.unscaledTime + 30f; Sweep(); }
             if (_pushes.Count > 0)
             {
                 foreach (var p in _pushes) if (p.Key != null) p.Key.AddForce(p.Value, ForceMode.VelocityChange);
@@ -511,24 +530,42 @@ namespace Apocaraiders
             Draw();
         }
 
+        // caches keyed by dead NPCs would otherwise hold their objects until the next scene load
+        private static readonly List<int> _dead = new List<int>();
+        private static void Sweep()
+        {
+            _dead.Clear();
+            foreach (var kv in _shooters) if (kv.Value.Owner == null) _dead.Add(kv.Key);
+            foreach (var k in _dead) _shooters.Remove(k);
+            _dead.Clear();
+            foreach (var kv in _heads) if (kv.Value == null) _dead.Add(kv.Key);
+            foreach (var k in _dead) _heads.Remove(k);
+            Aim.Sweep();
+        }
+
         private static void Step(ref Shot s, float dt)
         {
             float move = Mathf.Min(s.Speed * dt, s.Range - s.Travelled);
             if (move <= 0f) { s.Alive = false; return; }
             // NPC bullets have a thickness: the player's body is two capsules only 0.34-0.40 m wide (head at the camera), so a
             // hairline that visibly passes through your face misses the collider by centimetres. Player bullets stay a hairline.
-            float radius = s.Gun == null ? Mathf.Max(0f, Plugin.NpcHitRadius.Value) : 0f;
+            float radius = s.Gun == null ? _npcRadius : 0f;
             // NPC bullet at the player: the virtual hitbox decides the hit on the player, physics only the obstructions in front of it
-            CapsuleCollider vcap = null;
+            CapsuleCollider vcap = s.Gun == null && s.Target != null ? s.Cap : null;
+            if (vcap != null && !vcap.enabled) vcap = PlayerCapsule(s.Target);     // the game swapped capsules (crouch): re-find
             float vt = float.MaxValue; bool vhead = false;
-            if (s.Gun == null && s.Target != null && (vcap = PlayerCapsule(s.Target)) != null)
-            {
-                if (!PlayerHit(s.Pos, s.Dir, move, radius, s.Target, vcap, out vt, out vhead)) vt = float.MaxValue;
-            }
+            if (vcap != null && !PlayerHit(s.Pos, s.Dir, move, radius, s.Target, vcap, out vt, out vhead)) vt = float.MaxValue;
             int n = radius > 0f
                 ? Physics.SphereCastNonAlloc(s.Pos, radius, s.Dir, _hits, move, s.Layers, QueryTriggerInteraction.Ignore)
                 : Physics.RaycastNonAlloc(s.Pos, s.Dir, _hits, move, s.Layers, QueryTriggerInteraction.Ignore);
-            if (n > 1) Array.Sort(_hits, 0, n, HitDistance.Instance);
+            if (n >= _hits.Length)
+            {
+                // buffer full: NonAlloc returns the first N found, not the nearest N - take the guaranteed-nearest hit alone
+                RaycastHit one;
+                n = Physics.Raycast(s.Pos, s.Dir, out one, move, s.Layers, QueryTriggerInteraction.Ignore) ? 1 : 0;
+                if (n == 1) _hits[0] = one;
+            }
+            else if (n > 1) Array.Sort(_hits, 0, n, HitDistance.Instance);
             for (int k = 0; k < n; k++)
             {
                 var h = _hits[k];
@@ -564,7 +601,7 @@ namespace Apocaraiders
             {
                 float dist = s.Travelled + vt;
                 float falloff = Falloff(ref s, dist);
-                float mult = vhead ? Mathf.Max(0f, Plugin.HeadshotMultiplier.Value) : 1f;
+                float mult = vhead ? _headMult : 1f;
                 if (vhead) Plugin.Verbose("Tracers: headshot on " + s.Target.name + " at " + dist.ToString("0.0") + " m");
                 HitTarget(ref s, s.Pos + s.Dir * vt, s.Damage * falloff * mult, vhead && s.Head != null ? s.Head : s.Target, dist);
                 s.Pos += s.Dir * vt;
@@ -586,8 +623,8 @@ namespace Apocaraiders
         private static GameObject BodyRootOf(GameObject target)
         {
             for (var tr = target.transform; tr != null; tr = tr.parent)
-                if (PlayerCapsule(tr.gameObject) != null) return tr.gameObject;
-            return null;
+                if (tr.CompareTag("Player") && PlayerCapsule(tr.gameObject) != null) return tr.gameObject;
+            return null;    // NPCs, animals: their real colliders
         }
 
         private static readonly Dictionary<int, GameObject> _heads = new Dictionary<int, GameObject>();
@@ -623,7 +660,7 @@ namespace Apocaraiders
             Vector3 center = tr.TransformPoint(cap.center);
             float half = Mathf.Max(0f, cap.height * sc * 0.5f);
             Vector3 feet = center - up * half, top = center + up * half;
-            float headR = Mathf.Max(0.03f, Plugin.PlayerHeadRadius.Value), bodyR = Mathf.Max(0.03f, Plugin.PlayerBodyRadius.Value);
+            float headR = _headR, bodyR = _bodyR;
             Vector3 headC = top - up * headR;
             Vector3 neck = headC - up * headR;
             // body capsule: its rounded top ends exactly at the neck, so the head zone belongs to the head alone
@@ -758,8 +795,11 @@ namespace Apocaraiders
         private static readonly List<Color> _c = new List<Color>();
         private static readonly List<int> _t = new List<int>();
 
+        private static bool _drawnEmpty;
         private static void Draw()
         {
+            if (_shots.Count == 0 && _drawnEmpty) return;      // nothing to draw and the mesh is already empty
+            _drawnEmpty = _shots.Count == 0;
             if (_drawGo == null)
             {
                 _drawGo = new GameObject("Apocaraiders.Tracers") { hideFlags = HideFlags.HideAndDontSave };

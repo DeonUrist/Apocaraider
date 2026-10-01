@@ -115,7 +115,7 @@ namespace Apocaraiders
 
             float t = Time.unscaledTime;
             if (t < _nextScan) return;
-            _nextScan = t + (t < _burstUntil ? 0.5f : 2f);
+            _nextScan = t + (t < _burstUntil ? 0.5f : 5f);     // a safety net for loads without a scene change; FindObjectsOfType is not free
             try { Scan(); }
             catch (Exception e) { Plugin.Log.LogError("Scan: " + e); _nextScan = t + 10f; }
         }

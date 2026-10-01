@@ -25,6 +25,7 @@ namespace Apocaraiders
     {
         private sealed class State
         {
+            public GameObject Owner;
             public float HoldSince = -1f;    // when the NPC first held fire inside reach (beyond EngagePercent)
             public bool Holding;             // last decision: hold fire -> short recheck
             public float LastLog;
@@ -36,6 +37,22 @@ namespace Apocaraiders
         private static readonly Dictionary<RandomWait, WaitRefs> _waits = new Dictionary<RandomWait, WaitRefs>();
 
         public static void OnSceneLoaded() { _states.Clear(); _waits.Clear(); }
+
+        // drop entries of NPCs that no longer exist (the RandomWait action would keep its whole FSM alive)
+        private static readonly List<RandomWait> _deadWaits = new List<RandomWait>();
+        private static readonly List<int> _deadStates = new List<int>();
+        internal static void Sweep()
+        {
+            _deadWaits.Clear();
+            foreach (var kv in _waits) if (kv.Key.Fsm == null || kv.Key.Fsm.GameObject == null) _deadWaits.Add(kv.Key);
+            foreach (var k in _deadWaits) _waits.Remove(k);
+            if (_states.Count > 0)
+            {
+                _deadStates.Clear();
+                foreach (var kv in _states) if (kv.Value.Owner == null) _deadStates.Add(kv.Key);
+                foreach (var k in _deadStates) _states.Remove(k);
+            }
+        }
 
         // Steps of 5 m beyond the base distance (0 at or below it).
         internal static int Steps(float distance)
@@ -54,10 +71,10 @@ namespace Apocaraiders
         {
             try
             {
+                if (__instance.sendEvent == null || __instance.sendEvent.Name != "Activate") return true;   // cheapest test first: SendEvent is everywhere
                 if (!Plugin.TracersEnabled.Value || !Plugin.AimEnabled.Value) return true;
                 var fsm = __instance.Fsm;
                 if (fsm == null || fsm.Name != "RangedAttackWait") return true;
-                if (__instance.sendEvent == null || __instance.sendEvent.Name != "Activate") return true;
                 var owner = fsm.GameObject;
                 if (owner == null) return true;
                 Tracers.Kind kind;
@@ -83,6 +100,7 @@ namespace Apocaraiders
                     st.LastLog = Time.time;
                     Plugin.Verbose("Aim: " + owner.name + " holds fire at " + d.ToString("0") + " m (" + kind + " reach " + reach.ToString("0") + " m, engages at " + engage.ToString("0") + " m)");
                 }
+                if (hold) __instance.Finish();     // the action is done (nothing sent); the state's NextFrameEvent moves on
                 return !hold;
             }
             catch (Exception e)
@@ -139,7 +157,7 @@ namespace Apocaraiders
         {
             State st;
             int id = owner.GetInstanceID();
-            if (!_states.TryGetValue(id, out st)) { st = new State(); _states[id] = st; }
+            if (!_states.TryGetValue(id, out st)) { st = new State { Owner = owner }; _states[id] = st; }
             return st;
         }
 
