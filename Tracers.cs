@@ -37,6 +37,7 @@ namespace Apocaraiders
             public int Layers, DetectLayers;
             public PlayerGun Gun;            // non-null: the player's shot (first collider it meets is hit, like the vanilla camera ray)
             public GameObject Player;
+            public GameObject Head;          // the target's head object (own Bodypart FSM), for head hits
         }
 
         // A first-person gun under PlayerCamera/WeaponsArm/Parent/<gun>: its Attack FSM, the Raycast it fires and the states that
@@ -89,9 +90,20 @@ namespace Apocaraiders
                 var info = Info(fsm, owner);
                 if (!info.IsGun) return true;
 
-                // where vanilla aimed: AttackRaycast_Ranged was LookAt(target, offset) a moment ago
+                // The vanilla target is whatever collider-object the sensor found nearest - for the player that is the "head" child
+                // (its own Bodypart FSM), 3 cm nearer to an NPC's eye-level sensor than the body pivot. The bullet needs the whole
+                // body: resolve to the root that carries the capsule, remember the head for head hits, and aim at the body centre
+                // ([Tracers] NpcAimAtBody) instead of the head so the vanilla jitter lands on the body, not above it.
+                GameObject head = null;
+                var root = BodyRootOf(target);
+                if (root != null && root != target) { head = target; target = root; }
+                else if (root != null) head = HeadOf(root);
                 var offsetVar = fsm.Variables.GetFsmVector3("offset");
-                Vector3 aim = target.transform.position + (offsetVar != null ? offsetVar.Value : Vector3.zero);
+                Vector3 jitter = offsetVar != null ? offsetVar.Value : Vector3.zero;
+                Vector3 aim;
+                var cap0 = root != null ? PlayerCapsule(root) : null;
+                if (cap0 != null && Plugin.NpcAimAtBody.Value) aim = cap0.transform.TransformPoint(cap0.center) + jitter;
+                else aim = (head != null ? head : target).transform.position + jitter;
                 Transform muzzle = MuzzleOf(info, owner);
                 Vector3 from = muzzle != null ? muzzle.position : fsm.GetOwnerDefaultTarget(__instance.gameObject).transform.position;
                 Vector3 dir = aim - from;
@@ -113,6 +125,7 @@ namespace Apocaraiders
                         Range = RangeOf(info.Kind),
                         Damage = damage / pellets,
                         Target = target,
+                        Head = head,
                         ShooterRoot = owner.transform.root.gameObject,
                         Impact = info.Impact,
                         EventName = info.EventName,
@@ -141,6 +154,7 @@ namespace Apocaraiders
             _shooters.Clear();
             _guns.Clear();
             _notGun.Clear();
+            _heads.Clear();
             _player = null;
             _pushes.Clear();
             _popped.Clear();
@@ -486,7 +500,7 @@ namespace Apocaraiders
                 if (!onTarget && detectable) continue;      // other creatures don't stop a vanilla shot either
                 float dist = s.Travelled + h.distance;
                 float falloff = Mathf.Clamp01(1f - dist / s.Range);
-                if (onTarget) HitTarget(ref s, h.point, s.Damage * falloff);
+                if (onTarget) HitTarget(ref s, h.point, s.Damage * falloff, s.Target);
                 else HitWorld(ref s, col, h.point, s.Damage * falloff);
                 s.Pos = h.point;
                 s.Travelled = dist;
@@ -499,7 +513,7 @@ namespace Apocaraiders
                 float falloff = Mathf.Clamp01(1f - dist / s.Range);
                 float mult = vhead ? Mathf.Max(0f, Plugin.HeadshotMultiplier.Value) : 1f;
                 if (vhead) Plugin.Verbose("Tracers: headshot on " + s.Target.name + " at " + dist.ToString("0.0") + " m");
-                HitTarget(ref s, s.Pos + s.Dir * vt, s.Damage * falloff * mult);
+                HitTarget(ref s, s.Pos + s.Dir * vt, s.Damage * falloff * mult, vhead && s.Head != null ? s.Head : s.Target);
                 s.Pos += s.Dir * vt;
                 s.Travelled = dist;
                 s.Alive = false;
@@ -515,6 +529,29 @@ namespace Apocaraiders
         // for the head. Tracers aimed at the player use their own shapes instead, built each frame from the tallest real capsule so a
         // crouch is followed: a body capsule (feet to neck, [Tracers] PlayerBodyRadius) and a head sphere ([Tracers] PlayerHeadRadius)
         // at the top. A bullet hits whichever it reaches first, once.
+        // the object that carries the body capsule: the target itself or its nearest ancestor (the player's "head" child -> Player)
+        private static GameObject BodyRootOf(GameObject target)
+        {
+            for (var tr = target.transform; tr != null; tr = tr.parent)
+                if (PlayerCapsule(tr.gameObject) != null) return tr.gameObject;
+            return null;
+        }
+
+        private static readonly Dictionary<int, GameObject> _heads = new Dictionary<int, GameObject>();
+        private static GameObject HeadOf(GameObject root)
+        {
+            GameObject h;
+            int id = root.GetInstanceID();
+            if (_heads.TryGetValue(id, out h) && h != null) return h;
+            h = null;
+            foreach (var tr in root.GetComponentsInChildren<Transform>(true))
+                if (tr != root.transform && tr.name == "head")
+                    foreach (var f in tr.GetComponents<PlayMakerFSM>())
+                        if (f.FsmName == "Bodypart") { h = tr.gameObject; break; }
+            _heads[id] = h;
+            return h;
+        }
+
         private static CapsuleCollider PlayerCapsule(GameObject target)
         {
             CapsuleCollider best = null;
@@ -598,10 +635,9 @@ namespace Apocaraiders
         }
 
         // exactly the vanilla attack state: impact effect at the point, <target>/Bodypart.Damage = damage, SendEvent Damage to the target
-        private static void HitTarget(ref Shot s, Vector3 point, float damage)
+        private static void HitTarget(ref Shot s, Vector3 point, float damage, GameObject target)
         {
             if (s.Impact != null) UnityEngine.Object.Instantiate(s.Impact, point, Quaternion.identity);
-            var target = s.Target;
             if (target == null || Mathf.Abs(damage) < 0.01f) return;
             var fsms = target.GetComponents<PlayMakerFSM>();
             foreach (var f in fsms)

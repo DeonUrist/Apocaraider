@@ -18,7 +18,7 @@ namespace Apocaraiders
     {
         public const string GUID = "com.denis.apocalypter.apocaraiders";
         public const string NAME = "Apocaraiders";
-        public const string VERSION = "0.3.2";
+        public const string VERSION = "0.3.3";
 
         internal static ManualLogSource Log;
         internal static string Dir;
@@ -28,7 +28,7 @@ namespace Apocaraiders
         internal static ConfigEntry<int> GungirlChance;
         internal static ConfigEntry<string> GungirlModel, GungirlTexture, GungirlVoice, GungirlHideParts;
         internal static ConfigEntry<Key> SpawnKey;
-        internal static ConfigEntry<bool> TracersEnabled, VehicleDamage, PlayerTracers;
+        internal static ConfigEntry<bool> TracersEnabled, VehicleDamage, PlayerTracers, NpcAimAtBody;
         internal static ConfigEntry<float> BulletSpeed, BoltSpeed, TracerWidth, TracerLength, BoltWidth, BoltLength, TracerGlow;
         internal static ConfigEntry<Color> TracerColor, BoltColor;
         internal static ConfigEntry<float> PistolRange, SmgRange, RifleRange, SniperRange, ShotgunRange, CrossbowRange, ShotgunPelletSpread, MetalSheetPopChance, NpcHitRadius, PlayerBodyRadius, PlayerHeadRadius, HeadshotMultiplier;
@@ -91,6 +91,8 @@ namespace Apocaraiders
             NpcHitRadius = Config.Bind("Tracers", "NpcHitRadius", 0.03f, new ConfigDescription(
                 "Thickness of NPC bullets, m, added to the target's hitbox (your body/head shapes, other targets' colliders). 0 = hairline. Your own bullets are always a hairline.",
                 new AcceptableValueRange<float>(0f, 0.5f)));
+            NpcAimAtBody = Config.Bind("Tracers", "NpcAimAtBody", true,
+                "NPCs aim at the centre of your body. Off = the game's own aim point, your head, which with the game's aim jitter sends many shots over your head.");
             PlayerBodyRadius = Config.Bind("Tracers", "PlayerBodyRadius", 0.22f, new ConfigDescription(
                 "Your body as NPC bullets see it: a capsule from your feet to your neck with this radius, m (the game's own collider is only 0.17-0.20).",
                 new AcceptableValueRange<float>(0.05f, 0.6f)));
