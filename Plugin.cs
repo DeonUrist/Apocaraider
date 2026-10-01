@@ -18,7 +18,7 @@ namespace Apocaraiders
     {
         public const string GUID = "com.denis.apocalypter.apocaraiders";
         public const string NAME = "Apocaraiders";
-        public const string VERSION = "0.8.1";
+        public const string VERSION = "0.9.0";
 
         internal static ManualLogSource Log;
         internal static string Dir;
@@ -37,8 +37,8 @@ namespace Apocaraiders
         internal static ConfigEntry<float> PistolRange, SmgRange, RifleRange, SniperRange, ShotgunRange, CrossbowRange, ShotgunPelletSpread, FullDamageUntil, NpcShotgunDamage, VehicleDamagePer1, MetalSparksScale, MetalSheetPopChance, NpcHitRadius, PlayerBodyRadius, PlayerHeadRadius, HeadshotMultiplier;
         internal static ConfigEntry<int> ShotgunPellets, MaxTracers;
         internal static ConfigEntry<string> MetalSheetNames;
-        internal static ConfigEntry<bool> BrainEnabled, DropCheck, BrainLog, AimPose;
-        internal static ConfigEntry<float> TurnRate, CrouchChance, FeelerLength, FeelerAngle, AdvanceChance, AdvanceMin, AdvanceMax, StuckBackupSeconds, StuckMemorySeconds, MaxDistance;
+        internal static ConfigEntry<bool> BrainEnabled, DropCheck, BrainLog, AimPose, ShooterPathing;
+        internal static ConfigEntry<float> TurnRate, CrouchChance, SensorInterval, FeelerLength, MeleeFeelerLength, FeelerAngle, AdvanceChance, AdvanceMin, AdvanceMax, StuckBackupSeconds, StuckMemorySeconds, MaxDistance;
         internal static ConfigEntry<int> FeelerCount, StuckGiveUpCount;
 
         private static GameObject _runner;
@@ -162,6 +162,12 @@ namespace Apocaraiders
                 "% chance that a gunman kneels when he takes a shooting position (humans only; he stands up when he moves again). He is harder to hit kneeling: his hitbox shrinks with him.",
                 new AcceptableValueRange<float>(0f, 100f)));
             FeelerLength = Config.Bind("Brain", "FeelerLength", 3.5f, new ConfigDescription("How far ahead a moving NPC looks for obstacles, m.", new AcceptableValueRange<float>(1f, 10f)));
+            SensorInterval = Config.Bind("Brain", "SensorInterval", 0.1f, new ConfigDescription(
+                "How often an NPC's eyes look, s: the game's sensors pulse on a slow fixed interval, so an NPC noticed you a second or two after you came into view. 0 = the game's own interval.",
+                new AcceptableValueRange<float>(0f, 5f)));
+            MeleeFeelerLength = Config.Bind("Brain", "MeleeFeelerLength", 2.5f, new ConfigDescription("How far ahead a melee NPC looks, m (they turn quicker than a gunman needs).", new AcceptableValueRange<float>(1f, 10f)));
+            ShooterPathing = Config.Bind("Brain", "ShooterPathing", false,
+                "Gunmen on the move use the melee pathing too: body-wide feelers that see low rocks, posts and fence bars, a committed way around an obstacle, wall following. Off = the simpler rays of 0.7.0 (cheaper; they stop to shoot anyway).");
             FeelerAngle = Config.Bind("Brain", "FeelerAngle", 60f, new ConfigDescription("Half-angle of the feeler fan around the direction to the target, degrees.", new AcceptableValueRange<float>(15f, 120f)));
             FeelerCount = Config.Bind("Brain", "FeelerCount", 7, new ConfigDescription("Feeler rays per look (odd; fewer = cheaper, coarser).", new AcceptableValueRange<int>(3, 15)));
             DropCheck = Config.Bind("Brain", "DropCheck", true, "A moving NPC also checks for ground 1.5 m along its chosen direction and picks another when there is a drop (one extra ray).");
@@ -213,6 +219,8 @@ namespace Apocaraiders
                 h.Patch(AccessTools.Method(typeof(LookAt), "DoLookAt"), prefix: new HarmonyMethod(typeof(Brain), nameof(Brain.BeforeLookAt)));
                 h.Patch(AccessTools.Method(typeof(SendEvent), "OnEnter"), prefix: new HarmonyMethod(typeof(Brain), nameof(Brain.BeforeSendEvent)));
                 h.Patch(AccessTools.Method(typeof(AddForce), "DoAddForce"), prefix: new HarmonyMethod(typeof(Brain), nameof(Brain.BeforeAddForce)));
+                h.Patch(AccessTools.Method(typeof(Micosmo.SensorToolkit.LOSSensor), "OnEnable"), postfix: new HarmonyMethod(typeof(Brain), nameof(Brain.AfterLosEnable)));
+                h.Patch(AccessTools.Method(typeof(Micosmo.SensorToolkit.RangeSensor), "OnEnable"), postfix: new HarmonyMethod(typeof(Brain), nameof(Brain.AfterRangeEnable)));
             }
             catch (Exception e) { Log.LogError("Harmony patch failed, no NPC brain: " + e); }
 

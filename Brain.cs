@@ -20,8 +20,9 @@ namespace Apocaraiders
     // flyers have gravity off and are left alone, as is anything parented under something else, which is how Apocapatrol seats a crew in a
     // car - a bailed-out crew is a fresh root object and gets a brain at once):
     // - the body turns at [Brain] TurnRate deg/s (never snaps), toward the steered heading while moving, toward the target while holding;
-    // - feelers: FeelerCount rays over +-FeelerAngle around the direction to the target, FeelerLength m, on the layers the game's bumper rays
-    //   use; the clearest direction nearest the target wins (a blocked heading from a recent stuck is avoided for StuckMemorySeconds);
+    // - feelers: FeelerCount sweeps over +-FeelerAngle around the direction to the target (melee: body-wide capsule sweeps, side commitment and
+    //   wall following, see Steer; gunmen: plain rays unless ShooterPathing), FeelerLength / MeleeFeelerLength m; a blocked heading from a
+    //   recent stuck is avoided for StuckMemorySeconds;
     // - a gunman (Tracers knows the gun) stops where it can shoot - line of sight and within [NpcAim] EngagePercent of the gun's reach - and
     //   holds there with the gun up (AimPose: the shooting animation frozen on its first frame), kneeling with CrouchChance % (no crouch
     //   animation exists: legs and hips re-posed by code in LateUpdate, capsule shortened), facing the target; the game's own burst logic
@@ -60,6 +61,8 @@ namespace Apocaraiders
             public float NextTick, NextRecheck, Stagger;
             public float Heading; public bool HasHeading;   // steered world yaw, degrees
             public float BlockedYaw, BlockedUntil;
+            public int Side, ClearLooks; public float SideUntil; public bool Flipped;     // pathing: the committed way around an obstacle
+            public float BestDist = float.MaxValue, NoProgressSince;
             public int Stucks; public float FirstStuck;
             public float LosLostAt = -1f; public bool Los; public float Dist;
             public float LastLog;
@@ -206,10 +209,23 @@ namespace Apocaraiders
                 }
             }
             // moving: Chase or Advance
+            if (!Progress(n, d, now)) return;
             Steer(n, d3, d, now);
         }
 
         // ---------- feelers ----------
+        // Pathing (melee NPCs always, gunmen with [Brain] ShooterPathing): FeelerCount capsule sweeps (radius ~0.3 m, knee to chest, so a
+        // post, a tyre, a rock or a fence bar anywhere across the body counts) over +-FeelerAngle around the direction to the target, on the
+        // bumper layers plus Item. Each direction is scored by the progress it makes toward the target over the feeler length (a long free
+        // detour beats a short free straight line only when it pays), minus a penalty for ending near a wall. The moment the straight line is
+        // blocked the NPC commits to a side (the freer half of the fan; a tie goes with the obstacle's facing) for SideLock seconds and until the
+        // straight line has been clear twice in a row: the other half of the fan is penalised, so it can only choose how hard to turn, never
+        // dither left-right into the thing. Boxed in (every feeler short), it follows the obstacle's tangent on the committed side. No progress
+        // toward the target for 5 s flips the side once, then it rests (Rest mode) and starts over.
+        // Gunmen without ShooterPathing keep the plain rays (one height, bumper layers, angle-scored) of 0.7.0.
+        private static readonly float[] _free = new float[32];
+        private static readonly Vector3[] _normals = new Vector3[32];
+
         private static void Steer(Npc n, Vector3 toTarget, float dist, float now)
         {
             int count = Mathf.Clamp(Plugin.FeelerCount.Value, 3, 31);
@@ -220,27 +236,88 @@ namespace Apocaraiders
                 _angles = new float[count];
                 for (int i = 0; i < count; i++) _angles[i] = -half + half * 2f * i / (count - 1);   // symmetric, 0 in the middle
             }
-            float len = Mathf.Max(0.5f, Plugin.FeelerLength.Value);
+            bool adv = !n.Ranged || Plugin.ShooterPathing.Value;
+            float len = Mathf.Max(0.5f, n.Ranged ? Plugin.FeelerLength.Value : Plugin.MeleeFeelerLength.Value);
             if (dist < len) len = Mathf.Max(0.5f, dist);     // close to the target: don't "see" it as a wall
             Vector3 origin = n.Col != null ? n.Col.bounds.center : n.T.position;
             float targetYaw = Mathf.Atan2(toTarget.x, toTarget.z) * Mathf.Rad2Deg;
             Transform troot = n.Target.Value != null ? n.Target.Value.transform.root : null;
             bool blockedMem = now < n.BlockedUntil;
+            Vector3 right = Quaternion.Euler(0f, targetYaw, 0f) * Vector3.right;
+            int mask = adv ? Mask | (1 << 9) : Mask;
+            float radius = 0.3f;
+            Vector3 p1 = origin, p2 = origin;
+            if (adv)
+            {
+                // the swept capsule: knee to chest of this body (small animals: whatever fits between their collider's top and bottom)
+                if (n.Col != null)
+                {
+                    var b = n.Col.bounds;
+                    radius = Mathf.Clamp(Mathf.Min(b.extents.x, b.extents.z) * 0.9f, 0.1f, 0.35f);
+                    float lo = b.min.y + Mathf.Min(0.35f, b.size.y * 0.25f) + radius, hi = b.min.y + b.size.y * 0.7f - radius;
+                    if (hi < lo) hi = lo;
+                    p1 = new Vector3(b.center.x, lo, b.center.z); p2 = new Vector3(b.center.x, hi, b.center.z);
+                }
+            }
             RaycastHit hit;
-            int best = -1; float bestScore = float.MinValue;
+            int centre = count / 2;
             for (int i = 0; i < count; i++)
             {
                 float yaw = targetYaw + _angles[i];
                 Vector3 dir = Quaternion.Euler(0f, yaw, 0f) * Vector3.forward;
-                float block = 0f;
-                if (Physics.Raycast(origin, dir, out hit, len, Mask, QueryTriggerInteraction.Ignore))
+                float free = len; Vector3 normal = Vector3.zero;
+                bool hitSomething = adv ? Physics.CapsuleCast(p1, p2, radius, dir, out hit, len, mask, QueryTriggerInteraction.Ignore)
+                                        : Physics.Raycast(origin, dir, out hit, len, mask, QueryTriggerInteraction.Ignore);
+                if (hitSomething && (troot == null || hit.collider.transform.root != troot) && hit.collider.transform.root != n.T)
+                { free = Mathf.Max(0f, hit.distance); normal = hit.normal; }
+                _free[i] = free; _normals[i] = normal; _blocks[i] = 1f - free / len;
+            }
+
+            if (adv)
+            {
+                bool straightBlocked = _free[centre] < len * 0.9f;
+                if (n.Side == 0)
                 {
-                    if (troot == null || hit.collider.transform.root != troot) block = 1f - hit.distance / len;
+                    if (straightBlocked)
+                    {
+                        float fl = 0f, fr = 0f;
+                        for (int i = 0; i < count; i++) { if (_angles[i] < 0f) fl += _free[i]; else if (_angles[i] > 0f) fr += _free[i]; }
+                        int side;
+                        if (fr > fl * 1.15f) side = 1;
+                        else if (fl > fr * 1.15f) side = -1;
+                        else
+                        {
+                            float facing = Vector3.Dot(_normals[centre], right);     // the obstacle's face leans right -> go right
+                            side = Mathf.Abs(facing) > 0.05f ? (facing > 0f ? 1 : -1) : (UnityEngine.Random.value < 0.5f ? -1 : 1);
+                        }
+                        n.Side = side; n.SideUntil = now + SideLock; n.ClearLooks = 0;
+                        if (Plugin.BrainLog.Value) Plugin.Log.LogInfo("Brain: " + n.Owner.name + " goes around on the " + (side > 0 ? "right" : "left") + " (free L " + fl.ToString("0.0") + " / R " + fr.ToString("0.0") + ")");
+                    }
                 }
-                _blocks[i] = block;
-                float score = Mathf.Cos(_angles[i] * Mathf.Deg2Rad) - block * 2.5f;
+                else
+                {
+                    if (!straightBlocked) n.ClearLooks++; else n.ClearLooks = 0;
+                    if (n.ClearLooks >= 2 && now >= n.SideUntil) { n.Side = 0; n.Flipped = false; }
+                }
+            }
+            else n.Side = 0;
+
+            int best = -1; float bestScore = float.MinValue;
+            for (int i = 0; i < count; i++)
+            {
+                float yaw = targetYaw + _angles[i];
+                float score;
+                if (adv)
+                {
+                    Vector3 dir = Quaternion.Euler(0f, yaw, 0f) * Vector3.forward;
+                    Vector3 reach = dir * _free[i];
+                    float dAfter = (toTarget - reach).magnitude;
+                    score = (dist - dAfter) / len - _blocks[i] * 1.0f;        // net progress toward the target, less for ending at a wall
+                    if (n.Side != 0 && Mathf.Sign(_angles[i]) == -n.Side && _angles[i] != 0f) score -= 1.0f;
+                }
+                else score = Mathf.Cos(_angles[i] * Mathf.Deg2Rad) - _blocks[i] * 2.5f;
                 if (blockedMem && Mathf.Abs(Mathf.DeltaAngle(yaw, n.BlockedYaw)) < 35f) score -= 1.5f;
-                if (n.HasHeading && Mathf.Abs(Mathf.DeltaAngle(yaw, n.Heading)) < 12f) score += 0.15f;   // no flicker between near-equal rays
+                if (n.HasHeading && Mathf.Abs(Mathf.DeltaAngle(yaw, n.Heading)) < 12f) score += 0.1f;   // no flicker between near-equal rays
                 _scores[i] = score;
                 if (score > bestScore) { bestScore = score; best = i; }
             }
@@ -258,10 +335,52 @@ namespace Apocaraiders
                     best = nb;
                 }
             }
-            if (best < 0) best = count / 2;
-            n.Heading = targetYaw + _angles[best];
+            if (best < 0) best = centre;
+            float heading = targetYaw + _angles[best];
+
+            if (adv && n.Side != 0)
+            {
+                // boxed in (every feeler short): follow the obstacle's surface on the committed side, pushed off it a little when very close
+                bool boxed = true;
+                for (int i = 0; i < count; i++) if (_free[i] > len * 0.6f) { boxed = false; break; }
+                if (boxed && _normals[centre] != Vector3.zero)
+                {
+                    Vector3 nrm = _normals[centre]; nrm.y = 0f;
+                    if (nrm.sqrMagnitude > 0.001f)
+                    {
+                        nrm.Normalize();
+                        Vector3 tangent = Vector3.Cross(Vector3.up, nrm);
+                        if (Vector3.Dot(tangent, right * n.Side) < 0f) tangent = -tangent;
+                        Vector3 follow = tangent + nrm * (_free[centre] < 1f ? 0.5f : 0.15f);
+                        heading = Mathf.Atan2(follow.x, follow.z) * Mathf.Rad2Deg;
+                    }
+                }
+            }
+            n.Heading = heading;
             n.HasHeading = true;
         }
+
+        // moving modes: is the NPC getting anywhere? (called from Think) - 5 s without coming nearer flips the side once, then rests
+        private static bool Progress(Npc n, float d, float now)
+        {
+            if (d < n.BestDist - 0.5f) { n.BestDist = d; n.NoProgressSince = now; return true; }
+            if (now - n.NoProgressSince < NoProgressSeconds) return true;
+            n.NoProgressSince = now;
+            if (!n.Flipped)
+            {
+                n.Flipped = true;
+                n.Side = n.Side != 0 ? -n.Side : (UnityEngine.Random.value < 0.5f ? -1 : 1);
+                n.SideUntil = now + SideLock * 2f; n.ClearLooks = 0;
+                if (Plugin.BrainLog.Value) Plugin.Log.LogInfo("Brain: " + n.Owner.name + " gets nowhere, tries the " + (n.Side > 0 ? "right" : "left"));
+                return true;
+            }
+            n.Flipped = false; n.Side = 0; n.BestDist = float.MaxValue;
+            n.ModeUntil = now + 3f;
+            SetMode(n, Mode.Rest, "gets nowhere, rests");
+            return false;
+        }
+
+        private const float SideLock = 2.5f, NoProgressSeconds = 5f;
 
         private static bool LineOfSight(Npc n, GameObject target, Vector3 tp)
         {
@@ -277,7 +396,7 @@ namespace Apocaraiders
         {
             Mode was = n.Mode;
             n.Mode = m;
-            if (m == Mode.Chase || m == Mode.Advance) { n.HasHeading = false; }
+            if (m == Mode.Chase || m == Mode.Advance) { n.HasHeading = false; if (was != Mode.Chase && was != Mode.Advance) { n.BestDist = float.MaxValue; n.NoProgressSince = Time.time; n.Flipped = false; n.Side = 0; } }
             bool wasStill = was == Mode.Hold || was == Mode.Rest, still = m == Mode.Hold || m == Mode.Rest;
             if (m == Mode.Off) { if (wasStill) Move(n, true); }
             else if (still && !wasStill) Move(n, false);
@@ -620,6 +739,55 @@ namespace Apocaraiders
         {
             try { return NpcOf(__instance.Fsm, "Unstuck") == null; }
             catch (Exception e) { Plugin.Log.LogError("Brain: " + e); return true; }
+        }
+
+        // ---------- reaction time ----------
+        // The NPCs' eyes are SensorToolkit sensors on the "Sensors" child (a RangeSensor feeding a LOSSensor; the Detection FSM polls their
+        // results every frame). They pulse on a fixed interval, so an NPC notices you up to one interval (plus the LOS moving average) after
+        // you walk into view. Harmony postfix on both sensors' OnEnable: on a creature with a Detection FSM the interval is capped at
+        // [Brain] SensorInterval s (0 = the game's). The original is logged once per creature type with VerboseLog.
+        private static readonly HashSet<string> _sensorLogged = new HashSet<string>();
+
+        public static void AfterLosEnable(Micosmo.SensorToolkit.LOSSensor __instance)
+        {
+            try
+            {
+                float want = Plugin.SensorInterval.Value;
+                if (want <= 0f || !On || __instance == null || !IsCreatureSensor(__instance.transform)) return;
+                LogSensor(__instance.transform.root.name, "LOS", __instance.PulseMode.ToString(), __instance.PulseInterval,
+                    " rays " + __instance.NumberOfRays + " minVis " + __instance.MinimumVisibility + " avg " + (__instance.MovingAverageEnabled ? __instance.MovingAverageWindowSize.ToString() : "off"));
+                if (__instance.PulseMode == Micosmo.SensorToolkit.PulseRoutine.Modes.FixedInterval && __instance.PulseInterval > want) __instance.PulseInterval = want;
+            }
+            catch (Exception e) { Plugin.Log.LogError("Brain: " + e); }
+        }
+
+        public static void AfterRangeEnable(Micosmo.SensorToolkit.RangeSensor __instance)
+        {
+            try
+            {
+                float want = Plugin.SensorInterval.Value;
+                if (want <= 0f || !On || __instance == null || !IsCreatureSensor(__instance.transform)) return;
+                LogSensor(__instance.transform.root.name, "Range", __instance.PulseMode.ToString(), __instance.PulseInterval, "");
+                if (__instance.PulseMode == Micosmo.SensorToolkit.PulseRoutine.Modes.FixedInterval && __instance.PulseInterval > want) __instance.PulseInterval = want;
+            }
+            catch (Exception e) { Plugin.Log.LogError("Brain: " + e); }
+        }
+
+        private static bool IsCreatureSensor(Transform t)
+        {
+            var root = t.root;
+            foreach (var f in root.GetComponents<PlayMakerFSM>()) if (f != null && f.FsmName == "Detection") return true;
+            return false;
+        }
+
+        private static void LogSensor(string who, string kind, string mode, float interval, string extra)
+        {
+            if (!Plugin.VerboseLog.Value) return;
+            int cut = who.IndexOf('(');
+            string key = (cut > 0 ? who.Substring(0, cut) : who) + kind;
+            if (_sensorLogged.Contains(key)) return;
+            _sensorLogged.Add(key);
+            Plugin.Log.LogInfo("Brain: " + key + " sensor " + mode + " every " + interval + " s" + extra);
         }
 
         internal static string Status() { return _npcs.Count + " NPCs, " + _active + " engaged, tick " + _interval + " s"; }
