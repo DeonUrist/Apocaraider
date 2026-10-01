@@ -18,6 +18,7 @@ Needs BepInEx 5. Copy the `Apocaraiders` folder into `BepInEx\plugins\`, so you 
 BepInEx\plugins\Apocaraiders\Apocaraiders.dll
 BepInEx\plugins\Apocaraiders\Models\Flexa_female.glb
 BepInEx\plugins\Apocaraiders\Models\flexa_female.png
+BepInEx\plugins\Apocaraiders\Sounds\Gungirl\*.wav
 ```
 
 ## Settings
@@ -28,6 +29,7 @@ BepInEx\plugins\Apocaraiders\Models\flexa_female.png
 - **[Gungirl] Chance**: % of Flexa spawns that are Gungirls (0 to 100).
 - **[Gungirl] Model / Texture**: her body model and texture in the mod folder. You can make your own: the model has to be
   rigged to Flexa's skeleton (see below).
+- **[Gungirl] Voice**: the folder with her voice clips (see below).
 - **[Gungirl] HideParts**: Flexa's attachments she doesn't wear (default: the beard).
 - **[Debug] SpawnKey** (F9): spawns a Gungirl in front of you.
 
@@ -36,3 +38,17 @@ BepInEx\plugins\Apocaraiders\Models\flexa_female.png
 The model is Flexa's body exported from the game, in glTF format, with Flexa's skeleton. Open it in Blender
 (File > Import > glTF 2.0), reshape the body or repaint the texture, and keep the armature as it is: same bones,
 same names, not moved. Export as glTF (.gltf or .glb) with Skinning on and point `[Gungirl] Model` at it.
+
+## Her voice
+
+`Sounds\Gungirl\` holds one WAV per sound she makes, named after the game's clip it replaces:
+
+| File | When |
+|---|---|
+| `enemy_human_single_1.wav` ... `enemy_human_single_8.wav` | shouts while attacking (one picked at random) |
+| `human_hurt.wav`, `human_hurt_2.wav` | getting hit |
+| `death_1.wav`, `death_3.wav`, `death_6.wav` | dying |
+
+Out of the box they are Flexa's own clips. Overwrite any of them with a recording of your own (WAV: 8/16/24-bit PCM or
+32-bit float, mono or stereo, any sample rate, any length) and restart the game. A missing file means she uses Flexa's
+sound for that clip. Only Gungirls use these files: Flexa, the other raiders and the player keep their voices.

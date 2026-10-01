@@ -22,6 +22,7 @@
     <Reference Include="UnityEngine.CoreModule"><HintPath>$(ManagedDir)\UnityEngine.CoreModule.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="UnityEngine.PhysicsModule"><HintPath>$(ManagedDir)\UnityEngine.PhysicsModule.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="UnityEngine.ImageConversionModule"><HintPath>$(ManagedDir)\UnityEngine.ImageConversionModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.AudioModule"><HintPath>$(ManagedDir)\UnityEngine.AudioModule.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="Unity.InputSystem"><HintPath>$(ManagedDir)\Unity.InputSystem.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="PlayMaker"><HintPath>$(ManagedDir)\PlayMaker.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="Assembly-CSharp"><HintPath>$(ManagedDir)\Assembly-CSharp.dll</HintPath><Private>false</Private></Reference>
@@ -29,12 +30,14 @@
 
   <ItemGroup>
     <ModelFiles Include="Models\**\*" />
+    <SoundFiles Include="Sounds\**\*" />
   </ItemGroup>
 
   <Target Name="DeployToGame" AfterTargets="Build">
     <Copy SourceFiles="$(OutDir)$(AssemblyName).dll" DestinationFolder="$(PluginDir)" />
     <Copy SourceFiles="@(ModelFiles)" DestinationFolder="$(PluginDir)\Models\%(RecursiveDir)" />
-    <Message Importance="high" Text="Deployed $(AssemblyName).dll + Models to $(PluginDir)" />
+    <Copy SourceFiles="@(SoundFiles)" DestinationFolder="$(PluginDir)\Sounds\%(RecursiveDir)" />
+    <Message Importance="high" Text="Deployed $(AssemblyName).dll + Models + Sounds to $(PluginDir)" />
   </Target>
 
 </Project>

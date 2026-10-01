@@ -110,6 +110,9 @@ namespace Apocaraiders
             }
             catch (Exception e) { Plugin.Log.LogError("Spawn key: " + e); }
 
+            try { Voice.Tick(); }
+            catch (Exception e) { Plugin.Log.LogError("Voice: " + e); }
+
             float t = Time.unscaledTime;
             if (t < _nextScan) return;
             _nextScan = t + (t < _burstUntil ? 0.5f : 2f);
@@ -148,6 +151,7 @@ namespace Apocaraiders
                 swapped++;
             }
             int hidden = HideParts(root);
+            if (swapped > 0) Voice.Apply(root);
             if (swapped > 0) Plugin.Verbose("Gungirl: " + root.name + " (" + why + ") body swapped, " + hidden + " part(s) hidden");
             return swapped > 0;
         }
@@ -315,7 +319,7 @@ namespace Apocaraiders
             return _tex;
         }
 
-        private static string ModPath(string rel)
+        internal static string ModPath(string rel)
         {
             rel = (rel ?? "").Replace('/', Path.DirectorySeparatorChar).Replace('\\', Path.DirectorySeparatorChar);
             return Path.IsPathRooted(rel) ? rel : Path.Combine(Plugin.Dir, rel);
