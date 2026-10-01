@@ -181,6 +181,7 @@ namespace Apocaraiders
             _counts.Clear();
             _rangedHit = null; _metalImpact = null; _effectsLooked = false;
             _carRoots.Clear();
+            _isPart.Clear();
             _reported.Clear();
             Hud.OnSceneLoaded();
             Aim.OnSceneLoaded();
@@ -418,7 +419,7 @@ namespace Apocaraiders
             bool feedback = creature && (Plugin.DamageNumbers.Value != 0 || Plugin.HitMarker.Value);
             float before = Plugin.HitLog.Value || feedback ? HealthOf(go) : 0f;
             Replay(fsm, go.layer == 10 && gun.ActorHit != null ? gun.ActorHit : gun.GetLayer, falloff);
-            Replay(fsm, gun.Hit, falloff);
+            Replay(fsm, gun.Hit, falloff, Plugin.VehicleDamage.Value && IsVehiclePart(go));
             float after = Plugin.HitLog.Value || feedback ? HealthOf(go) : 0f;
             if (feedback)
             {
@@ -441,11 +442,33 @@ namespace Apocaraiders
             return go.transform.parent != null && HasBodypart(go);
         }
 
-        private static void Replay(Fsm fsm, FsmStateAction[] actions, float falloff)
+        // Vehicle parts (45 prefabs: engines, wheels, doors ...) carry a vanilla Bodypart FSM whose Damage event subtracts the bullet's damage 1:1 from
+        // their Condition (an akms round = -23 %). With [Tracers] VehicleDamage on, the mod's VehicleDamagePer1 rule replaces that: the vanilla
+        // Damage event / Bodypart.Damage write are not replayed for a part (the other hit actions - effect, HitEffect, DamageFlammable, CheckFriendly - are).
+        private static readonly Dictionary<int, bool> _isPart = new Dictionary<int, bool>();
+        private static bool IsVehiclePart(GameObject go)
+        {
+            bool part;
+            int id = go.GetInstanceID();
+            if (_isPart.TryGetValue(id, out part)) return part;
+            part = false;
+            foreach (var f in go.GetComponents<PlayMakerFSM>()) if (f != null && (f.FsmName == "Condition" || f.FsmName == "Repair")) { part = true; break; }
+            _isPart[id] = part;
+            return part;
+        }
+
+        private static void Replay(Fsm fsm, FsmStateAction[] actions, float falloff, bool skipBodypartDamage = false)
         {
             if (actions == null) return;
             foreach (var a in actions)
             {
+                if (skipBodypartDamage)
+                {
+                    var sfx = a as SetFsmFloat;
+                    if (sfx != null && sfx.fsmName != null && sfx.fsmName.Value == "Bodypart") continue;
+                    var sex = a as SendEvent;
+                    if (sex != null && sex.sendEvent != null && sex.sendEvent.Name == "Damage") continue;
+                }
                 try
                 {
                     var co = a as CreateObject;

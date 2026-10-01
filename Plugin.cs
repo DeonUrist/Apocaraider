@@ -18,7 +18,7 @@ namespace Apocaraiders
     {
         public const string GUID = "com.denis.apocalypter.apocaraiders";
         public const string NAME = "Apocaraiders";
-        public const string VERSION = "0.5.5";
+        public const string VERSION = "0.5.6";
 
         internal static ManualLogSource Log;
         internal static string Dir;
@@ -116,7 +116,7 @@ namespace Apocaraiders
             MetalSparks = Config.Bind("Tracers", "MetalSparks", true,
                 "Extra sparks, smoke and a bullet mark on anything that is part of a car - attached parts, the body and frame, loose parts - except wheels (any bullet), using the game's MetalImpact effect.");
             MetalSparksScale = Config.Bind("Tracers", "MetalSparksScale", 0.25f, new ConfigDescription("Size of the metal sparks effect (1 = the prefab's own, demo-scene size).", new AcceptableValueRange<float>(0.05f, 4f)));
-            VehicleDamage = Config.Bind("Tracers", "VehicleDamage", true, "A bullet that hits a vehicle part damages it (see VehicleDamagePer1).");
+            VehicleDamage = Config.Bind("Tracers", "VehicleDamage", true, "A bullet that hits a vehicle part damages it by the VehicleDamagePer1 rule. Off = the game's own rule (your bullet's full damage comes straight off the part's condition: an akms round -23 %; NPC bullets never damage parts).");
             VehicleDamagePer1 = Config.Bind("Tracers", "VehicleDamagePer1", 20f, new ConfigDescription(
                 "Bullet damage that takes 1 % off a vehicle part's condition (20 = a -23 rifle round costs 1.15 %, a shotgun pellet about 0.4 %).", new AcceptableValueRange<float>(1f, 1000f)));
             MetalSheetPopChance = Config.Bind("Tracers", "MetalSheetPopChance", 20f, new ConfigDescription("% chance that a bullet hitting a bolted-on metal plate knocks it off.", new AcceptableValueRange<float>(0f, 100f)));
