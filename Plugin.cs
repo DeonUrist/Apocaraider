@@ -18,12 +18,12 @@ namespace Apocaraiders
     {
         public const string GUID = "com.denis.apocalypter.apocaraiders";
         public const string NAME = "Apocaraiders";
-        public const string VERSION = "0.4.2";
+        public const string VERSION = "0.4.3";
 
         internal static ManualLogSource Log;
         internal static string Dir;
 
-        internal static ConfigEntry<bool> Enabled, VerboseLog, GungirlVoiceMatch;
+        internal static ConfigEntry<bool> Enabled, VerboseLog, HitLog, GungirlVoiceMatch;
         internal static ConfigEntry<float> GungirlVoiceVolume, GungirlVoiceIntervalMin, GungirlVoiceIntervalMax;
         internal static ConfigEntry<int> GungirlChance;
         internal static ConfigEntry<string> GungirlModel, GungirlTexture, GungirlVoice, GungirlHideParts;
@@ -32,7 +32,7 @@ namespace Apocaraiders
         internal static ConfigEntry<float> AimBaseDistance, AimDelayPer5m, SpreadPer5m, EngagePercent, EngagePatience, HoldRecheckMin, HoldRecheckMax;
         internal static ConfigEntry<float> BulletSpeed, BoltSpeed, TracerWidth, TracerLength, BoltWidth, BoltLength, TracerGlow;
         internal static ConfigEntry<Color> TracerColor, BoltColor;
-        internal static ConfigEntry<float> PistolRange, SmgRange, RifleRange, SniperRange, ShotgunRange, CrossbowRange, ShotgunPelletSpread, ShotgunFullDamageUntil, NpcShotgunDamage, MetalSheetPopChance, NpcHitRadius, PlayerBodyRadius, PlayerHeadRadius, HeadshotMultiplier;
+        internal static ConfigEntry<float> PistolRange, SmgRange, RifleRange, SniperRange, ShotgunRange, CrossbowRange, ShotgunPelletSpread, FullDamageUntil, NpcShotgunDamage, MetalSheetPopChance, NpcHitRadius, PlayerBodyRadius, PlayerHeadRadius, HeadshotMultiplier;
         internal static ConfigEntry<int> ShotgunPellets, MaxTracers;
         internal static ConfigEntry<string> MetalSheetNames;
 
@@ -89,8 +89,8 @@ namespace Apocaraiders
             CrossbowRange = Config.Bind("Tracers", "CrossbowRange", 90f, new ConfigDescription("Crossbows, falloff range in metres.", new AcceptableValueRange<float>(5f, 1000f)));
             ShotgunPellets = Config.Bind("Tracers", "ShotgunPellets", 2, new ConfigDescription("Pellets per vanilla shotgun ray (a vanilla blast is 4 rays; 2 = 8 pellets). The blast's damage is split between them.", new AcceptableValueRange<int>(1, 8)));
             ShotgunPelletSpread = Config.Bind("Tracers", "ShotgunPelletSpread", 1f, new ConfigDescription("Extra spread of each pellet, degrees.", new AcceptableValueRange<float>(0f, 15f)));
-            ShotgunFullDamageUntil = Config.Bind("Tracers", "ShotgunFullDamageUntil", 50f, new ConfigDescription(
-                "Shotguns (NPC and yours) do full damage until this % of their range, then fall off to 0 at the range. Other guns fall off from the muzzle (half damage at 50 %). 0 = like the other guns.",
+            FullDamageUntil = Config.Bind("Tracers", "FullDamageUntil", 50f, new ConfigDescription(
+                "Every gun (NPC and yours) does full damage until this % of its range, then the damage falls off to 0 at the range. 0 = falloff from the muzzle (half damage at 50 %).",
                 new AcceptableValueRange<float>(0f, 99f)));
             NpcShotgunDamage = Config.Bind("Tracers", "NpcShotgunDamage", 1f, new ConfigDescription(
                 "Damage multiplier for NPC shotgun pellets (the game's shotgunners do 5-8 per ray x 4 rays per blast, a third of a rifle burst).",
@@ -132,6 +132,7 @@ namespace Apocaraiders
             HoldRecheckMax = Config.Bind("NpcAim", "HoldRecheckMax", 4f, new ConfigDescription("See HoldRecheckMin.", new AcceptableValueRange<float>(0.1f, 30f)));
             SpawnKey = Config.Bind("Debug", "SpawnKey", Key.F9,
                 "Spawns a Gungirl 6 m in front of you (a real raider: she fights and is saved). None = off.");
+            HitLog = Config.Bind("Debug", "HitLog", false, "Log every bullet hit on a creature: who, what, distance, damage, and its Health before and after.");
             VerboseLog = Config.Bind("Debug", "VerboseLog", false, "Log every Gungirl that is dressed (spawn, corpse, after a load).");
 
             try

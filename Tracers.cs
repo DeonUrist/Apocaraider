@@ -287,8 +287,16 @@ namespace Apocaraiders
             var vo = fsm.Variables.GetFsmGameObject("hitObj"); if (vo != null) vo.Value = go;
             var vp = fsm.Variables.GetFsmVector3("hitPoint"); if (vp != null) vp.Value = h.point;
             var vn = fsm.Variables.GetFsmVector3("hitNormal"); if (vn != null) vn.Value = h.normal;
+            float before = Plugin.HitLog.Value ? HealthOf(go) : 0f;
             Replay(fsm, go.layer == 10 && gun.ActorHit != null ? gun.ActorHit : gun.GetLayer, falloff);
             Replay(fsm, gun.Hit, falloff);
+            if (Plugin.HitLog.Value)
+            {
+                float after = HealthOf(go);
+                Plugin.Log.LogInfo("Hit: " + fsm.GameObject.name + " -> " + go.transform.root.name + "/" + go.name + " at " + (s.Travelled + h.distance).ToString("0.0") + " m, damage "
+                    + (gun.Damage != null ? gun.Damage.Value * falloff : 0f).ToString("0.0") + " (x" + falloff.ToString("0.00") + ")"
+                    + (float.IsNaN(before) ? ", no Health FSM" : ", Health " + before.ToString("0.0") + " -> " + after.ToString("0.0")));
+            }
         }
 
         private static void Replay(Fsm fsm, FsmStateAction[] actions, float falloff)
@@ -437,18 +445,22 @@ namespace Apocaraiders
             return true;
         }
 
-        // Damage multiplier by distance flown. Guns: 1 at the muzzle, linear to 0 at the range. Shotguns: full damage until
-        // [Tracers] ShotgunFullDamageUntil % of the range, then linear to 0 at the range (so at 50 % a shotgun does 1x where a gun does 0.5x).
+        // Damage multiplier by distance flown: full damage until [Tracers] FullDamageUntil % of the range, then linear to 0 at the range.
         private static float Falloff(ref Shot s, float dist)
         {
             float x = dist / s.Range;
-            if (s.Shotgun)
-            {
-                float k = Mathf.Clamp(Plugin.ShotgunFullDamageUntil.Value, 0f, 99f) / 100f;
-                if (x <= k) return 1f;
-                return Mathf.Clamp01((1f - x) / (1f - k));
-            }
-            return Mathf.Clamp01(1f - x);
+            float k = Mathf.Clamp(Plugin.FullDamageUntil.Value, 0f, 99f) / 100f;
+            if (x <= k) return 1f;
+            return Mathf.Clamp01((1f - x) / (1f - k));
+        }
+
+        // [Debug] HitLog: the Health of the thing hit (its root's Health FSM), before and after
+        private static float HealthOf(GameObject go)
+        {
+            if (go == null) return float.NaN;
+            foreach (var f in go.transform.root.GetComponentsInChildren<PlayMakerFSM>())
+                if (f.FsmName == "Health") { var v = f.FsmVariables.GetFsmFloat("Health"); if (v != null) return v.Value; }
+            return float.NaN;
         }
 
         internal static float RangeOf(Kind k)
@@ -682,7 +694,12 @@ namespace Apocaraiders
                     var v = f.FsmVariables.GetFsmFloat("Damage");
                     if (v != null) v.Value = damage;
                 }
+            float before = Plugin.HitLog.Value ? HealthOf(target) : 0f;
             foreach (var f in fsms) f.SendEvent(s.EventName);
+            if (Plugin.HitLog.Value)
+                Plugin.Log.LogInfo("Hit: " + (s.ShooterRoot != null ? s.ShooterRoot.name : "?") + " -> " + target.transform.root.name + "/" + target.name + " at "
+                    + s.Travelled.ToString("0.0") + " m, damage " + damage.ToString("0.0")
+                    + (float.IsNaN(before) ? "" : ", Health " + before.ToString("0.0") + " -> " + HealthOf(target).ToString("0.0")));
         }
 
         // obstruction: a vehicle part loses condition, a bolted metal plate may come off

@@ -16,10 +16,9 @@ Every gun-wielding NPC (raiders, Coyotes and other humans) and your own guns now
 tracer line flies from the muzzle, takes time to arrive, and hits whatever is really in its way. Crossbows fire slower,
 visible bolts. Tracers look the same by day and by night.
 
-- Damage falls off with distance: half damage at half the weapon's range, gone at full range (pistols 60 m, SMGs 70 m,
-  rifles and machine guns 120 m, sniper rifles 250 m, shotguns 50 m, crossbows 90 m by default).
-- Shotguns fire a spread of pellets that together do the gun's damage, and keep their full damage up to half their range
-  (other guns lose damage from the muzzle on). NPC shotgun damage can be scaled (`NpcShotgunDamage`).
+- Damage falls off with distance: full damage up to half the weapon's range, then down to nothing at full range
+  (pistols 60 m, SMGs 70 m, rifles and machine guns 120 m, sniper rifles 250 m, shotguns 50 m, crossbows 90 m by default).
+- Shotguns fire a spread of pellets that together do the gun's damage. NPC shotgun damage can be scaled (`NpcShotgunDamage`).
 - NPC bullets see you as a realistic body (feet to neck, shoulder width) plus a head: the game's own player collider is a slim
   0.4 m capsule that made many visible hits miss. A headshot does 1.5x damage by default (the game had no headshots on you).
   One bullet hits one thing, then it's gone.
@@ -62,6 +61,7 @@ BepInEx\plugins\Apocaraiders\Sounds\Gungirl\*.wav / *.ogg
   most bullets in flight at once.
 - **[NpcAim]**: on/off, AimBaseDistance, AimDelayPer5m, SpreadPer5m, EngagePercent (fire within this % of the reach),
   EngagePatience, HoldRecheckMin/Max (1 to 4 s reaction time once you come into reach).
+- **[Debug] HitLog**: logs every bullet that hits a creature with its damage and the creature's health before and after.
 - **[Debug] SpawnKey** (F9): spawns a Gungirl in front of you.
 
 ## Making your own body
