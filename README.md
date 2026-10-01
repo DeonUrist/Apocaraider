@@ -1,6 +1,6 @@
 # Apocaraiders
 
-New raiders for Apocalypter, built on the game's own enemies.
+New raiders for Apocalypter, built on the game's own enemies, and better gunfights for everyone.
 
 ## Gungirl
 
@@ -9,6 +9,19 @@ same way, and leaves her own corpse when she dies. A share of the Flexas the gam
 (50 % by default). She and her corpse stay Gungirls after a save and load.
 
 Only new spawns are affected: the Flexas already in your world stay as they are.
+
+## Tracers
+
+Every gun-wielding NPC (raiders, Coyotes and other humans) and your own guns now fire real bullets you can see: a bright
+tracer line flies from the muzzle, takes time to arrive, and hits whatever is really in its way. Crossbows fire slower,
+visible bolts. Tracers look the same by day and by night.
+
+- Damage falls off with distance: half damage at half the weapon's range, gone at full range (pistols 60 m, SMGs 70 m,
+  rifles and machine guns 120 m, sniper rifles 250 m, shotguns 35 m, crossbows 90 m by default).
+- Shotguns fire a spread of pellets that together do the gun's damage.
+- A bullet that hits a vehicle part damages it (10 damage = 1 % of the part's condition), and a bolted-on metal plate
+  can be knocked off (20 % per hit by default).
+- A hit on its target does exactly what the game's own hit does (blood/sparks, damage, armor, hit sounds).
 
 ## Install
 
@@ -33,6 +46,9 @@ BepInEx\plugins\Apocaraiders\Sounds\Gungirl\*.wav / *.ogg
 - **[Gungirl] VoiceMatchLoudness / VoiceVolume**: her clips are brought to Flexa's loudness, then scaled by VoiceVolume (1 = as loud as Flexa).
 - **[Gungirl] VoiceIntervalMin / VoiceIntervalMax**: the pause between her shouts in a fight, in seconds (default 2 to 8; Flexa uses 0.1 to 4).
 - **[Gungirl] HideParts**: Flexa's attachments she doesn't wear (default: the beard).
+- **[Tracers]**: on/off (NPCs and, separately, your own guns), bullet and bolt speed, colour, width, length and glow,
+  the falloff range per weapon type, shotgun pellets and spread, vehicle damage on/off, the metal-plate chance, and the
+  most bullets in flight at once.
 - **[Debug] SpawnKey** (F9): spawns a Gungirl in front of you.
 
 ## Making your own body
