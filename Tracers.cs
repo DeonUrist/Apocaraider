@@ -664,7 +664,7 @@ namespace Apocaraiders
 
         // ---------- melee on wheels ----------
         // The player's melee weapons (an "Attack" FSM without a Reload FSM, under the camera) hit with SetFsmFloat(hitObj / Bodypart.Damage) +
-        // SendEvent Damage; a vehicle part's Bodypart FSM takes that straight off its Condition. Postfix on SetFsmFloat.DoSetFsmFloat: when the
+        // SendEvent Damage; a vehicle part's Bodypart FSM takes that straight off its Condition. Postfix on SetFsmFloat.OnEnter (DoSetFsmFloat could be inlined): when the
         // target is a wheel, its Bodypart.Damage is multiplied by [Tracers] WheelDamageMultiplier (and shown in blue); a wheel brought to 0
         // jumps off next frame (WheelPopOff).
         private struct MeleeWheel { public Transform Part; public float Before; public Vector3 Dir; public int Frame; }
@@ -681,7 +681,9 @@ namespace Apocaraiders
                 bool melee;
                 if (!_isMelee.TryGetValue(weapon.GetInstanceID(), out melee))
                 {
-                    melee = Camera.main != null && weapon.transform.IsChildOf(Camera.main.transform);
+                    // the player's weapons live under PlayerCameraHolder/PlayerCamera/WeaponsArm (Camera.main may be another camera)
+                    melee = false;
+                    for (var t = weapon.transform.parent; t != null; t = t.parent) if (t.name == "WeaponsArm") { melee = true; break; }
                     if (melee) foreach (var f in weapon.GetComponents<PlayMakerFSM>()) if (f != null && f.FsmName == "Reload") { melee = false; break; }
                     _isMelee[weapon.GetInstanceID()] = melee;
                 }
@@ -699,6 +701,7 @@ namespace Apocaraiders
                     if (v == null) continue;
                     v.Value *= mult;
                     Hud.PartHit(part.gameObject, target.transform.position, Mathf.Abs(v.Value));
+                    if (Plugin.HitLog.Value) Plugin.Log.LogInfo("Hit: " + weapon.name + " (melee) -> " + part.name + ", condition " + before.ToString("0.0") + " " + v.Value.ToString("0.0") + " (x" + mult.ToString("0.#") + ")");
                     break;
                 }
                 Vector3 dir = Camera.main != null ? Camera.main.transform.forward : Vector3.forward;
@@ -1134,6 +1137,7 @@ namespace Apocaraiders
             for (; t != null; t = t.parent)
             {
                 string n = t.name;
+                if (n.IndexOf("steering", StringComparison.OrdinalIgnoreCase) >= 0) return false;     // a steering wheel is not a wheel
                 if (n.IndexOf("wheel", StringComparison.OrdinalIgnoreCase) >= 0 || n.IndexOf("tire", StringComparison.OrdinalIgnoreCase) >= 0 || n.IndexOf("tyre", StringComparison.OrdinalIgnoreCase) >= 0) return true;
                 if (t == part) break;
             }

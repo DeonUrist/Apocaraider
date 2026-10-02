@@ -18,7 +18,7 @@ namespace Apocaraiders
     {
         public const string GUID = "com.denis.apocalypter.apocaraiders";
         public const string NAME = "Apocaraiders";
-        public const string VERSION = "0.13.9";
+        public const string VERSION = "0.13.10";
 
         internal static ManualLogSource Log;
         internal static string Dir;
@@ -287,7 +287,7 @@ namespace Apocaraiders
                     prefix: new HarmonyMethod(typeof(Aim), nameof(Aim.BeforeSendEvent)));
                 h.Patch(AccessTools.Method(typeof(HutongGames.PlayMaker.Actions.RandomWait), "OnEnter"),
                     prefix: new HarmonyMethod(typeof(Aim), nameof(Aim.BeforeRandomWait)));
-                h.Patch(AccessTools.Method(typeof(HutongGames.PlayMaker.Actions.SetFsmFloat), "DoSetFsmFloat"),
+                h.Patch(AccessTools.Method(typeof(HutongGames.PlayMaker.Actions.SetFsmFloat), "OnEnter"),
                     postfix: new HarmonyMethod(typeof(Tracers), nameof(Tracers.AfterSetFsmFloat)));
             }
             catch (Exception e) { Log.LogError("Harmony patch failed, no tracers: " + e); }
