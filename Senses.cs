@@ -54,6 +54,7 @@ namespace Apocaraider
             public int Id; public Vector3 Pos; public Src Src; public float Born, Moved; public GameObject Obj, Source; public string About = "";
             public GameObject Subject;               // who the ghost is about (the player, an NPC): newer news about the same subject always wins
             public readonly List<Agent> Holders = new List<Agent>();
+            public bool Retired;                     // nobody is on the way any more (only searchers left): never handed out, merged into or relayed again
         }
 
         internal sealed class Agent
@@ -68,6 +69,7 @@ namespace Apocaraider
             public Behaviour[] Sensors; public bool SensorsOff;
             public bool InStorm;          // inside a sandstorm (refreshed once a second)
             public bool Blown;            // within a tornado funnel's shove radius (refreshed once a second)
+            public readonly Dictionary<int, float> Done = new Dictionary<int, float>();   // ghosts it reached (id -> the ghost's Moved then): never given again unless the ghost has newer news
             public readonly HashSet<int> Heard = new HashSet<int>();   // ghosts it already got from a friend's shout, and enemy shouters (instance ids, negated) it already went to: a shout never re-sends them
         }
 
@@ -122,6 +124,7 @@ namespace Apocaraider
                         if (!on && a.SensorsOff) Sensors(a, true);
                         else if (on && !a.SensorsOff) Sensors(a, false);        // switched back on: the game's sensors go quiet again
                         if (a.PlayerIsEnemy != null) Relation(a, true);
+                        if (a.Done.Count > 16) PruneDone(a);
                         _presentTags.Add(a.Tag);
                         a.InStorm = Storm.Any && Storm.In(a.T.position);
                         bool blown = Storm.AnyFunnel && Storm.InBlast(a.T.position);
@@ -228,6 +231,19 @@ namespace Apocaraider
             if (go == _player) return _playerInStorm;
             var b = Get(go.transform.root.gameObject);
             return b != null ? b.InStorm : Storm.In(go.transform.position);
+        }
+
+        private static readonly List<int> _pruneIds = new List<int>();
+        private static void PruneDone(Agent a)
+        {
+            _pruneIds.Clear();
+            foreach (var kv in a.Done)
+            {
+                bool alive = false;
+                foreach (var g in _ghosts) if (g.Id == kv.Key) { alive = true; break; }
+                if (!alive) _pruneIds.Add(kv.Key);
+            }
+            foreach (var k in _pruneIds) a.Done.Remove(k);
         }
 
         private static bool HostileNpcAround(Agent a)
@@ -394,6 +410,7 @@ namespace Apocaraider
         {
             // it lost its target from sight a moment ago: before searching it goes to where that target really is now, a few times -
             // stepping behind a barrel does not shake off a raider who was right behind you
+            if (a.Ghost != null) a.Done[a.Ghost.Id] = a.Ghost.Moved;
             if (a.Pursuits > 0 && a.Pursue != null && a.Ghost != null && a.Ghost.Subject == a.Pursue)
             {
                 a.Pursuits--;
@@ -405,6 +422,7 @@ namespace Apocaraider
             }
             a.State = State.Search; a.SearchUntil = now + Mathf.Max(0f, Plugin.SearchSeconds.Value);
             Log(a, "reached ghost #" + (a.Ghost != null ? a.Ghost.Id.ToString() : "?") + ", looks around for " + Plugin.SearchSeconds.Value.ToString("0") + " s");
+            if (a.Ghost != null) RetireIfSearched(a.Ghost);
         }
 
         private static void GiveUp(Agent a, string why)
@@ -419,7 +437,9 @@ namespace Apocaraider
         // check a shout about the player; the player now shoots elsewhere: that is where the player is). Never while it sees its target.
         private static bool Assign(Agent a, Ghost g, Src prio, float now)
         {
-            if (g == null || a.State == State.Combat) return false;
+            if (g == null || a.State == State.Combat || g.Retired) return false;
+            float doneAt;
+            if (a.Done.TryGetValue(g.Id, out doneAt) && g.Moved <= doneAt + 0.01f) return false;   // been there, nothing new about it
             if (a.Ghost == g)
             {
                 if (Rank(prio) > Rank(a.GhostPrio)) a.GhostPrio = prio;
@@ -462,13 +482,24 @@ namespace Apocaraider
             if (g == null) return;
             g.Holders.Remove(a);
             if (g.Holders.Count == 0) { int i = _ghosts.IndexOf(g); if (i >= 0) KillGhost(i); }
+            else RetireIfSearched(g);
+        }
+
+        // nobody is on the way to it any more, only searchers are left: the ghost is retired - never handed out, merged into or relayed again,
+        // and it dies with its last searcher (as every ghost dies with its last holder)
+        private static void RetireIfSearched(Ghost g)
+        {
+            if (g.Retired) return;
+            foreach (var h in g.Holders) if (h.State == State.Investigate) return;
+            g.Retired = true;
+            if (Plugin.SensesLog.Value) Plugin.Log.LogInfo("Senses: ghost #" + g.Id + " searched by " + g.Holders.Count + ", retired");
         }
 
         private static Ghost GetOrMake(Src src, Vector3 pos, GameObject source, string about, float mergeRadius, float mergeSeconds, float now)
         {
             foreach (var g in _ghosts)
             {
-                if (g.Src != src) continue;
+                if (g.Src != src || g.Retired) continue;          // a searched spot: new news makes a new ghost
                 bool sameSource = source != null && g.Source == source && now - g.Moved <= mergeSeconds;
                 bool samePlace = mergeRadius > 0f && now - g.Moved <= mergeSeconds && (g.Pos - pos).sqrMagnitude <= mergeRadius * mergeRadius;
                 if (sameSource || samePlace)
@@ -674,7 +705,7 @@ namespace Apocaraider
             // friends: where the shouter's target is (or the ghost the shouter is going to)
             Vector3 where; bool known = false; Ghost tg = null;
             if (t.State == State.Combat && t.Target != null) { where = t.Target.transform.position; known = true; }
-            else if (t.Ghost != null) { where = t.Ghost.Pos; tg = t.Ghost; known = true; }
+            else if (t.Ghost != null && t.State == State.Investigate && !t.Ghost.Retired) { where = t.Ghost.Pos; tg = t.Ghost; known = true; }   // a searcher found nothing: nothing to pass on
             else where = t.T.position;
             if (known)
             {
@@ -915,7 +946,7 @@ namespace Apocaraider
             // would follow it for ever - let go of it where the NPC stands
             foreach (var g in _ghosts)
             {
-                if (g.Src != Src.Engine || g.Source != car) continue;
+                if (g.Src != Src.Engine || g.Source != car || g.Retired) continue;
                 _scratch.Clear();
                 foreach (var h in g.Holders) if (h.Owner == null || (h.T.position - cpos).sqrMagnitude > radius * radius * 1.3f) _scratch.Add(h);
                 foreach (var h in _scratch)
@@ -1290,9 +1321,9 @@ namespace Apocaraider
             float now = Time.time;
             foreach (var g in _ghosts)
             {
-                var c = SrcColor[(int)g.Src];
+                var c = g.Retired ? Color.gray : SrcColor[(int)g.Src];
                 Hud.Mark(g.Pos + Vector3.up * 1.2f, c, 14f);
-                Hud.Label(g.Pos + Vector3.up * 1.6f, "#" + g.Id + " " + g.Src.ToString().ToUpperInvariant() + " " + g.About + "  (" + g.Holders.Count + ", " + (now - g.Born).ToString("0") + " s)", c);
+                Hud.Label(g.Pos + Vector3.up * 1.6f, "#" + g.Id + " " + g.Src.ToString().ToUpperInvariant() + (g.Retired ? " (searched)" : "") + " " + g.About + "  (" + g.Holders.Count + ", " + (now - g.Born).ToString("0") + " s)", c);
             }
             foreach (var kv in _agents)
             {
@@ -1404,7 +1435,7 @@ namespace Apocaraider
             private static void Clear()
             {
                 _gen++;
-                foreach (var kv in _agents) { var a = kv.Value; a.State = State.Idle; a.Target = null; a.Ghost = null; a.GhostPrio = Src.None; a.Heard.Clear(); }
+                foreach (var kv in _agents) { var a = kv.Value; a.State = State.Idle; a.Target = null; a.Ghost = null; a.GhostPrio = Src.None; a.Heard.Clear(); a.Done.Clear(); }
                 for (int i = _ghosts.Count - 1; i >= 0; i--) KillGhost(i);
             }
 
