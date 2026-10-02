@@ -9,6 +9,7 @@ they just see, hear, move and shoot like they mean it.
 * Headshots count for everyone: 1.5x damage for your shots, the raiders' shots and NPCs fighting each other (mod setting).
 * Raiders take a firing position, kneel, wait until they actually face you and lead you when you run. Nobody sprays at you from beyond their gun's range.
 * Bullets damage the car parts they hit. Wheels break 5x faster - shoot or slash them, and a wheel at 0 flies off the car.
+* Bullets can go through windshields, doors, hoods and trunks depending on the gun - armor plates stop most of them. Nobody is safe behind thin metal.
 * Damage numbers and a hit marker: white for damage, red with "!" for headshots, blue for car parts.
 * Human bosses (Duke Ironjaw, Buzzgut) have adjusted health to suit the new gunplay (40 % by default, mod setting).
 

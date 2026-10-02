@@ -39,6 +39,9 @@ namespace Apocaraider
             public GameObject Player;
             public GameObject Head;          // the target's head object (own Bodypart FSM), for head hits
             public CapsuleCollider Cap;      // the player's body capsule (virtual hitbox) - only for shots at the Player
+            public Kind Kind;                // (1.5.0) the gun type: how well it penetrates car parts
+            public float DmgMult;            // damage left after the car parts it went through (1 = none)
+            public int Passed, Passed0, Passed1;   // car parts gone through (at most 2) and their instance ids
         }
 
         // A first-person gun under PlayerCamera/WeaponsArm/Parent/<gun>: its Attack FSM, the Raycast it fires and the states that
@@ -159,6 +162,7 @@ namespace Apocaraider
                         EventName = info.EventName, EventFsm = info.EventFsm,
                         Bolt = info.Kind == Kind.Crossbow,
                         Shotgun = info.Kind == Kind.Shotgun,
+                        Kind = info.Kind, DmgMult = 1f,
                         Alive = true,
                         Layers = info.ObstructLayers | info.DetectLayers,
                         DetectLayers = info.DetectLayers,
@@ -279,7 +283,7 @@ namespace Apocaraider
                     {
                         Pos = muzzle, Start = muzzle, Dir = d.normalized,
                         Speed = gun.Kind == Kind.Crossbow ? Plugin.BoltSpeed.Value : Plugin.BulletSpeed.Value,
-                        Range = range, Bolt = gun.Kind == Kind.Crossbow, Shotgun = gun.Kind == Kind.Shotgun, Alive = true,
+                        Range = range, Bolt = gun.Kind == Kind.Crossbow, Shotgun = gun.Kind == Kind.Shotgun, Alive = true, Kind = gun.Kind, DmgMult = 1f,
                         Layers = gun.Layers, Gun = gun, Player = _player,
                         ShooterRoot = ft.root.gameObject,
                     };
@@ -879,14 +883,16 @@ namespace Apocaraider
                 var tr = col.transform;
                 if (vcap != null && tr.IsChildOf(s.Target.transform)) continue;      // the real capsules: the virtual hitbox handles the player
                 if (vcap != null && h.distance > vt) break;                          // the player is hit before this obstruction
+                if (s.Passed > 0 && WentThrough(ref s, tr)) continue;                  // a part it already went through (its other colliders, backfaces)
                 if (s.Gun != null)
                 {
                     if (Ignored(tr, s.ShooterRoot != null ? s.ShooterRoot.transform : null, s.Player)) continue;
                     float pd = s.Travelled + h.distance;
-                    float pf = Falloff(ref s, pd);
+                    float pf = Falloff(ref s, pd) * s.DmgMult;
+                    if (Penetrates(ref s, col, h, (s.Gun.Damage != null ? s.Gun.Damage.Value : 0f) * pf)) continue;
                     PlayerHit(ref s, h, pf);
                     MetalSparks(col, h.point, h.normal);
-                    HitWorld(ref s, col, h.point, (s.Gun.Damage != null ? s.Gun.Damage.Value : 0f) * pf);   // vehicle part / metal plate rules
+                    HitWorld(ref s, col, h.point, (s.Gun.Damage != null ? s.Gun.Damage.Value : 0f) * pf);   // vehicle part rules
                     s.Pos = h.point; s.Travelled = pd; s.Alive = false;
                     return;
                 }
@@ -895,7 +901,8 @@ namespace Apocaraider
                 bool detectable = (s.DetectLayers & (1 << col.gameObject.layer)) != 0;
                 if (!onTarget && detectable) continue;      // other creatures don't stop a vanilla shot either
                 float dist = s.Travelled + h.distance;
-                float falloff = Falloff(ref s, dist);
+                float falloff = Falloff(ref s, dist) * s.DmgMult;
+                if (!onTarget && Penetrates(ref s, col, h, s.Damage * falloff)) continue;
                 if (onTarget) HitTarget(ref s, h.point, s.Damage * falloff, col.isTrigger ? col.gameObject : s.Target, dist);   // a head trigger: its own Bodypart (x2)
                 else { WorldImpact(col, h.point, h.normal, s.Dir); HitWorld(ref s, col, h.point, s.Damage * falloff); }
                 s.Pos = h.point;
@@ -906,7 +913,7 @@ namespace Apocaraider
             if (vcap != null && vt < float.MaxValue)
             {
                 float dist = s.Travelled + vt;
-                float falloff = Falloff(ref s, dist);
+                float falloff = Falloff(ref s, dist) * s.DmgMult;
                 float mult = vhead ? _headMult : 1f;
                 if (vhead && Plugin.VerboseLog.Value) Plugin.Verbose("Tracers: headshot on " + s.Target.name + " at " + dist.ToString("0.0") + " m");
                 HitTarget(ref s, s.Pos + s.Dir * vt, s.Damage * falloff * mult, vhead && s.Head != null ? s.Head : s.Target, dist);
@@ -1086,7 +1093,7 @@ namespace Apocaraider
                 UnityEngine.Object.Instantiate(_rangedHit, point, rot);   // vanilla spawns it twice (hit state + HitEffect FSM)
             }
             var rb = col.attachedRigidbody;
-            if (rb != null && !rb.isKinematic) rb.AddForceAtPosition(dir * 400f, point, ForceMode.Force);
+            if (rb != null && !rb.isKinematic && !OnCar(col, rb)) rb.AddForceAtPosition(dir * 400f, point, ForceMode.Force);   // loose things only: doors / hoods don't swing
             MetalSparks(col, point, normal);
         }
 
@@ -1135,20 +1142,6 @@ namespace Apocaraider
                 if (t.CompareTag("vehPart")) { part = t; break; }
             if (part == null) return;
 
-            // bolted-on plates and windshields: a bullet may knock them off (metal plates at MetalSheetPopChance, the wire plate and both
-            // windshields at twice that) - the same way a wheel shot to 0 jumps off (1.4.14: the game's de_Attach FSM alone did nothing on
-            // cars whose de_Attach FSMs are switched off, e.g. Apocapatrol crews' cars, and the kick was weak)
-            float mult = MatchesAny(part.name, Plugin.MetalSheetNames.Value) ? 1f : MatchesAny(part.name, Plugin.ShotOffDoubleNames.Value) ? 2f : 0f;
-            if (mult > 0f)
-            {
-                if (UnityEngine.Random.Range(0f, 100f) < Plugin.MetalSheetPopChance.Value * mult)
-                {
-                    foreach (var f in part.GetComponents<PlayMakerFSM>())
-                        if (f.FsmName == "de_Attach" && f.enabled) { f.SendEvent("de_Attach"); break; }
-                    PopOff(part, s.Dir, "shot off its car");
-                }
-                return;
-            }
 
             if (!Plugin.VehicleDamage.Value) return;
             float pct = Mathf.Abs(damage) / Mathf.Max(1f, Plugin.VehicleDamagePer1.Value);   // [Tracers] VehicleDamagePer1 bullet damage = 1 % condition
@@ -1174,15 +1167,71 @@ namespace Apocaraider
         // A wheel shot to 0 jumps off the car: the wrench's de_Attach recipe (layer Item + tag vehPartRemoved -> the part's CheckTag FSM
         // unparents it and adds a Rigidbody a frame or two later), then a kick up and along the bullet. Works with Apocapatrol's crews too
         // (they switch the de_Attach FSMs off, but this doesn't go through them). If CheckTag never frees it, it is freed by hand.
-        private static bool MatchesAny(string name, string list)
+        // ---------- (1.5.0) penetration of car parts ----------
+        // A bullet hitting a car part rolls, by gun type, whether it goes through: glass windshields, grid windshields / the wire plate (the
+        // gaps), doors / hoods / trunks (sheet metal) and bolted-on metal plates (armour). Through: sparks, the part takes its condition
+        // damage, the bullet flies on with less damage (glass/grid x0.8, sheet x0.6, armour x0.4) and can hit whoever is behind; at most 2
+        // parts. Engines, radiators, bumpers, wheels, frames stop every bullet. Replaces knocking plates off (wheels still pop off at 0).
+        private enum Mat { None, Glass, Grid, Sheet, Armour }
+        //                                   Pistol Smg Rifle Sniper Shotgun Crossbow  (% to pass)
+        private static readonly float[] PassGlass  = { 80f, 85f, 95f, 100f, 60f, 70f };
+        private static readonly float[] PassGrid   = { 50f, 50f, 55f, 60f, 40f, 30f };
+        private static readonly float[] PassSheet  = { 30f, 35f, 70f, 90f, 10f, 20f };
+        private static readonly float[] PassArmour = { 0f, 5f, 20f, 50f, 0f, 0f };
+        private static readonly Dictionary<string, Mat> _partMat = new Dictionary<string, Mat>();
+        private static Mat MatOf(string partName)
         {
-            if (string.IsNullOrEmpty(list)) return false;
-            foreach (var raw in list.Split(','))
-            {
-                var nm = raw.Trim();
-                if (nm.Length > 0 && name.StartsWith(nm, StringComparison.OrdinalIgnoreCase)) return true;
-            }
-            return false;
+            Mat m;
+            if (_partMat.TryGetValue(partName, out m)) return m;
+            string n = partName.ToLowerInvariant();
+            int k = n.IndexOf(" ("); if (k > 0) n = n.Substring(0, k);
+            if (n.StartsWith("windshield_1_glass")) m = Mat.Glass;
+            else if (n.StartsWith("windshield_2_grid") || n.StartsWith("wire_plate")) m = Mat.Grid;
+            else if (n.StartsWith("metal_plate")) m = Mat.Armour;
+            else if (n.Contains("door") || n.Contains("hood") || n.Contains("trunk")) m = Mat.Sheet;   // door_car_*, junker_door_FL, poloska_door_engine, *_hood*, *_trunk
+            else m = Mat.None;
+            _partMat[partName] = m;
+            return m;
+        }
+
+        private static bool WentThrough(ref Shot s, Transform t)
+        {
+            var part = OwningPart(t);
+            if (part == null) return false;
+            int id = part.GetInstanceID();
+            return id == s.Passed0 || id == s.Passed1;
+        }
+
+        private static bool Penetrates(ref Shot s, Collider col, RaycastHit h, float damage)
+        {
+            if (s.Passed >= 2) return false;
+            var part = OwningPart(col.transform);
+            if (part == null) return false;
+            Mat m = MatOf(part.name);
+            if (m == Mat.None) return false;
+            float[] t = m == Mat.Glass ? PassGlass : m == Mat.Grid ? PassGrid : m == Mat.Sheet ? PassSheet : PassArmour;
+            int ki = (int)s.Kind; if (ki < 0 || ki >= t.Length) ki = 0;
+            if (UnityEngine.Random.Range(0f, 100f) >= t[ki]) return false;
+            MetalSparks(col, h.point, h.normal);
+            HitWorld(ref s, col, h.point, damage);           // the part still takes its condition damage
+            s.DmgMult *= m == Mat.Armour ? 0.4f : m == Mat.Sheet ? 0.6f : 0.8f;
+            int id = part.GetInstanceID();
+            if (s.Passed == 0) s.Passed0 = id; else s.Passed1 = id;
+            s.Passed++;
+            if (Plugin.HitLog.Value) Plugin.Log.LogInfo("Hit: " + s.Kind + " bullet goes through " + part.name + " (" + m + "), damage x" + s.DmgMult.ToString("0.00"));
+            return true;
+        }
+
+        // a rigidbody that belongs to a car (an attached part: door, hood, trunk on its hinge; the car body itself) - bullets don't push it
+        private static bool OnCar(Collider col, Rigidbody rb)
+        {
+            if (OwningPart(col.transform) != null) return true;
+            if (rb.GetComponent<Joint>() != null && rb.transform.parent != null) return true;
+            var root = col.transform.root;
+            int id = root.GetInstanceID();
+            bool car;
+            if (!_carRoots.TryGetValue(id, out car)) { car = root.GetComponent("VehicleController") != null; _carRoots[id] = car; }
+            return car;
         }
 
         private static void PopOff(Transform part, Vector3 dir) { PopOff(part, dir, "shot off its car (condition 0)"); }
