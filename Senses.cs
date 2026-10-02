@@ -144,7 +144,10 @@ namespace Apocaraiders
             {
                 Vector3 to = a.Ghost.Pos - a.T.position; to.y = 0f;
                 if (to.magnitude <= Mathf.Max(0.5f, Plugin.ArriveDistance.Value)) Arrived(a, now);
-                else if (now >= a.InvestigateUntil) { Log(a, "can't reach ghost #" + a.Ghost.Id + " (" + to.magnitude.ToString("0") + " m left), searches from here"); Arrived(a, now); }
+                // no searching on the way: only a ghost nobody has refreshed for GhostTimeout seconds (since it was given to this NPC or last
+                // moved/renewed) lets the NPC settle for searching where it got to
+                else if (now >= Mathf.Max(a.InvestigateSince, a.Ghost.Moved) + Mathf.Max(5f, Plugin.GhostTimeout.Value))
+                { Log(a, "ghost #" + a.Ghost.Id + " went stale (" + Plugin.GhostTimeout.Value.ToString("0") + " s without news, " + to.magnitude.ToString("0") + " m left), searches from here"); Arrived(a, now); }
             }
             if (a.State == State.Combat && a.Target == null) { a.State = State.Idle; Log(a, "target gone"); }
 
@@ -390,20 +393,18 @@ namespace Apocaraiders
         private static void Budget(Agent a, Ghost g)
         {
             float d = Vector3.Distance(a.T.position, g.Pos);
-            a.InvestigateUntil = Time.time + Mathf.Max(0f, Plugin.ReachSeconds.Value) + d / 2.5f;
+            a.InvestigateUntil = Time.time + Mathf.Max(5f, Plugin.GhostTimeout.Value);
             a.InvestigateSince = Time.time;
         }
 
-        // the brain gave up getting there (stuck for good / no progress): search from here
-        // the brain gets nowhere: only after it has really tried (MinTry s on this ghost) does the NPC settle for searching from here
+        // the brain gets nowhere on the way: the NPC does NOT start searching (only arrival or a stale ghost, GhostTimeout, ends the walk) -
+        // the brain rests a moment and tries again
         internal static bool CannotReach(GameObject owner)
         {
             var a = Get(owner);
             if (a == null || a.State != State.Investigate || a.Ghost == null) return false;
-            if (Time.time - a.InvestigateSince < Mathf.Max(0f, Plugin.ReachSeconds.Value) * 0.5f) return false;
-            Log(a, "gets nowhere toward ghost #" + a.Ghost.Id + ", searches from here");
-            Arrived(a, Time.time);
-            return true;
+            if (Time.time - a.LastLog > 5f) { a.LastLog = Time.time; Log(a, "gets nowhere toward ghost #" + a.Ghost.Id + " for now, keeps trying"); }
+            return false;
         }
 
         private static void Release(Agent a)

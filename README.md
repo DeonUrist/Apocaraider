@@ -77,7 +77,8 @@ hears or saw becomes a "ghost", a remembered spot it goes to check; one event ma
 NPC keeps the more trustworthy knowledge (sight over a gunshot - or a hit, an explosion, a thrown item - over a shout, over an
 engine; the newest of equal rank; newer news about the same person always wins, so a shot you fire pulls NPCs away from an older
 shout about you). A shout is not a ghost of its own: it passes on what the shouter knows, what it sees (as sight) or the ghost it is going to, with that ghost's own rank; a spot an NPC already got is never sent to it again by a shout, and an enemy's shouts draw it only once per alert. An
-NPC that can't reach its spot within ReachSeconds (plus travel time) searches from where it got. If it lost you from sight it first goes to where it last saw you and, finding nothing, follows to where you really
+NPC walking to its spot keeps going until it gets there; only when GhostTimeout (60 s) passes with no news about that spot does it
+search from where it got. If it lost you from sight it first goes to where it last saw you and, finding nothing, follows to where you really
 are one to three times (PursuitMin/Max). At the spot it looks around for 30 s and, seeing nothing, loses interest and idles where it stands. Being
 shot tells it where that came from. The same rules run between NPC factions. Ghosts and alert states are saved with the game and
 restored after a load. You can shout too (Alt+Q, `[Senses] ShoutModifier` + `ShoutKey`; Alt keeps Q from kicking): you yell like a raider and NPCs hostile to you within
@@ -127,7 +128,7 @@ BepInEx\plugins\Apocaraiders\Sounds\Gungirl\*.wav / *.ogg
 - **[Brain]**: on/off, ReactionTime (% of the default thinking/waiting times, 1-500), ScaleWithActors (think less often with many NPCs engaged, off), TurnRate (deg/s), AimPose (gun kept up while holding), CrouchChance (% of holds spent kneeling), SensorInterval (how often NPC eyes look, 0.1 s), FeelerLength / MeleeFeelerLength / FeelerAngle / FeelerCount, DropCheck, ShooterPathing, AdvanceChance (% per hold
   recheck that a holding gunman runs at you) and AdvanceMin/Max (s), StuckBackupSeconds, StuckMemorySeconds, StuckGiveUpCount, MaxDistance.
 - **[Senses]**: on/off, SightCone, SightRange / DarkSightRange, DaylightIntensity, NoticeSeconds, LoseSeconds, SearchSeconds, ArriveDistance,
-  LookInterval, MuffleSounds / MuffleFactor (off), ReachSeconds, ShoutKey / PlayerShoutRange / ShoutCooldown / ShoutVolume, ShotRange per weapon class, NpcShotRanges (per NPC type), TauntRange, HumanFactions,
+  LookInterval, MuffleSounds / MuffleFactor (off), GhostTimeout, ShoutKey / PlayerShoutRange / ShoutCooldown / ShoutVolume, ShotRange per weapon class, NpcShotRanges (per NPC type), TauntRange, HumanFactions,
   EngineMinRange / EngineMaxRange / EngineMinHp / EngineMaxHp / EngineIdleFactor, BlastRange / BlastPrefabs, ThrowRange, BailOutAware / BailOutAwareRange / ExplosionRange (with Apocapatrol).
 - **[Nav]**: on/off, BakeRange, CellSize, Margin, MaxStep, BakeBudgetMs, FieldSeconds.
 - **[Hud]**: DamageNumbers (0/1/2), DamageFontSize, HitMarker on/off, HitMarkerSize.
