@@ -1135,18 +1135,17 @@ namespace Apocaraider
                 if (t.CompareTag("vehPart")) { part = t; break; }
             if (part == null) return;
 
-            string names = Plugin.MetalSheetNames.Value ?? "";
-            foreach (var raw in names.Split(','))
+            // bolted-on plates and windshields: a bullet may knock them off (metal plates at MetalSheetPopChance, the wire plate and both
+            // windshields at twice that) - the same way a wheel shot to 0 jumps off (1.4.14: the game's de_Attach FSM alone did nothing on
+            // cars whose de_Attach FSMs are switched off, e.g. Apocapatrol crews' cars, and the kick was weak)
+            float mult = MatchesAny(part.name, Plugin.MetalSheetNames.Value) ? 1f : MatchesAny(part.name, Plugin.ShotOffDoubleNames.Value) ? 2f : 0f;
+            if (mult > 0f)
             {
-                var nm = raw.Trim();
-                if (nm.Length == 0 || !part.name.StartsWith(nm, StringComparison.OrdinalIgnoreCase)) continue;
-                if (UnityEngine.Random.Range(0f, 100f) < Plugin.MetalSheetPopChance.Value)
+                if (UnityEngine.Random.Range(0f, 100f) < Plugin.MetalSheetPopChance.Value * mult)
                 {
                     foreach (var f in part.GetComponents<PlayMakerFSM>())
-                        if (f.FsmName == "de_Attach") { f.SendEvent("de_Attach"); break; }
-                    _popped.Add(new KeyValuePair<GameObject, Vector3>(part.gameObject, s.Dir * 3f + Vector3.up));
-                    _poppedFrame = Time.frameCount + 2;
-                    if (Plugin.VerboseLog.Value) Plugin.Verbose("Tracers: " + part.name + " shot off");
+                        if (f.FsmName == "de_Attach" && f.enabled) { f.SendEvent("de_Attach"); break; }
+                    PopOff(part, s.Dir, "shot off its car");
                 }
                 return;
             }
@@ -1175,7 +1174,19 @@ namespace Apocaraider
         // A wheel shot to 0 jumps off the car: the wrench's de_Attach recipe (layer Item + tag vehPartRemoved -> the part's CheckTag FSM
         // unparents it and adds a Rigidbody a frame or two later), then a kick up and along the bullet. Works with Apocapatrol's crews too
         // (they switch the de_Attach FSMs off, but this doesn't go through them). If CheckTag never frees it, it is freed by hand.
-        private static void PopOff(Transform part, Vector3 dir)
+        private static bool MatchesAny(string name, string list)
+        {
+            if (string.IsNullOrEmpty(list)) return false;
+            foreach (var raw in list.Split(','))
+            {
+                var nm = raw.Trim();
+                if (nm.Length > 0 && name.StartsWith(nm, StringComparison.OrdinalIgnoreCase)) return true;
+            }
+            return false;
+        }
+
+        private static void PopOff(Transform part, Vector3 dir) { PopOff(part, dir, "shot off its car (condition 0)"); }
+        private static void PopOff(Transform part, Vector3 dir, string why)
         {
             part.gameObject.layer = 9;
             try { part.tag = "vehPartRemoved"; } catch (Exception e) { Plugin.Verbose("Tracers: wheel tag: " + e.Message); }
@@ -1183,7 +1194,7 @@ namespace Apocaraider
             _popped.Add(new KeyValuePair<GameObject, Vector3>(part.gameObject, d * 2.5f + Vector3.up * 4f));
             _forceFree.Add(part.gameObject);
             _poppedFrame = Time.frameCount + 2;
-            if (Plugin.VerboseLog.Value) Plugin.Verbose("Tracers: " + part.name + " shot off its car (condition 0)");
+            if (Plugin.VerboseLog.Value) Plugin.Verbose("Tracers: " + part.name + " " + why);
         }
 
         // a wheel / tyre part: the hit collider or any object up to (and including) its part is named like one
