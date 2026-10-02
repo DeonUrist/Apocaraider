@@ -62,7 +62,8 @@ namespace Apocaraiders
             public PlayMakerFSM Detection, Attack; public FsmGameObject DetectedVar;
             public string Tag; public HashSet<string> Hostile; public bool Human;
             public State State; public GameObject Target; public Ghost Ghost; public Src GhostPrio;
-            public float SeenFor, UnseenFor, SearchUntil, NextLook, Stagger, LastLog, InvestigateUntil; public Vector3 LastSeen;
+            public float SeenFor, UnseenFor, SearchUntil, NextLook, Stagger, LastLog, InvestigateUntil, InvestigateSince; public Vector3 LastSeen;
+            public GameObject Pursue; public int Pursuits;     // the target it lost from sight, and how many more times it will go to where that target really is
             public Behaviour[] Sensors; public bool SensorsOff;
         }
 
@@ -319,7 +320,7 @@ namespace Apocaraiders
         {
             if (a.State == State.Combat && a.Target == target) return;
             Release(a);
-            a.State = State.Combat; a.Target = target; a.UnseenFor = 0f;
+            a.State = State.Combat; a.Target = target; a.UnseenFor = 0f; a.Pursuits = 0; a.Pursue = null;
             Log(a, "sees " + Name(target) + " at " + Vector3.Distance(a.T.position, target.transform.position).ToString("0") + " m");
         }
 
@@ -331,11 +332,24 @@ namespace Apocaraiders
             g.Subject = target;
             a.State = State.Idle;
             Assign(a, g, Src.Vision, now);
-            Log(a, "lost sight of " + Name(target) + ", goes where it was (ghost #" + g.Id + ")");
+            a.Pursue = target;
+            a.Pursuits = UnityEngine.Random.Range(Mathf.Max(0, Plugin.PursuitMin.Value), Mathf.Max(Plugin.PursuitMin.Value, Plugin.PursuitMax.Value) + 1);
+            Log(a, "lost sight of " + Name(target) + ", goes where it was (ghost #" + g.Id + ", will follow " + a.Pursuits + " more time(s))");
         }
 
         private static void Arrived(Agent a, float now)
         {
+            // it lost its target from sight a moment ago: before searching it goes to where that target really is now, a few times -
+            // stepping behind a barrel does not shake off a raider who was right behind you
+            if (a.Pursuits > 0 && a.Pursue != null && a.Ghost != null && a.Ghost.Subject == a.Pursue && Rank(a.GhostPrio) == Rank(Src.Vision))
+            {
+                a.Pursuits--;
+                Vector3 real = a.Pursue.transform.position;
+                var g = GetOrMake(Src.Vision, real, a.Pursue, "where " + Name(a.Pursue) + " really is", 2f, 1f, now);
+                g.Subject = a.Pursue;
+                a.State = State.Idle;
+                if (Assign(a, g, Src.Vision, now)) { Log(a, "reached ghost without seeing " + Name(a.Pursue) + ", follows to where it is now (ghost #" + g.Id + ", " + a.Pursuits + " left)"); return; }
+            }
             a.State = State.Search; a.SearchUntil = now + Mathf.Max(0f, Plugin.SearchSeconds.Value);
             Log(a, "reached ghost #" + (a.Ghost != null ? a.Ghost.Id.ToString() : "?") + ", looks around for " + Plugin.SearchSeconds.Value.ToString("0") + " s");
         }
@@ -375,15 +389,19 @@ namespace Apocaraiders
         {
             float d = Vector3.Distance(a.T.position, g.Pos);
             a.InvestigateUntil = Time.time + Mathf.Max(0f, Plugin.ReachSeconds.Value) + d / 2.5f;
+            a.InvestigateSince = Time.time;
         }
 
         // the brain gave up getting there (stuck for good / no progress): search from here
-        internal static void CannotReach(GameObject owner)
+        // the brain gets nowhere: only after it has really tried (MinTry s on this ghost) does the NPC settle for searching from here
+        internal static bool CannotReach(GameObject owner)
         {
             var a = Get(owner);
-            if (a == null || a.State != State.Investigate || a.Ghost == null) return;
+            if (a == null || a.State != State.Investigate || a.Ghost == null) return false;
+            if (Time.time - a.InvestigateSince < Mathf.Max(0f, Plugin.ReachSeconds.Value) * 0.5f) return false;
             Log(a, "gets nowhere toward ghost #" + a.Ghost.Id + ", searches from here");
             Arrived(a, Time.time);
+            return true;
         }
 
         private static void Release(Agent a)

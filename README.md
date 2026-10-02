@@ -76,7 +76,8 @@ hears or saw becomes a "ghost", a remembered spot it goes to check; one event ma
 NPC keeps the more trustworthy knowledge (sight over a gunshot - or a hit, an explosion, a thrown item - over a shout, over an
 engine; the newest of equal rank; newer news about the same person always wins, so a shot you fire pulls NPCs away from an older
 shout about you). A shout is not a ghost of its own: it passes on what the shouter knows, what it sees (as sight) or the ghost it is going to, with that ghost's own rank. An
-NPC that can't reach its spot within ReachSeconds (plus travel time) searches from where it got. At the spot it looks around for 15 s and, seeing nothing, loses interest and idles where it stands. Being
+NPC that can't reach its spot within ReachSeconds (plus travel time) searches from where it got. If it lost you from sight it first goes to where it last saw you and, finding nothing, follows to where you really
+are one to three times (PursuitMin/Max). At the spot it looks around for 30 s and, seeing nothing, loses interest and idles where it stands. Being
 shot tells it where that came from. The same rules run between NPC factions. Ghosts and alert states are saved with the game and
 restored after a load. You can shout too (Caps Lock, `[Senses] ShoutKey`): you yell like a raider and NPCs hostile to you within
 25 m come to check. With Apocapatrol installed, a raider bailing out of a car keeps its crew's knowledge (it fights if it sees you,

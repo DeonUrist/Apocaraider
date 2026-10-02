@@ -243,7 +243,7 @@ namespace Apocaraiders
             if (Plugin.BrainLog.Value && !n.OnNav && Nav.LastReason != n.NavReason)
             {
                 n.NavReason = Nav.LastReason;
-                if (n.NavReason.Length > 0) Plugin.Log.LogInfo("Brain: " + n.Owner.name + " no map route: " + n.NavReason);
+                if (n.NavReason.Length > 0) Plugin.Log.LogInfo("Brain: " + n.Owner.name + " no map route: " + n.NavReason + Nav.Probe(n.T.position));
             }
             if (n.OnNav != n.WasOnNav) { n.WasOnNav = n.OnNav; n.BestDist = float.MaxValue; n.NoProgressSince = now; }   // map path length and straight distance don't compare
             if (!Progress(n, n.OnNav ? pathLeft : d, now)) return;
@@ -534,7 +534,7 @@ namespace Apocaraiders
             }
             n.Flipped = false; n.Side = 0; n.BestDist = float.MaxValue;
             n.ModeUntil = now + RestSeconds * R;
-            if (n.ToGhost) { Senses.CannotReach(n.Owner); n.NextLookTurn = 0f; SetMode(n, Mode.Search, "gets nowhere toward the ghost"); return false; }
+            if (n.ToGhost && Senses.CannotReach(n.Owner)) { n.NextLookTurn = 0f; SetMode(n, Mode.Search, "gets nowhere toward the ghost"); return false; }
             SetMode(n, Mode.Rest, "gets nowhere, rests");
             return false;
         }
@@ -777,7 +777,7 @@ namespace Apocaraiders
             {
                 n.Stucks = 0;
                 n.ModeUntil = now + RestSeconds * R;
-                if (n.ToGhost) { Senses.CannotReach(n.Owner); n.NextLookTurn = 0f; SetMode(n, Mode.Search, "stuck on the way to the ghost"); return; }
+                if (n.ToGhost && Senses.CannotReach(n.Owner)) { n.NextLookTurn = 0f; SetMode(n, Mode.Search, "stuck on the way to the ghost"); return; }
                 SetMode(n, Mode.Rest, "stuck for good, rests");
                 return;
             }

@@ -18,7 +18,7 @@ namespace Apocaraiders
     {
         public const string GUID = "com.denis.apocalypter.apocaraiders";
         public const string NAME = "Apocaraiders";
-        public const string VERSION = "0.13.0";
+        public const string VERSION = "0.13.1";
 
         internal static ManualLogSource Log;
         internal static string Dir;
@@ -39,7 +39,7 @@ namespace Apocaraiders
         internal static ConfigEntry<string> MetalSheetNames;
         internal static ConfigEntry<bool> BrainEnabled, DropCheck, BrainLog, AimPose, ShooterPathing, ScaleWithActors;
         internal static ConfigEntry<float> TurnRate, CrouchChance, SensorInterval, ReactionTime, FeelerLength, MeleeFeelerLength, FeelerAngle, AdvanceChance, AdvanceMin, AdvanceMax, StuckBackupSeconds, StuckMemorySeconds, MaxDistance;
-        internal static ConfigEntry<int> FeelerCount, StuckGiveUpCount;
+        internal static ConfigEntry<int> FeelerCount, StuckGiveUpCount, PursuitMin, PursuitMax;
         internal static ConfigEntry<bool> SensesEnabled, MuffleSounds, SensesLog, ShowGhosts, BailOutAware;
         internal static ConfigEntry<float> SightCone, SightRange, DarkSightRange, DaylightIntensity, NoticeSeconds, LoseSeconds, SearchSeconds, ReachSeconds, LookInterval, ArriveDistance, MuffleFactor,
             ShotRangePistol, ShotRangeSmg, ShotRangeRifle, ShotRangeSniper, ShotRangeShotgun, ShotRangeCrossbow, TauntRange, EngineMinRange, EngineMaxRange, EngineMinHp, EngineMaxHp, EngineIdleFactor, ThrowRange, BailOutAwareRange, ExplosionRange, PlayerShoutRange, ShoutCooldown, ShoutVolume;
@@ -202,7 +202,9 @@ namespace Apocaraiders
             DaylightIntensity = Config.Bind("Senses", "DaylightIntensity", 0f, new ConfigDescription("Main-light intensity that counts as full daylight. 0 = Enviro's own sun setting. Raise it if nights feel too bright to NPCs, lower it if days feel dark (VerboseLog prints the light reading every minute).", new AcceptableValueRange<float>(0f, 20f)));
             NoticeSeconds = Config.Bind("Senses", "NoticeSeconds", 0.2f, new ConfigDescription("How long a target has to be in view before the NPC reacts, s.", new AcceptableValueRange<float>(0f, 5f)));
             LoseSeconds = Config.Bind("Senses", "LoseSeconds", 0.3f, new ConfigDescription("How long a target can be out of view before the NPC counts it as lost and goes to where it last saw it, s.", new AcceptableValueRange<float>(0f, 10f)));
-            SearchSeconds = Config.Bind("Senses", "SearchSeconds", 15f, new ConfigDescription("How long an NPC looks around at the place it went to check before it loses interest, s.", new AcceptableValueRange<float>(0f, 120f)));
+            SearchSeconds = Config.Bind("Senses", "SearchSeconds", 30f, new ConfigDescription("How long an NPC looks around at the place it went to check before it loses interest, s.", new AcceptableValueRange<float>(0f, 120f)));
+            PursuitMin = Config.Bind("Senses", "PursuitMin", 1, new ConfigDescription("An NPC that loses you from sight goes to where it last saw you and, finding nothing, follows to where you really are this many times at least before it starts searching.", new AcceptableValueRange<int>(0, 10)));
+            PursuitMax = Config.Bind("Senses", "PursuitMax", 3, new ConfigDescription("... and this many times at most (rolled per chase).", new AcceptableValueRange<int>(0, 10)));
             ReachSeconds = Config.Bind("Senses", "ReachSeconds", 10f, new ConfigDescription("Time an NPC is given to reach a spot it goes to check, s, plus 1 s for every 2.5 m of distance; then it searches from where it got (an unreachable spot no longer holds it forever).", new AcceptableValueRange<float>(2f, 120f)));
             ArriveDistance = Config.Bind("Senses", "ArriveDistance", 1.5f, new ConfigDescription("How close to the remembered spot counts as being there, m.", new AcceptableValueRange<float>(0.5f, 10f)));
             LookInterval = Config.Bind("Senses", "LookInterval", 0.15f, new ConfigDescription("How often each NPC looks, s (a couple of rays per look).", new AcceptableValueRange<float>(0.05f, 2f)));

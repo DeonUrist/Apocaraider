@@ -29,7 +29,7 @@ namespace Apocaraiders
             public float Cell, RefY; public int W, H;
             public float[] FloorY;                  // NaN = blocked
             public bool Baked; public int Next;     // bake progress (cell index)
-            public int Walkable; public float BakeMs; public int BakeFrames;
+            public int Walkable, NoFloor, Tight, Solid; public float BakeMs; public int BakeFrames;
             public readonly Dictionary<long, Field> Fields = new Dictionary<long, Field>();
         }
 
@@ -42,7 +42,8 @@ namespace Apocaraiders
         private static readonly Stopwatch _sw = new Stopwatch();
         // solid for baking: everything the feelers see, minus cars (8) and loose items (9) - those move
         private static readonly int BakeMask = ~((1 << 1) | (1 << 2) | (1 << 4) | (1 << 5) | (1 << 6) | (1 << 7) | (1 << 8) | (1 << 9) | (1 << 10) | (1 << 12) | (1 << 13) | (1 << 15) | (1 << 17) | (1 << 19) | (1 << 22));
-        private const float Radius = 0.3f, Ankle = 0.2f, HeadTop = 1.7f;
+        private const float Radius = 0.26f, Ankle = 0.2f, HeadTop = 1.5f;   // a human NPC: capsule r 0.28, 1.5 m tall - a little less, so a tight gap counts
+        private static readonly Vector2[] SubOffsets = { new Vector2(0.15f, 0f), new Vector2(-0.15f, 0f), new Vector2(0f, 0.15f), new Vector2(0f, -0.15f) };
 
         internal static bool On { get { return Plugin.NavEnabled != null && Plugin.NavEnabled.Value; } }
 
@@ -141,7 +142,7 @@ namespace Apocaraiders
             b.Expand(new Vector3(margin * 2f, 0f, margin * 2f));
             float cell = Mathf.Max(0.25f, Plugin.NavCellSize.Value);
             float maxSide = Mathf.Max(b.size.x, b.size.z);
-            if (maxSide / cell > 240f) cell = maxSide / 240f;           // very large footprints get coarser cells (<= 240 x 240)
+            if (maxSide / cell > 600f) cell = maxSide / 600f;           // very large footprints get coarser cells (<= 600 x 600)
             var s = new Structure { Root = root, Name = root.name, Box = b, Cell = cell };
             s.W = Mathf.Max(2, Mathf.CeilToInt(b.size.x / cell)); s.H = Mathf.Max(2, Mathf.CeilToInt(b.size.z / cell));
             return s;
@@ -150,7 +151,7 @@ namespace Apocaraiders
         private static void BeginBake(Structure s)
         {
             s.FloorY = new float[s.W * s.H];
-            s.Next = 0; s.Walkable = 0; s.BakeMs = 0f; s.BakeFrames = 0;
+            s.Next = 0; s.Walkable = 0; s.NoFloor = 0; s.Tight = 0; s.Solid = 0; s.BakeMs = 0f; s.BakeFrames = 0;
             // the base height: the floor under the structure's pivot (a ray from well above, first walkable surface below the pivot + 2 m)
             Vector3 p = s.Root.position;
             s.RefY = p.y;
@@ -176,7 +177,7 @@ namespace Apocaraiders
             {
                 s.Baked = true; _baking = null;
                 if (Plugin.NavLog.Value) Plugin.Log.LogInfo("Nav: baked " + s.Name + ": " + s.W + " x " + s.H + " cells of " + s.Cell.ToString("0.00") + " m, " + s.Walkable + " walkable (" + (100f * s.Walkable / Mathf.Max(1, s.W * s.H)).ToString("0") + " %), "
-                    + s.BakeMs.ToString("0") + " ms over " + s.BakeFrames + " frames");
+                    + s.NoFloor + " no floor, " + s.Tight + " too tight, " + s.Solid + " inside rock; " + s.BakeMs.ToString("0") + " ms over " + s.BakeFrames + " frames");
             }
         }
 
@@ -198,10 +199,18 @@ namespace Apocaraiders
                 if (y > s.RefY + 6f) continue;                          // roofs, rock tops above the structure
                 if (y < s.RefY - 6f) break;
                 Vector3 f = new Vector3(c.x, y, c.z);
-                if (Physics.CheckCapsule(f + Vector3.up * (Ankle + Radius), f + Vector3.up * (HeadTop - Radius), Radius, BakeMask, QueryTriggerInteraction.Ignore)) continue;
-                if (InsideSolid(f)) continue;
+                if (InsideSolid(f)) { s.Solid++; continue; }
+                if (!BodyFits(f))
+                {
+                    // the cell centre is too close to a wall or a spike: an NPC can still pass through the cell a little to the side (a 0.6 m
+                    // gap between spikes, a wall edge) - try four offsets before calling the cell blocked
+                    bool any = false;
+                    for (int so = 0; so < SubOffsets.Length && !any; so++) any = BodyFits(new Vector3(f.x + SubOffsets[so].x, f.y, f.z + SubOffsets[so].y));
+                    if (!any) { s.Tight++; continue; }
+                }
                 best = y;                                               // keep going: the LOWEST free surface is the floor (a wreck's deck,
             }                                                           // a crate top or a cave roof above it is not where NPCs walk)
+            if (float.IsNaN(best)) s.NoFloor++;
             return best;
         }
 
@@ -214,6 +223,34 @@ namespace Apocaraiders
             Physics.queriesHitBackfaces = true;
             try { return Physics.Raycast(floor + Vector3.up * 0.05f, Vector3.up, HeadTop, BakeMask, QueryTriggerInteraction.Ignore); }
             finally { Physics.queriesHitBackfaces = old; }
+        }
+
+        private static bool BodyFits(Vector3 f)
+        {
+            return !Physics.CheckCapsule(f + Vector3.up * (Ankle + Radius), f + Vector3.up * (HeadTop - Radius), Radius, BakeMask, QueryTriggerInteraction.Ignore);
+        }
+
+        // for the log: why the map has nothing walkable where an NPC stands
+        internal static string Probe(Vector3 pos)
+        {
+            foreach (var s in _structures)
+            {
+                if (!s.Baked || s.FloorY == null || s.Root == null || !Inside(s, pos)) continue;
+                int x, z; CellOf(s, pos, out x, out z);
+                var sb = new System.Text.StringBuilder();
+                sb.Append(" [cell ").Append(x).Append(',').Append(z).Append(" floor ").Append(float.IsNaN(s.FloorY[z * s.W + x]) ? "none" : s.FloorY[z * s.W + x].ToString("0.0")).Append(", NPC y ").Append(pos.y.ToString("0.0"));
+                // re-run the tests at the NPC's own feet
+                Vector3 f = new Vector3(pos.x, pos.y - 0.98f, pos.z);
+                RaycastHit h;
+                if (Physics.Raycast(pos + Vector3.up * 0.5f, Vector3.down, out h, 3f, BakeMask, QueryTriggerInteraction.Ignore)) { f.y = h.point.y; sb.Append(", ground ").Append(h.collider.name).Append(" n.y ").Append(h.normal.y.ToString("0.00")); }
+                else sb.Append(", no ground under it");
+                sb.Append(InsideSolid(f) ? ", inside solid" : ", not inside solid");
+                sb.Append(BodyFits(f) ? ", body fits" : ", body does not fit (0.2-1.5 m, r 0.26)");
+                int w = 0; for (int dz = -4; dz <= 4; dz++) for (int dx = -4; dx <= 4; dx++) { int cx = x + dx, cz = z + dz; if (cx >= 0 && cz >= 0 && cx < s.W && cz < s.H && !float.IsNaN(s.FloorY[cz * s.W + cx])) w++; }
+                sb.Append(", walkable within 2 m: ").Append(w).Append("/81]");
+                return sb.ToString();
+            }
+            return "";
         }
 
         private static Vector3 CellCenter(Structure s, int x, int z, float y)
@@ -264,7 +301,7 @@ namespace Apocaraiders
             foreach (var t in _structures) if (t.Baked && t.FloorY != null && t.Root != null && Inside(t, pos)) { s = t; break; }
             if (s == null) { LastReason = ""; return false; }
             int x, z; CellOf(s, pos, out x, out z);
-            int from = NearestWalkable(s, x, z, 3);
+            int from = NearestWalkable(s, x, z, 6);
             if (from < 0) { LastReason = "no free map cell near it in " + s.Name; return false; }
             if (Mathf.Abs(pos.y - s.FloorY[from]) > 2.5f) { LastReason = "not on the floor of " + s.Name; return false; }   // on the roof of a cave, on a rock above a camp: not on this map
             int gx, gz;
