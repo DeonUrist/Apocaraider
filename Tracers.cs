@@ -193,7 +193,7 @@ namespace Apocaraiders
             _player = null;
             _playerTracked = false;
             _pushes.Clear();
-            _popped.Clear(); _forceFree.Clear();
+            _popped.Clear(); _forceFree.Clear(); _meleeWheels.Clear(); _isMelee.Clear();
         }
 
         // ---------- the player's guns ----------
@@ -418,12 +418,15 @@ namespace Apocaraiders
             var vo = fsm.Variables.GetFsmGameObject("hitObj"); if (vo != null) vo.Value = go;
             var vp = fsm.Variables.GetFsmVector3("hitPoint"); if (vp != null) vp.Value = h.point;
             var vn = fsm.Variables.GetFsmVector3("hitNormal"); if (vn != null) vn.Value = h.normal;
-            bool creature = HasBodypart(go) || HasBodypart(go.transform.root.gameObject);
+            // vehicle parts carry a Bodypart FSM too (their condition): not a creature - no hurt ghost, no white/red number (the part rule shows blue)
+            var owningPart = OwningPart(go.transform);
+            bool isPart = IsVehiclePart(go) || (owningPart != null && IsVehiclePart(owningPart.gameObject)) || go.CompareTag("vehPartRemoved");
+            bool creature = !isPart && (HasBodypart(go) || HasBodypart(go.transform.root.gameObject));
             if (creature) Senses.Hurt(go, s.Player);
             bool feedback = creature && (Plugin.DamageNumbers.Value != 0 || Plugin.HitMarker.Value);
             float before = Plugin.HitLog.Value || feedback ? HealthOf(go) : 0f;
             Replay(fsm, go.layer == 10 && gun.ActorHit != null ? gun.ActorHit : gun.GetLayer, falloff);
-            Replay(fsm, gun.Hit, falloff, Plugin.VehicleDamage.Value && IsVehiclePart(go));
+            Replay(fsm, gun.Hit, falloff, Plugin.VehicleDamage.Value && isPart);
             float after = Plugin.HitLog.Value || feedback ? HealthOf(go) : 0f;
             if (feedback)
             {
@@ -659,10 +662,81 @@ namespace Apocaraiders
             _headR = Mathf.Max(0.03f, Plugin.PlayerHeadRadius.Value);
         }
 
+        // ---------- melee on wheels ----------
+        // The player's melee weapons (an "Attack" FSM without a Reload FSM, under the camera) hit with SetFsmFloat(hitObj / Bodypart.Damage) +
+        // SendEvent Damage; a vehicle part's Bodypart FSM takes that straight off its Condition. Postfix on SetFsmFloat.DoSetFsmFloat: when the
+        // target is a wheel, its Bodypart.Damage is multiplied by [Tracers] WheelDamageMultiplier (and shown in blue); a wheel brought to 0
+        // jumps off next frame (WheelPopOff).
+        private struct MeleeWheel { public Transform Part; public float Before; public Vector3 Dir; public int Frame; }
+        private static readonly List<MeleeWheel> _meleeWheels = new List<MeleeWheel>();
+        private static readonly Dictionary<int, bool> _isMelee = new Dictionary<int, bool>();
+        public static void AfterSetFsmFloat(SetFsmFloat __instance)
+        {
+            try
+            {
+                if (__instance.fsmName == null || __instance.fsmName.Value != "Bodypart" || __instance.variableName == null || __instance.variableName.Value != "Damage") return;
+                var fsm = __instance.Fsm;
+                if (fsm == null || fsm.Name != "Attack" || fsm.GameObject == null) return;
+                var weapon = fsm.GameObject;
+                bool melee;
+                if (!_isMelee.TryGetValue(weapon.GetInstanceID(), out melee))
+                {
+                    melee = Camera.main != null && weapon.transform.IsChildOf(Camera.main.transform);
+                    if (melee) foreach (var f in weapon.GetComponents<PlayMakerFSM>()) if (f != null && f.FsmName == "Reload") { melee = false; break; }
+                    _isMelee[weapon.GetInstanceID()] = melee;
+                }
+                if (!melee) return;
+                var target = fsm.GetOwnerDefaultTarget(__instance.gameObject);
+                if (target == null) return;
+                var part = OwningPart(target.transform);
+                if (part == null || !IsWheel(target.transform, part)) return;
+                float mult = Mathf.Max(0f, Plugin.WheelDamageMultiplier.Value);
+                float before = PartCondition(part);
+                foreach (var f in target.GetComponents<PlayMakerFSM>())
+                {
+                    if (f == null || f.FsmName != "Bodypart") continue;
+                    var v = f.FsmVariables.FindFsmFloat("Damage");
+                    if (v == null) continue;
+                    v.Value *= mult;
+                    Hud.PartHit(part.gameObject, target.transform.position, Mathf.Abs(v.Value));
+                    break;
+                }
+                Vector3 dir = Camera.main != null ? Camera.main.transform.forward : Vector3.forward;
+                if (Plugin.WheelPopOff.Value && before > 0f) _meleeWheels.Add(new MeleeWheel { Part = part, Before = before, Dir = dir, Frame = Time.frameCount });
+            }
+            catch (Exception e) { Plugin.Log.LogError("Tracers melee: " + e); }
+        }
+
+        private static float PartCondition(Transform part)
+        {
+            foreach (var f in part.GetComponentsInChildren<PlayMakerFSM>(true))
+            {
+                if (f == null || (f.FsmName != "Condition" && f.FsmName != "Repair") || f.Fsm == null || !f.Fsm.Initialized) continue;
+                if (OwningPart(f.transform) != part) continue;
+                var v = f.FsmVariables.FindFsmFloat("Condition");
+                if (v != null) return v.Value;
+            }
+            return -1f;
+        }
+
+        private static void CheckMeleeWheels()
+        {
+            for (int i = _meleeWheels.Count - 1; i >= 0; i--)
+            {
+                var m = _meleeWheels[i];
+                if (Time.frameCount <= m.Frame) continue;       // the Damage event lands the same frame; look the frame after
+                _meleeWheels.RemoveAt(i);
+                if (m.Part == null || !m.Part.CompareTag("vehPart")) continue;
+                float c = PartCondition(m.Part);
+                if (c >= 0f && c <= 0f) PopOff(m.Part, m.Dir);
+            }
+        }
+
         public static void Tick()
         {
             float dt = Time.deltaTime;
             Snapshot();
+            if (_meleeWheels.Count > 0) { try { CheckMeleeWheels(); } catch (Exception e) { Plugin.Log.LogError("Tracers melee: " + e); _meleeWheels.Clear(); } }
             if (dt <= 0f) { Draw(); return; }   // paused: keep drawing, don't move
             if (Plugin.LeadTargets.Value) TrackPlayer(dt);
             for (int i = _shots.Count - 1; i >= 0; i--)

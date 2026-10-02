@@ -24,7 +24,7 @@ visible bolts. Tracers look the same by day and by night.
   0.4 m capsule that made many visible hits miss. A headshot does 1.2x damage by default (the game had no headshots on you).
   One bullet hits one thing, then it's gone.
 - A bullet that hits a vehicle part damages it (20 damage = 1 % of the part's condition by default, `VehicleDamagePer1`; wheels
-  take `WheelDamageMultiplier` (5) times as much, so shooting the wheels stops a car, and a wheel shot to 0 jumps off it (`WheelPopOff`); the game's own rule,
+  take `WheelDamageMultiplier` (5) times as much - from your melee weapons too - so shooting or slashing the wheels stops a car, and a wheel shot to 0 jumps off it (`WheelPopOff`); the game's own rule,
   which took a rifle round's full 23 off a part's condition, is replaced), and a bolted-on metal plate
   can be knocked off (20 % per hit by default).
 - A hit on its target does exactly what the game's own hit does (blood/sparks, damage, armor, hit sounds), and a bullet

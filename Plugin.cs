@@ -18,7 +18,7 @@ namespace Apocaraiders
     {
         public const string GUID = "com.denis.apocalypter.apocaraiders";
         public const string NAME = "Apocaraiders";
-        public const string VERSION = "0.13.8";
+        public const string VERSION = "0.13.9";
 
         internal static ManualLogSource Log;
         internal static string Dir;
@@ -131,7 +131,7 @@ namespace Apocaraiders
             VehicleDamagePer1 = Config.Bind("Tracers", "VehicleDamagePer1", 20f, new ConfigDescription(
                 "Bullet damage that takes 1 % off a vehicle part's condition (20 = a -23 rifle round costs 1.15 %, a shotgun pellet about 0.4 %).", new AcceptableValueRange<float>(1f, 1000f)));
             WheelDamageMultiplier = Config.Bind("Tracers", "WheelDamageMultiplier", 5f, new ConfigDescription(
-                "Wheels (and tyres) lose this many times more condition per bullet than other vehicle parts, so shooting the wheels is the way to stop a car.", new AcceptableValueRange<float>(0f, 100f)));
+                "Wheels (and tyres) lose this many times more condition per bullet - and per blow of your melee weapons - than other vehicle parts, so shooting or slashing the wheels is the way to stop a car.", new AcceptableValueRange<float>(0f, 100f)));
             WheelPopOff = Config.Bind("Tracers", "WheelPopOff", true, "A wheel your bullets (or anyone's) bring to 0 condition jumps off its car.");
             MetalSheetPopChance = Config.Bind("Tracers", "MetalSheetPopChance", 20f, new ConfigDescription("% chance that a bullet hitting a bolted-on metal plate knocks it off.", new AcceptableValueRange<float>(0f, 100f)));
             MetalSheetNames = Config.Bind("Tracers", "MetalSheetNames", "metal_plate", "Which attached parts count as metal sheets (comma-separated name starts).");
@@ -287,6 +287,8 @@ namespace Apocaraiders
                     prefix: new HarmonyMethod(typeof(Aim), nameof(Aim.BeforeSendEvent)));
                 h.Patch(AccessTools.Method(typeof(HutongGames.PlayMaker.Actions.RandomWait), "OnEnter"),
                     prefix: new HarmonyMethod(typeof(Aim), nameof(Aim.BeforeRandomWait)));
+                h.Patch(AccessTools.Method(typeof(HutongGames.PlayMaker.Actions.SetFsmFloat), "DoSetFsmFloat"),
+                    postfix: new HarmonyMethod(typeof(Tracers), nameof(Tracers.AfterSetFsmFloat)));
             }
             catch (Exception e) { Log.LogError("Harmony patch failed, no tracers: " + e); }
             try
