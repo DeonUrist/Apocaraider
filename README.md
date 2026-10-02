@@ -110,8 +110,10 @@ NPCs know their camps, buildings and caves. Each is mapped once in the backgroun
 reach its NPCs (judged from its distance, how fast you have been moving and how long its map takes; at the latest within 200 m): a 0.5 m grid of
 where a body fits (spikes at a cave mouth, braziers, crates and walls are obstacles; the clean opening is not). An NPC inside a
 mapped structure takes the real way to you or to the spot it is checking: out through the exit that is shortest overall, around the
-walls, instead of feeling its way and running into a dead end; when the map can't reach the spot it at least leads the NPC out into the
-open (a cave mouth, a building's door) and the feelers take over. The surfaces the maps find to be floor (a cave's rock floor, a camp
+walls, instead of feeling its way and running into a dead end. For a spot outside the structure (1.6) the map picks one exit: the place
+with the shortest walk plus a clear straight line to that spot - the cave mouth when the spot is in front of it, the open ground on the far
+side of the camp when the spot is behind it - walks the NPC there and lets it go straight from there, the way it walks back in. When the map
+can't reach the spot it at least leads the NPC out into the open (a cave mouth, a building's door) and the feelers take over. The surfaces the maps find to be floor (a cave's rock floor, a camp
 deck) count as ground for the feelers too, as long as they are no steeper than about 37 degrees and no higher than a kerb (0.25 m) where the
 body meets them; a lower step limit and a knee-low wall check keep routes off rock lips, and an NPC stuck on something low hops over it. Outside structures nothing changes. `[Nav] Enabled = false` turns it
 off; `[Debug] ShowNav` shows the mapping state and each NPC's next map waypoint; `[Debug] NavDump` saves the maps as pictures (with
@@ -126,7 +128,9 @@ otherwise straight; 10 failed attempts 5 s apart and they forget it. At home, wi
 to 4 points that are clearly reachable from their spot (a straight walkable line on the camp map with room either side, away
 from walls, and a body-sized sweep that hits nothing) and back - no such point, no round. At a spot they came to check they walk a short
 round once (or look around a few seconds when there is no clear round) and go home; a searcher that found nothing tells
-friends on their way to the same spot, and they turn back too. Anything they see or hear ends all of this at once. Raiders seated in cars
+friends on their way to the same spot, and they turn back too. (1.6) The walk to a spot they go to check (a shot, a noise, where you
+were last seen) is the same walk as the way home, at a run: the camp map to the exit on that side, then straight (hidden `[Idle] GhostWalk`;
+stuck three times on the way, the fight brain takes over that walk). Anything they see or hear ends all of this at once. Raiders seated in cars
 (Apocapatrol) are left alone. Humans have no walk animation: walking is the run animation at half speed.
 `[Debug] ShowNavigation` shows homes (green), patrol points (lime), search points (violet) and what each raider is doing above
 its head.

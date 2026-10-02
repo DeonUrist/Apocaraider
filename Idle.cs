@@ -27,7 +27,7 @@ namespace Apocaraider
     // Gait: humans have only idle / run / attack clips - "walking" is the run clip at half speed (2.5 m/s); full run when far from home.
     internal static class Idle
     {
-        private enum Leg { None, Home, ToPoint, Back, SearchOut, SearchBack }
+        private enum Leg { None, Home, ToPoint, Back, SearchOut, SearchBack, Investigate }
 
         private sealed class Ctl
         {
@@ -44,6 +44,7 @@ namespace Apocaraider
             public PlayMakerFSM Movement; public bool MovementLooked; public float NextAnimCheck;
             public int SNext; public bool SLooked;      // (1.4.10) the round: next point to walk, looked around at the end
             public bool InSearch, SAtOrigin; public Vector3 SOrigin; public List<Vector3> SPts; public float[] SDropped; public int SLast = -1;
+            public bool Inv; public int InvGhost = -1, InvFails, SkipGhost = -1; public Vector3 SkipPos; public bool InvOnMap; public float BestStraight, LastMapLeft, LastStraightLeft;   // (1.6.0) the walk to a ghost
         }
 
         private sealed class Spot { public Transform T; public bool Coyotes; }
@@ -163,17 +164,47 @@ namespace Apocaraider
                 if (a.T.parent != null)        // seated in a car (Apocapatrol crews): not ours - no home lookup, no logic, no label
                 {
                     if (c.Moving || c.Leg != Leg.None || c.Turning) Stop(c, false);
-                    c.InSearch = false;
+                    c.InSearch = false; c.Inv = false;
                     continue;
                 }
                 if (a.Blown)                   // shoved by a tornado: stands as vanilla, nothing counts (no failed tries)
                 {
                     if (c.Moving || c.Leg != Leg.None || c.Turning) Stop(c, true);
-                    c.InSearch = false; c.PendingBack = false;
+                    c.InSearch = false; c.PendingBack = false; c.Inv = false;
                     continue;
                 }
                 if (!c.Resolved && now >= c.NextResolve) { try { Resolve(c, now); } catch (Exception e) { Plugin.Log.LogError("Idle: " + e); c.Excluded = true; continue; } if (c.Excluded) continue; }
                 bool searching = a.State == Senses.State.Search && a.Target == null && a.T.parent == null;
+                // (1.6.0) going to check a ghost: walked like the way home (camp map to its exit, then straight), the brain stands aside
+                var gh = a.Ghost;
+                bool investigating = InvestigateOn && a.State == Senses.State.Investigate && a.Target == null && gh != null && gh.Obj != null
+                                     && !(gh.Id == c.SkipGhost && Flat(gh.Pos - c.SkipPos) < 8f);
+                if (c.Inv && !investigating)
+                {
+                    c.Inv = false;
+                    if (c.Leg == Leg.Investigate || c.Moving) Stop(c, a.State != Senses.State.Combat);   // to a search / idle: the idle clip, not the run
+                }
+                if (investigating)
+                {
+                    if (c.InSearch) c.InSearch = false;
+                    if (!c.Inv)
+                    {
+                        if (c.Leg != Leg.None || c.Moving || c.Turning) Stop(c, false);
+                        c.Inv = true; c.InvGhost = gh.Id; c.InvFails = 0; c.WaitUntil = 0f;
+                        Log(c, "walks to ghost #" + gh.Id + " (" + Flat(a.T.position - gh.Pos).ToString("0") + " m)");
+                    }
+                    else if (c.InvGhost != gh.Id) { c.InvGhost = gh.Id; c.InvFails = 0; c.BestLeft = c.BestStraight = float.MaxValue; c.ProgressAt = now; }   // news: a new spot
+                    c.BusyAt = now; c.LastWasSearch = false; c.Fresh = false; c.Tries = 0; c.PendingBack = false; c.AtHome = false;
+                    if (now >= c.NextThink)
+                    {
+                        c.NextThink = now + 0.2f;
+                        try { InvestigateThink(c, now); }
+                        catch (Exception e) { Plugin.Log.LogError("Idle ghost walk: " + e); Stop(c, false); c.Inv = false; c.SkipGhost = gh.Id; c.SkipPos = gh.Pos; }
+                    }
+                    if (c.Leg == Leg.Investigate && !Brain.IsWalk(a.Owner)) { Stop(c, false); c.WaitUntil = 0f; }   // the brain took the body back: no two drivers
+                    if (c.Moving) Drive(c, dt);
+                    continue;
+                }
                 bool idle = a.State == Senses.State.Idle && a.Target == null && a.Ghost == null && a.T.parent == null
                             && (a.DetectedVar == null || a.DetectedVar.Value == null);
                 if (searching)
@@ -296,7 +327,37 @@ namespace Apocaraider
         internal static bool Busy(GameObject owner)
         {
             Ctl c;
-            return owner != null && _ctl.TryGetValue(owner.GetInstanceID(), out c) && (c.InSearch || c.Leg == Leg.Home);
+            return owner != null && _ctl.TryGetValue(owner.GetInstanceID(), out c) && (c.InSearch || c.Leg == Leg.Home || c.Inv);
+        }
+
+        // (1.6.0) for the brain: Idle has this NPC's walk to a ghost (the brain switches to Mode Walk and stands aside)
+        internal static bool WalksToGhost(GameObject owner)
+        {
+            Ctl c;
+            return On && owner != null && _ctl.TryGetValue(owner.GetInstanceID(), out c) && c.Inv;
+        }
+
+        private static bool InvestigateOn { get { return Brain.On && Plugin.IdleGhostWalk.Value; } }
+
+        // the walk to a ghost: starts once the brain has stood aside, follows the ghost when it moves, arrival -> the senses' search
+        private static void InvestigateThink(Ctl c, float now)
+        {
+            var a = c.A; var g = a.Ghost;
+            if (g == null) return;
+            if (!Brain.IsWalk(a.Owner)) { c.NextThink = now + 0.1f; return; }      // the brain hasn't let go yet (its next think)
+            if (c.Leg == Leg.Investigate)
+            {
+                if (Flat(g.Pos - c.Goal) > 0.25f)
+                {
+                    if (Flat(g.Pos - c.Goal) > 4f) { c.BestLeft = c.BestStraight = float.MaxValue; c.ProgressAt = now; }   // the spot moved: progress counts from here
+                    c.Goal = g.Pos;
+                }
+                LegThink(c, now, a.T.position);
+                return;
+            }
+            if (now < c.WaitUntil) return;
+            c.InvOnMap = false; c.BestStraight = c.LastMapLeft = c.LastStraightLeft = float.MaxValue;
+            StartLeg(c, Leg.Investigate, g.Pos, now, 5f);
         }
 
         internal static bool SearchWalking(GameObject owner)
@@ -316,18 +377,28 @@ namespace Apocaraider
         private static void LegThink(Ctl c, float now, Vector3 pos)
         {
             float left = Flat(pos - c.Goal);
-            float arrive = c.Leg == Leg.Home ? 1.5f : c.Leg == Leg.SearchBack ? 1.2f : 0.8f;
-            if (left <= arrive && Mathf.Abs(pos.y - c.Goal.y) < 2.5f) { Arrived(c, now); return; }
-            Vector3 next; float pathLeft;
-            if (Nav.On && Nav.Next(c.A.Owner, pos, c.Goal, out next, out pathLeft))
+            bool inv = c.Leg == Leg.Investigate;
+            float arrive = c.Leg == Leg.Home ? 1.5f : c.Leg == Leg.SearchBack ? 1.2f : inv ? Mathf.Max(0.5f, Plugin.ArriveDistance.Value) : 0.8f;
+            if (left <= arrive && (inv || Mathf.Abs(pos.y - c.Goal.y) < 2.5f)) { Arrived(c, now); return; }   // a ghost: flat distance, as the brain judged it
+            Vector3 next = c.Goal; float pathLeft = left;
+            bool onMap = Nav.On && Nav.Next(c.A.Owner, pos, c.Goal, out next, out pathLeft);
+            if (onMap)
             {
                 c.Steer = next; left = pathLeft;
                 if (Nav.HopAhead(pos, next)) Hop(c, now);             // the map's way crosses a low lip here
             }
             else { c.Steer = c.Goal; }
             if (c.Leg == Leg.Home && left <= 25f && c.Speed > 2.5f) Go(c, 2.5f);      // slows to a walk near home
-            if (left < c.BestLeft - 0.5f) { c.BestLeft = left; c.ProgressAt = now; }
-            float patience = c.Leg == Leg.Home ? 2f : 1f;
+            if (inv)
+            {
+                // map path left and straight distance are two measures: each counts against its own best (switching between them is no
+                // progress by itself); a jump up of one (a new exit, the spot moved) starts that measure again from there
+                c.InvOnMap = onMap;
+                if (onMap) { if (left > c.LastMapLeft + 2f) c.BestLeft = left; c.LastMapLeft = left; if (left < c.BestLeft - 0.5f) { c.BestLeft = left; c.ProgressAt = now; } }
+                else { if (left > c.LastStraightLeft + 2f) c.BestStraight = left; c.LastStraightLeft = left; if (left < c.BestStraight - 0.5f) { c.BestStraight = left; c.ProgressAt = now; } }
+            }
+            else if (left < c.BestLeft - 0.5f) { c.BestLeft = left; c.ProgressAt = now; }
+            float patience = c.Leg == Leg.Home || inv ? 2f : 1f;
             if (now - c.ProgressAt > patience) Failed(c, now);
         }
 
@@ -352,6 +423,7 @@ namespace Apocaraider
         {
             var leg = c.Leg;
             Stop(c);
+            if (leg == Leg.Investigate) { c.InvFails = 0; Log(c, "is at the ghost"); Senses.ArrivedAt(c.A.Owner); return; }   // the senses start the search (or a pursuit)
             if (leg == Leg.SearchOut) { c.SAtOrigin = false; c.WaitUntil = now + UnityEngine.Random.Range(2f, 4f); return; }   // the brain looks around
             if (leg == Leg.SearchBack) { c.SAtOrigin = true; c.WaitUntil = now + UnityEngine.Random.Range(1.5f, 3f); return; }
             if (leg == Leg.Home) { c.Tries = 0; c.AtHome = true; c.WaitUntil = now + UnityEngine.Random.Range(10f, 25f); Log(c, "is home"); }
@@ -363,6 +435,22 @@ namespace Apocaraider
         {
             var leg = c.Leg;
             Stop(c);
+            if (leg == Leg.Investigate)
+            {
+                c.InvFails++;
+                var g = c.A.Ghost;
+                if (c.InvFails >= 3 && g != null)
+                {
+                    // no good three times: the brain takes this ghost (feelers, back-ups, hops) - the pre-1.6 walk, never worse than before
+                    c.SkipGhost = g.Id; c.SkipPos = g.Pos; c.Inv = false;
+                    Log(c, "gets nowhere walking to ghost #" + g.Id + " (3 tries), the brain takes over");
+                    return;
+                }
+                Hop(c, now);
+                c.WaitUntil = now + 0.5f;
+                Log(c, "gets nowhere walking to the ghost (try " + c.InvFails + "/3), again");
+                return;
+            }
             if (leg == Leg.SearchOut || leg == Leg.SearchBack)
             {
                 if (leg == Leg.SearchOut && c.SLast >= 0 && c.SDropped != null && c.SLast < c.SDropped.Length) c.SDropped[c.SLast] = now + 300f;

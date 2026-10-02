@@ -18,7 +18,7 @@ namespace Apocaraider
     {
         public const string GUID = "com.denis.apocalypter.apocaraider";
         public const string NAME = "Apocaraider";
-        public const string VERSION = "1.5.5";
+        public const string VERSION = "1.6.0";
 
         internal static ManualLogSource Log;
         internal static string Dir;
@@ -48,7 +48,7 @@ namespace Apocaraider
         internal static ConfigEntry<string> NpcShotRanges, HumanFactions, BlastPrefabs;
         internal static ConfigEntry<bool> NavEnabled, NavLog, ShowNav, NavDump, WheelPopOff, IdleEnabled, IdleCoyotes, FriendsPassThrough;
         internal static ConfigEntry<float> MoveFullSpeedAngle, MoveSlowestAngle, MoveSlowestSpeed, BlockedRatio, BlockedSeconds, BlockedMemory;
-        internal static ConfigEntry<float> IdleReturnDelay, IdleRetrySeconds, IdleWalkRadius; internal static ConfigEntry<int> IdleReturnTries;
+        internal static ConfigEntry<float> IdleReturnDelay, IdleRetrySeconds, IdleWalkRadius; internal static ConfigEntry<int> IdleReturnTries; internal static ConfigEntry<bool> IdleGhostWalk;
         internal static ConfigEntry<float> NavBakeRange, NavCellSize, NavMargin, NavMaxStep, NavBakeBudgetMs, NavFieldSeconds;
 
         private static GameObject _runner;
@@ -297,6 +297,7 @@ namespace Apocaraider
             BlockedSeconds = H("Movement", "BlockedSeconds", 0.5f, new ConfigDescription("Over how many seconds that share is measured.", new AcceptableValueRange<float>(0.2f, 3f)));
             BlockedMemory = H("Movement", "BlockedMemory", 1.5f, new ConfigDescription("For how many seconds the direction it was blocked in is not taken again (on a map route).", new AcceptableValueRange<float>(0f, 10f)));
             IdleWalkRadius = H("Idle", "WalkRadius", 200f, new ConfigDescription("Camp walks only for NPCs within this distance of the camera, m.", new AcceptableValueRange<float>(20f, 1000f)));
+            IdleGhostWalk = H("Idle", "GhostWalk", true, "(1.6.0) A camp raider going to check a spot (a shot, a noise, where you were last seen) is walked there the way it walks home: the camp map to the exit on that side, then straight. Off: the fight brain walks it (pre-1.6).");
 
             SpawnKey = H("Debug", "SpawnKey", Key.None,
                 "Debug: spawns a Gungirl 6 m in front of you (a real raider: she fights and is saved). None = off (F2 clashed with normal play).");

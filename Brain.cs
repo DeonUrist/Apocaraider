@@ -43,7 +43,7 @@ namespace Apocaraider
     //   AddForce.DoAddForce (Unstuck) - no hop.
     internal static class Brain
     {
-        internal enum Mode { Off, Chase, Hold, Advance, BackUp, Rest, Search }
+        internal enum Mode { Off, Chase, Hold, Advance, BackUp, Rest, Search, Walk }   // Walk (1.6.0): Idle walks it to a ghost, the brain stands aside
 
         private sealed class Npc
         {
@@ -167,7 +167,7 @@ namespace Apocaraider
                         continue;
                     }
                 }
-                if (n.Mode == Mode.Off || n.Mode == Mode.BackUp) continue;
+                if (n.Mode == Mode.Off || n.Mode == Mode.BackUp || n.Mode == Mode.Walk) continue;     // Walk: Idle turns the body
                 if (n.Frozen && state != "trigger" && state != "run") Unfreeze(n);      // the burst (or a melee swing, a hide run): let the animation play
                 bool steering = (n.Mode == Mode.Chase || n.Mode == Mode.Advance) && n.HasHeading && state != "attack_melee" && state != "hide";
                 if (state != "trigger" && state != "run" && state != "attack_ranged" && !steering) continue;   // melee swing, hide run ...: the game's own facing
@@ -216,6 +216,14 @@ namespace Apocaraider
             Vector3 d3 = tp - n.T.position; d3.y = 0f;
             float d = d3.magnitude;
             n.Dist = d;
+            // (1.6.0) a ghost to walk to: Idle walks the raider there the way it walks home (map to the exit, then straight); the brain only
+            // stands aside (no pedal, no turning, no stuck handling) - at any distance. Idle hands it back after 3 failed tries.
+            if (Senses.KindOf(n.Owner) == 2 && Idle.WalksToGhost(n.Owner))
+            {
+                n.ToGhost = true;
+                if (n.Mode != Mode.Walk) SetMode(n, Mode.Walk, "Idle walks it to the ghost");
+                return;
+            }
             if (d > Plugin.MaxDistance.Value) { if (n.Mode != Mode.Off) SetMode(n, Mode.Off, "far"); return; }
             if (!n.Ranged && now < n.MadeAt + 10f && now >= n.NextRangedCheck)     // a gun that was not in the hand at the spawn frame
             {
@@ -226,7 +234,7 @@ namespace Apocaraider
             int kind = Senses.KindOf(n.Owner);           // 0 vanilla / seen target, 1 seen target, 2 going to a ghost, 3 searching at it
             if (kind == 3) { if (n.Mode != Mode.Search) { n.NextLookTurn = 0f; SetMode(n, Mode.Search, "looks around"); } return; }
             n.ToGhost = kind == 2;
-            if (n.Mode == Mode.Off || n.Mode == Mode.Search) SetMode(n, Mode.Chase, !Plugin.BrainLog.Value ? "" : (n.ToGhost ? "ghost" : "target") + " at " + d.ToString("0") + " m");
+            if (n.Mode == Mode.Off || n.Mode == Mode.Search || n.Mode == Mode.Walk) SetMode(n, Mode.Chase, !Plugin.BrainLog.Value ? "" : (n.ToGhost ? "ghost" : "target") + " at " + d.ToString("0") + " m");
 
             if (Tracing && now >= n.NextTrail && n.Trail.Count < 1200)
             {
@@ -667,7 +675,7 @@ namespace Apocaraider
                     continue;
                 }
                 Npc o; _npcs.TryGetValue(a.Owner.GetInstanceID(), out o);
-                bool oMoving = o != null && o.Rb != null && o.Mode != Mode.Off && o.Mode != Mode.Hold && o.Mode != Mode.Rest && o.Mode != Mode.Search
+                bool oMoving = o != null && o.Rb != null && o.Mode != Mode.Off && o.Mode != Mode.Hold && o.Mode != Mode.Rest && o.Mode != Mode.Search && o.Mode != Mode.Walk
                                && new Vector3(o.Rb.velocity.x, 0f, o.Rb.velocity.z).sqrMagnitude > 1f;
                 if (oMoving && o.HasHeading && Mathf.Abs(Mathf.DeltaAngle(o.Heading, heading)) < 45f)
                 {
@@ -839,7 +847,7 @@ namespace Apocaraider
                 else if (m == Mode.Rest) TraceDump(n, "rests");
             }
             if (m == Mode.Chase || m == Mode.Advance) { n.HasHeading = false; if (was != Mode.Chase && was != Mode.Advance && was != Mode.BackUp) { n.BestDist = float.MaxValue; n.NoProgressSince = Time.time; n.Flipped = false; n.Side = 0; n.HasWaypoint = false; } }
-            bool wasStill = was == Mode.Hold || was == Mode.Rest || was == Mode.Search, still = m == Mode.Hold || m == Mode.Rest || m == Mode.Search;
+            bool wasStill = was == Mode.Hold || was == Mode.Rest || was == Mode.Search || was == Mode.Walk, still = m == Mode.Hold || m == Mode.Rest || m == Mode.Search || m == Mode.Walk;
             if (m == Mode.Off) { if (wasStill) Move(n, n.Target != null && n.Target.Value != null); }   // (1.4.9) back to the game's run only with a target left - no target: idle, not a run on the spot
             else if (still && !wasStill) Move(n, false);
             else if (!still && wasStill) Move(n, true);
@@ -1051,7 +1059,7 @@ namespace Apocaraider
         private static void OnStuck(Npc n)
         {
             float now = Time.time;
-            if (n.Mode == Mode.Hold || n.Mode == Mode.Rest || n.Mode == Mode.Search || n.Mode == Mode.BackUp || n.Mode == Mode.Off) return;   // standing still: the Unstuck FSM's "not moving" is no stuck
+            if (n.Mode == Mode.Hold || n.Mode == Mode.Rest || n.Mode == Mode.Search || n.Mode == Mode.Walk || n.Mode == Mode.BackUp || n.Mode == Mode.Off) return;   // standing still (or Idle's walk): the Unstuck FSM's "not moving" is no stuck
             if (Senses.Blown(n.Owner)) return;          // pushed by a tornado: not stuck
             if (now - n.FriendBumpsSince > 6f) { n.FriendBumpsSince = now; n.FriendBumps = 0; }
             if (FriendInTheWay(n) && ++n.FriendBumps <= 3)   // bumped into another NPC: pass it, keep the map (3 times in 6 s at most: a wall next to a friend is still a wall)
@@ -1159,6 +1167,14 @@ namespace Apocaraider
             return true;
         }
 
+        // (1.6.0) Idle: the brain has stood aside for its ghost walk (Mode Walk) - only then does Idle move the body
+        internal static bool IsWalk(GameObject owner)
+        {
+            if (!On) return false;
+            var n = Get(owner);
+            return n != null && n.Mode == Mode.Walk;
+        }
+
         // Aim decided to fire but the body is turned away (steering around something): face the target for a moment
         internal static void FaceTarget(GameObject owner, float seconds)
         {
@@ -1262,6 +1278,7 @@ namespace Apocaraider
                 if (fsm == null || fsm.Name != "Movement" || !On) return true;
                 var n = Of(fsm.GameObject);
                 if (n == null || n.Mode == Mode.Off) return true;
+                if (n.Mode == Mode.Walk) { n.CmdSpeed = 0f; return false; }      // (1.6.0) Idle drives the body: the game's pedal (run or stop) is skipped
                 float z = __instance.z != null && !__instance.z.IsNone ? __instance.z.Value : (__instance.vector != null && !__instance.vector.IsNone ? __instance.vector.Value.z : 0f);
                 if (z <= 0f) return true;      // the Idle / attack states' "stop": vanilla
                 if (n.Rb == null) return true;
@@ -1352,7 +1369,7 @@ namespace Apocaraider
                 if (ev == "Animal_Run")
                 {
                     var n = NpcOf(__instance.Fsm, "Attack");
-                    if (n == null || (n.Mode != Mode.Hold && n.Mode != Mode.Rest && n.Mode != Mode.Search)) return true;
+                    if (n == null || (n.Mode != Mode.Hold && n.Mode != Mode.Rest && n.Mode != Mode.Search && n.Mode != Mode.Walk)) return true;
                     if (n.Movement != null) n.Movement.SendEvent("Animal_Idle");
                     if (n.Mode == Mode.Hold) Aim(n);
                     __instance.Finish();

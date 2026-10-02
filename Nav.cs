@@ -19,7 +19,8 @@ namespace Apocaraider
     //
     // Routing: an NPC standing inside a baked footprint whose goal (target or ghost) is not in straight sight on the grid follows a
     // distance field built for that goal (Dijkstra over the grid: from the goal cell when the goal is inside, otherwise from every edge
-    // cell weighted by its distance to the goal, so the NPC leaves through the exit that is shortest overall). The next waypoint is the
+    // cell weighted by its distance to the goal, so the NPC leaves through the exit that is shortest overall; since 1.6.0 an outside goal
+    // goes to ONE exit cell with a clear line out, routed as an inside goal, then straight - see OutNext). The next waypoint is the
     // farthest cell along the descent that is in grid sight, handed to the brain's feelers as a waypoint. Fields are cached per goal
     // (shared by every NPC heading there) for FieldSeconds. Outside any footprint nothing runs.
     internal static class Nav
@@ -87,7 +88,7 @@ namespace Apocaraider
 
         internal static bool On { get { return Plugin.NavEnabled != null && Plugin.NavEnabled.Value; } }
 
-        public static void OnSceneLoaded() { _structures.Clear(); _known.Clear(); _baking = null; _debug.Clear(); _floorCols.Clear(); _exits.Clear(); _relaxedFields.Clear(); _pool.Clear(); _player = null; _sweep.Clear(); _nodeKind.Clear(); _lastPickAt = 0f; _vPeak = 0f; }
+        public static void OnSceneLoaded() { _structures.Clear(); _known.Clear(); _baking = null; _debug.Clear(); _floorCols.Clear(); _exits.Clear(); _relaxedFields.Clear(); _pool.Clear(); _player = null; _sweep.Clear(); _nodeKind.Clear(); _lastPickAt = 0f; _vPeak = 0f; _outPlans.Clear(); _outMemo.Clear(); }
 
         // ---------- discovery + baking (per frame) ----------
         public static void Tick()
@@ -755,6 +756,14 @@ namespace Apocaraider
             if (goalInside && (goalCell < 0 || Mathf.Abs(goal.y - s.FloorY[goalCell]) > 3f)) goalInside = false;   // in a wall / above the map: outside
             _tGoal = goalInside ? goalCell : -1;
             if (goalInside && GridSight(s, from, goalCell)) { LastReason = LogOn ? "straight line to the goal on the " + s.Name + " map" : "-"; return false; }  // straight across the floor: the feelers do the rest
+            if (!goalInside)
+            {
+                // (1.6.0) the walk out = the walk in reversed: the map to one exit cell, then the straight line (OutNext)
+                bool handled;
+                bool r = OutNext(owner, s, from, goal, out next, out pathLeft, out handled);
+                if (handled) return r;
+                next = goal; pathLeft = 0f;      // no cell with a clear line out: the pre-1.6 way below
+            }
             if (!goalInside && IsEdge(s, from)) { LastReason = LogOn ? "at the edge of " + s.Name : "-"; return false; }             // already at the edge of the footprint: out we go
 
             var f = FieldFor(s, goal, goalInside, goalCell);
@@ -876,6 +885,180 @@ namespace Apocaraider
                 + (route.Count > 0 ? ", map route " + route.Count + " cells" : ", NO map route from the start cell") + ", trail " + trail.Count + " points");
             Return(f); Return(mine);
         }
+
+        // ---------- (1.6.0) a goal outside the footprint: the walk out is the walk in, reversed ----------
+        // Before 1.6 an outside goal was routed by a field seeded at every ring cell with its straight distance to the goal - a straight line
+        // that ignored the structure itself - and the map let go at the first ring cell. A ghost behind the camp: out of the gate, then the
+        // feelers aimed back through the wall, the map pulled outward again inside the margin (wall hugging, turnarounds).
+        // Now, like the walk home (a field seeded at ONE cell inside the map, then a straight line):
+        // - leg 1: the map walks the NPC to one exit cell, routed as an inside goal. The exit = the cell of the NPC's area with the shortest
+        //   map path + straight line to the goal among the cells whose straight line to the goal is clear on the map until it leaves the
+        //   footprint (OutClear): the cave mouth's apron when the goal is in front of it, the margin on the goal's side when it is behind.
+        //   Shared per (structure, area, goal 8 m bucket) for 5 s, then kept per NPC for the trip; re-picked when the goal moves > 8 m.
+        // - leg 2: standing on a cell with a clear line out, Next says "straight" (false). Drifting off the line picks a new exit from there
+        //   (the nearest clear line), never the old one behind it.
+        private sealed class OutPlan { public Structure S; public Vector3 Goal; public int Exit; public float Made; public bool Out; }
+        private static readonly Dictionary<int, OutPlan> _outPlans = new Dictionary<int, OutPlan>();
+        private sealed class OutMemo { public Structure S; public int Exit; public float Until; }
+        private static readonly Dictionary<long, OutMemo> _outMemo = new Dictionary<long, OutMemo>();
+        private const float OutReplan = 8f; private const int MaxOutTests = 6000;
+        private static float[] _ocKeys = new float[0]; private static int[] _ocIdx = new int[0];
+
+        // the straight line from cell a toward the goal crosses only cells a body walks through (the map's own step rule), up to the edge of
+        // the footprint (or the goal's cell)
+        private static bool OutClear(Structure s, int a, Vector3 goal)
+        {
+            int x0 = a % s.W, z0 = a / s.W;
+            int x1 = Mathf.FloorToInt((goal.x - s.Box.min.x) / s.Cell), z1 = Mathf.FloorToInt((goal.z - s.Box.min.z) / s.Cell);
+            int dx = Math.Abs(x1 - x0), dz = Math.Abs(z1 - z0), sx = x0 < x1 ? 1 : -1, sz = z0 < z1 ? 1 : -1, err = dx - dz;
+            int prev = a, guard = 2 * (s.W + s.H) + 4;
+            while (guard-- > 0)
+            {
+                if (x0 == x1 && z0 == z1) return true;
+                int e2 = 2 * err;
+                if (e2 > -dz) { err -= dz; x0 += sx; }
+                if (e2 < dx) { err += dx; z0 += sz; }
+                if (x0 < 0 || z0 < 0 || x0 >= s.W || z0 >= s.H) return true;     // out of the footprint: open ground from here
+                int i = z0 * s.W + x0;
+                if (!Move(s, prev, i)) return false;
+                prev = i;
+            }
+            return true;
+        }
+
+        private static bool OutNext(GameObject owner, Structure s, int from, Vector3 goal, out Vector3 next, out float pathLeft, out bool handled)
+        {
+            next = goal; pathLeft = 0f; handled = true;
+            int id = owner != null ? owner.GetInstanceID() : 0;
+            OutPlan p = null;
+            if (owner != null) _outPlans.TryGetValue(id, out p);
+            if (p != null && (p.S != s || FlatDist(p.Goal, goal) > OutReplan)) p = null;     // another map, or news about another spot: plan again
+            if (OutClear(s, from, goal))
+            {
+                if (p != null) p.Out = true;
+                LastReason = LogOn ? "straight out of " + s.Name : "-";
+                return false;
+            }
+            float now = Time.time;
+            if (p != null && p.Exit < 0 && now - p.Made < 3f) { handled = false; return false; }   // no exit a moment ago: the old way, no new search yet
+            Field f = null; float d0 = float.PositiveInfinity; int pick = -1;
+            for (int attempt = 0; attempt < 2; attempt++)
+            {
+                if (attempt > 0 || p == null || p.Out || p.Exit < 0 || p.Exit == from || float.IsNaN(s.FloorY[p.Exit]))
+                {
+                    bool fresh = attempt > 0 || (p != null && p.Exit >= 0);   // drifted off its line / plan gone stale / exit doesn't connect: an exit from here (after a failed search: the area's memo)
+                    int exit = PickOutExit(owner, s, from, goal, fresh);
+                    p = new OutPlan { S = s, Goal = goal, Exit = exit, Made = now };
+                    if (owner != null)
+                    {
+                        if (_outPlans.Count > 256) PruneOutPlans(now);
+                        _outPlans[id] = p;
+                    }
+                    if (exit < 0) { handled = false; return false; }
+                }
+                f = ExitField(s, p.Exit, now);
+                d0 = f.Dist[from];
+                if (float.IsInfinity(d0) || d0 <= 0f) continue;
+                pick = Descend(s, f, from);
+                if (pick >= 0) break;
+            }
+            if (pick < 0) { p.Exit = -1; p.Made = now; handled = false; return false; }
+            Vector3 ec = CellCenter(s, p.Exit % s.W, p.Exit / s.W, 0f);
+            pathLeft = d0 + new Vector2(goal.x - ec.x, goal.z - ec.z).magnitude;
+            _tExit = p.Exit; _tD0 = pathLeft; _tPick = pick;
+            next = CellCenter(s, pick % s.W, pick / s.W, s.FloorY[pick]);
+            Remember(owner, next, s);
+            return true;
+        }
+
+        // the field to one exit cell: seeded at exactly that cell (FieldFor shares a field between goal cells up to 2 cells apart - an exit
+        // whose own line out was never checked)
+        private static Field ExitField(Structure s, int exit, float now)
+        {
+            long key = (2L << 40) | (long)(uint)exit;
+            float life = Mathf.Max(0.2f, Plugin.NavFieldSeconds.Value);
+            Field f;
+            if (s.Fields.TryGetValue(key, out f) && now - f.Made < life) return f;
+            if (f != null) { Return(f); s.Fields.Remove(key); }
+            if (s.Fields.Count >= 16)
+            {
+                _expired.Clear();
+                foreach (var kv in s.Fields) if (now - kv.Value.Made >= life) _expired.Add(kv.Key);
+                foreach (var k in _expired) { Return(s.Fields[k]); s.Fields.Remove(k); }
+                if (s.Fields.Count >= 32) { foreach (var kv in s.Fields) Return(kv.Value); s.Fields.Clear(); }
+            }
+            f = Build(s, Vector3.zero, true, exit);
+            s.Fields[key] = f;
+            return f;
+        }
+
+        // the exit for an outside goal: the cheapest (map path + straight line) cell of the NPC's area with a clear line out
+        private static int PickOutExit(GameObject owner, Structure s, int from, Vector3 goal, bool fresh)
+        {
+            int comp = s.Comp != null ? s.Comp[from] : 0;
+            int gkey = Mathf.FloorToInt(goal.x / OutReplan) * 73856093 ^ Mathf.FloorToInt(goal.z / OutReplan) * 19349663;
+            long key = ((long)s.Root.GetInstanceID() << 40) ^ ((long)(comp & 0xFFFFF) << 20) ^ (long)(gkey & 0xFFFFF);
+            float now = Time.time;
+            OutMemo m;
+            if (!fresh && _outMemo.TryGetValue(key, out m) && m.S == s && now < m.Until && (m.Exit < 0 || (m.Exit != from && !float.IsNaN(s.FloorY[m.Exit])))) return m.Exit;
+            var sw = Stopwatch.StartNew();
+            var mine = Build(s, goal, true, from);
+            int n = s.W * s.H, cnt = 0;
+            if (_ocKeys.Length < n) { _ocKeys = new float[n]; _ocIdx = new int[n]; }
+            for (int i = 0; i < n; i++)
+            {
+                float d = mine.Dist[i];
+                if (float.IsInfinity(d) || !BigArea(s, i)) continue;
+                Vector3 c = CellCenter(s, i % s.W, i / s.W, 0f);
+                _ocKeys[cnt] = d + new Vector2(goal.x - c.x, goal.z - c.z).magnitude; _ocIdx[cnt] = i; cnt++;
+            }
+            Return(mine);
+            Array.Sort(_ocKeys, _ocIdx, 0, cnt);
+            int exit = -1, tested = 0;
+            for (int k = 0; k < cnt && tested < MaxOutTests; k++)
+            {
+                tested++;
+                if (_ocIdx[k] == from) continue;          // its own line was just found blocked
+                if (OutClear(s, _ocIdx[k], goal)) { exit = _ocIdx[k]; break; }
+            }
+            if (!fresh)
+            {
+                if (_outMemo.Count > 64) _outMemo.Clear();
+                _outMemo[key] = new OutMemo { S = s, Exit = exit, Until = now + 5f };
+            }
+            if (LogOn)
+                Plugin.Log.LogInfo("Nav: " + (owner != null ? owner.name : "?") + " way out of " + s.Name + " toward " + goal.x.ToString("0") + "," + goal.z.ToString("0") + ": "
+                    + (exit < 0 ? "no cell with a clear line out (old routing)" : "exit cell " + (exit % s.W) + "," + (exit / s.W) + ", path + line " + _ocKeys[tested - 1].ToString("0") + " m")
+                    + " (" + tested + "/" + cnt + " cells tested, " + sw.Elapsed.TotalMilliseconds.ToString("0.0") + " ms" + (fresh ? ", from here" : "") + ")");
+            return exit;
+        }
+
+        // down the field up to 16 cells: the farthest cell still in grid sight (next to an obstacle: no farther than the first such cell)
+        private static int Descend(Structure s, Field f, int from)
+        {
+            int cur = from, pick = from;
+            bool careful = s.Near != null && s.Near[from];
+            for (int k = 0; k < 16; k++)
+            {
+                int nb = Downhill(s, f, cur);
+                if (nb < 0) break;
+                cur = nb;
+                if (GridSight(s, from, cur)) pick = cur; else break;
+                if (careful || (s.Near != null && s.Near[cur])) break;
+            }
+            if (pick == from) pick = Downhill(s, f, from);
+            return pick;
+        }
+
+        private static void PruneOutPlans(float now)
+        {
+            _expired.Clear();
+            foreach (var kv in _outPlans) if (now - kv.Value.Made > 60f) _expired.Add(kv.Key);
+            foreach (var k in _expired) _outPlans.Remove((int)k);
+            if (_outPlans.Count > 256) _outPlans.Clear();
+        }
+
+        private static float FlatDist(Vector3 a, Vector3 b) { a.y = b.y = 0f; return Vector3.Distance(a, b); }
 
         // ---------- the way out when the map can't reach the goal ----------
         // The answer depends on the area the NPC is in and the goal, not on the NPC: one memo per (structure, area, goal bucket), 2 s
