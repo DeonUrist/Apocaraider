@@ -370,7 +370,7 @@ namespace Apocaraider
                         float dy = Mathf.Abs(ya - yb);
                         Vector3 b = CellCenter(s, cx, cz, yb);
                         if (dy <= Mathf.Max(0.1f, Plugin.NavMaxStep.Value)
-                            && !Physics.Linecast(a + Vector3.up * 0.15f, b + Vector3.up * 0.15f, BakeMask, QueryTriggerInteraction.Ignore)   // a low rock lip / kerb
+                            && LowWayClear(a, b, Mathf.Max(ya, yb))                                                                      // a low rock lip / kerb
                             && !Physics.Linecast(a + Vector3.up * 0.5f, b + Vector3.up * 0.5f, BakeMask, QueryTriggerInteraction.Ignore)
                             && !Physics.Linecast(a + Vector3.up * 1.2f, b + Vector3.up * 1.2f, BakeMask, QueryTriggerInteraction.Ignore))
                         { bits |= (byte)(1 << k); continue; }
@@ -1269,6 +1269,26 @@ namespace Apocaraider
             if (h.normal.y < WalkNormal || Mathf.Abs(h.point.y - refY) > 1.5f) return false;
             hit = h.point;
             return true;
+        }
+
+        // The ankle-high line between two neighbouring cells. Hitting something there used to make a wall - but the rim of a camp's base plate
+        // (camp_base_rock, a few cm higher than the line) is just ground the body walks over: that made the orange ring around Camp_7 that
+        // sealed the camp and its cave off from the outside. So when the line hits, measure the top of what it hit: no higher than
+        // MaxStep above the higher of the two floors = a rim the body steps over (clear); higher = a lip / kerb / wall.
+        private static bool LowWayClear(Vector3 a, Vector3 b, float topFloor)
+        {
+            RaycastHit h;
+            Vector3 d = b - a;
+            if (!Physics.Linecast(a + Vector3.up * 0.15f, b + Vector3.up * 0.15f, out h, BakeMask, QueryTriggerInteraction.Ignore)) return true;
+            float step = Mathf.Max(0.1f, Plugin.NavMaxStep.Value);
+            // just past the hit point (into the obstacle), from above the highest a step could be, straight down
+            Vector3 flat = new Vector3(d.x, 0f, d.z); if (flat.sqrMagnitude > 1e-6f) flat.Normalize();
+            Vector3 probe = new Vector3(h.point.x, topFloor + step + 0.6f, h.point.z) + flat * 0.02f;
+            RaycastHit top;
+            if (!Physics.Raycast(probe, Vector3.down, out top, step + 0.6f + 0.3f, BakeMask, QueryTriggerInteraction.Ignore)) return false;
+            // the top of the very thing the line hit (a thin rail the probe misses lands on the ground behind it: still a wall),
+            // facing up, no higher than a step
+            return top.collider == h.collider && top.point.y - topFloor <= step && top.normal.y >= 0.5f;
         }
 
         // a body capsule swept from a to b (patrol legs are re-checked before walking: a car parked there since the bake)

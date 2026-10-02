@@ -74,6 +74,10 @@ namespace Apocaraider
             public float CrouchRolledAt = -10f; public bool CrouchRoll;   // the kneel roll of this hold episode (kept 5 s across short Chase gaps)
             public float FaceTargetUntil;              // Aim wants a burst: face the target instead of the steered heading for a moment
             public float TickScale = 1f;               // thinks less often far from the camera
+            public float SpeedScale = 1f;              // < 1: queues behind a friend going the same way
+            public int AvoidSide; public float AvoidUntil;            // passing a friend: the side, kept a moment (no left-right dither)
+            public int FriendBumps; public float FriendBumpsSince;
+            public Vector3 MakeWayDir; public float MakeWayUntil;    // standing in a friend's way: a short step aside
         }
 
         private static readonly Dictionary<int, Npc> _npcs = new Dictionary<int, Npc>();
@@ -138,6 +142,10 @@ namespace Apocaraider
                     continue;
                 }
                 if (n.Crouched && n.T.parent != null) Crouch(n, false);     // seated by Apocapatrol after all: stand up
+                if (now < n.MakeWayUntil && n.Rb != null && n.T.parent == null && n.Mode != Mode.Off)   // a friend needs past: a short step aside
+                {
+                    Vector3 v = n.MakeWayDir * 1.8f; v.y = n.Rb.velocity.y; n.Rb.velocity = v;
+                }
                 string state;
                 if (!Engaged(n, out state))
                 {
@@ -483,8 +491,95 @@ namespace Apocaraider
                     }
                 }
             }
+            heading = AvoidFriends(n, heading, origin, p1, p2, radius, adv ? mask : PathMask, now);
             n.Heading = heading;
             n.HasHeading = true;
+        }
+
+        // Other NPCs are not in the feelers' mask (Actor layer): without this they ran into each other, the bump counted as "stuck" and
+        // switched the map off for 10 s. Now, for every NPC within 3 m:
+        // - ahead (+-60 deg) and going the same way (a brain NPC moving within 45 deg of this heading): queue behind it - slow down, never push;
+        // - ahead and standing / coming the other way, within 2.5 m: pass it on one side (the side away from it; dead ahead: decided by
+        //   instance id so two NPCs pick opposite sides), the side kept 1 s; if that way is blocked, the other side; neither: wait;
+        //   a brain NPC standing still (hold / rest / search) within 1.6 m steps aside for 0.6 s;
+        // - beside within 1 m: a small push apart.
+        private static float AvoidFriends(Npc n, float heading, Vector3 origin, Vector3 p1, Vector3 p2, float radius, int mask, float now)
+        {
+            n.SpeedScale = 1f;
+            Vector3 me = n.T.position;
+            Vector3 fwd = Quaternion.Euler(0f, heading, 0f) * Vector3.forward;
+            var tgt = n.Target.Value; Transform troot = tgt != null ? tgt.transform.root : null;
+            float push = 0f; bool passing = false;
+            foreach (var a in Senses.AllAgents)
+            {
+                if (a.Owner == null || a.T == n.T || a.T.parent != null || (troot != null && a.T == troot)) continue;
+                Vector3 rel = a.T.position - me;
+                if (Mathf.Abs(rel.y) > 2f) continue;
+                rel.y = 0f;
+                float d = rel.magnitude;
+                if (d > 3f || d < 0.01f) continue;
+                float ang = Vector3.SignedAngle(fwd, rel, Vector3.up);      // > 0: it is on the right
+                if (Mathf.Abs(ang) > 60f)
+                {
+                    if (d < 1f) push += (ang > 0f ? -1f : 1f) * 12f * (1f - d);
+                    continue;
+                }
+                Npc o; _npcs.TryGetValue(a.Owner.GetInstanceID(), out o);
+                bool oMoving = o != null && o.Rb != null && o.Mode != Mode.Off && o.Mode != Mode.Hold && o.Mode != Mode.Rest && o.Mode != Mode.Search
+                               && new Vector3(o.Rb.velocity.x, 0f, o.Rb.velocity.z).sqrMagnitude > 1f;
+                if (oMoving && o.HasHeading && Mathf.Abs(Mathf.DeltaAngle(o.Heading, heading)) < 45f)
+                {
+                    float s = Mathf.Clamp((d - 0.9f) / 1.5f, 0.2f, 1f);      // queue: never push the one in front
+                    if (s < n.SpeedScale) n.SpeedScale = s;
+                    continue;
+                }
+                if (d > 2.5f) continue;
+                int side;
+                if (now < n.AvoidUntil && n.AvoidSide != 0) side = n.AvoidSide;
+                else if (Mathf.Abs(ang) < 6f) side = n.Owner.GetInstanceID() < a.Owner.GetInstanceID() ? 1 : -1;
+                else side = ang > 0f ? -1 : 1;
+                n.AvoidSide = side; n.AvoidUntil = now + 1f; passing = true;
+                push += side * Mathf.Lerp(55f, 20f, d / 2.5f);
+                if (o != null && !oMoving && d < 1.6f && (o.Mode == Mode.Hold || o.Mode == Mode.Rest || o.Mode == Mode.Search) && !Idle.SearchWalking(o.Owner))
+                {
+                    o.MakeWayDir = Vector3.Cross(Vector3.up, fwd) * -side;     // away from the side the passer takes
+                    o.MakeWayUntil = now + 0.6f;
+                }
+            }
+            if (push == 0f) return heading;
+            push = Mathf.Clamp(push, -70f, 70f);
+            float h = heading + push;
+            if (!passing || WayFree(n, h, origin, p1, p2, radius, mask)) return h;
+            float other = heading - push;                                   // that side is a wall: the other side
+            if (WayFree(n, other, origin, p1, p2, radius, mask)) { n.AvoidSide = -n.AvoidSide; return other; }
+            n.SpeedScale = Mathf.Min(n.SpeedScale, 0.2f);                   // neither: wait for it to move
+            return heading;
+        }
+
+        private static bool WayFree(Npc n, float yaw, Vector3 origin, Vector3 p1, Vector3 p2, float radius, int mask)
+        {
+            Vector3 dir = Quaternion.Euler(0f, yaw, 0f) * Vector3.forward;
+            RaycastHit h;
+            if (!Physics.CapsuleCast(p1, p2, radius, dir, out h, 1.2f, mask, QueryTriggerInteraction.Ignore)) return true;
+            if (h.collider.transform.root == n.T) return true;
+            float feetY = n.Col != null ? n.Col.bounds.min.y : n.T.position.y - 1f;
+            return Nav.IsFloor(h.collider, h.normal, h.point.y, feetY);
+        }
+
+        // a bump into another NPC is no reason to call itself stuck
+        private static bool FriendInTheWay(Npc n)
+        {
+            Vector3 me = n.T.position, fwd = n.T.forward; fwd.y = 0f;
+            foreach (var a in Senses.AllAgents)
+            {
+                if (a.Owner == null || a.T == n.T || a.T.parent != null) continue;
+                Vector3 rel = a.T.position - me;
+                if (Mathf.Abs(rel.y) > 2f) continue;
+                rel.y = 0f;
+                if (rel.sqrMagnitude > 1.3f * 1.3f) continue;
+                if (Vector3.Angle(fwd, rel) < 75f) return true;
+            }
+            return false;
         }
 
         // The L-corner problem: a 2.5 m fan cannot tell which end of a wall leads to the target, and the wrong side is a dead end. When the
@@ -805,6 +900,13 @@ namespace Apocaraider
             float now = Time.time;
             if (n.Mode == Mode.Hold || n.Mode == Mode.Rest || n.Mode == Mode.Search || n.Mode == Mode.BackUp || n.Mode == Mode.Off) return;   // standing still: the Unstuck FSM's "not moving" is no stuck
             if (Senses.Blown(n.Owner)) return;          // pushed by a tornado: not stuck
+            if (now - n.FriendBumpsSince > 6f) { n.FriendBumpsSince = now; n.FriendBumps = 0; }
+            if (FriendInTheWay(n) && ++n.FriendBumps <= 3)   // bumped into another NPC: pass it, keep the map (3 times in 6 s at most: a wall next to a friend is still a wall)
+            {
+                if (n.AvoidSide == 0 || now >= n.AvoidUntil) n.AvoidSide = UnityEngine.Random.value < 0.5f ? -1 : 1;
+                n.AvoidUntil = now + 1.2f; n.NoProgressSince = now;
+                return;
+            }
             if (n.OnNav)
             {
                 // stuck on a map route: this map is wrong here - steer without it for a while
@@ -999,7 +1101,7 @@ namespace Apocaraider
                 float z = __instance.z != null && !__instance.z.IsNone ? __instance.z.Value : (__instance.vector != null && !__instance.vector.IsNone ? __instance.vector.Value.z : 0f);
                 if (z <= 0f) return true;      // the Idle / attack states' "stop": vanilla
                 if (n.Rb == null) return true;
-                float speed = n.Mode == Mode.BackUp ? -Mathf.Min(z, 2.5f) : (n.Mode == Mode.Hold || n.Mode == Mode.Rest || n.Mode == Mode.Search) ? 0f : z;
+                float speed = n.Mode == Mode.BackUp ? -Mathf.Min(z, 2.5f) : (n.Mode == Mode.Hold || n.Mode == Mode.Rest || n.Mode == Mode.Search) ? 0f : z * n.SpeedScale;
                 Vector3 v = n.T.forward * speed;
                 v.y = n.Rb.velocity.y;
                 n.Rb.velocity = v;
