@@ -26,6 +26,7 @@ they just see, hear, move and shoot like they mean it.
 
 * Raiders walk around crates, braziers and fences instead of running into them.
 * They know their camps, caves and buildings and take the real way out to get to you.
+* When they lose you they search the area, then go back to their spot in camp; at home they walk short rounds (mod setting).
 
 ## Gungirl
 

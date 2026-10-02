@@ -103,6 +103,19 @@ deck) count as ground for the feelers too, as long as they are no steeper than a
 body meets them; a lower step limit and a knee-low wall check keep routes off rock lips, and an NPC stuck on something low hops over it. Outside structures nothing changes. `[Nav] Enabled = false` turns it
 off; `[Debug] ShowNav` shows the mapping state and each NPC's next map waypoint; the hidden `[Debug] NavDump` (code default off) saves the maps as pictures.
 
+## Idle behaviour
+
+`[Idle] EnableIdleBehavior` (on): camp raiders (Scrapyard; the Coyote towns too with `[Idle] Coyotes`) have a home - the spawn
+point their camp made them at (after a load, the nearest free spawn point of their faction in the camp they stand in). When a
+search ends they head home at once (after a fight that ended some other way, 15 s later): the camp map's route when there is one,
+otherwise straight; 10 failed attempts 5 s apart and they forget it. At home, within 200 m of you, they walk a short round to up
+to 4 points that are clearly reachable from their spot (a straight walkable line on the camp map with room either side, away
+from walls, and a body-sized sweep that hits nothing) and back - no such point, no round. While searching they walk short
+rounds from the spot instead of standing. Anything they see or hear ends all of this at once. Raiders seated in cars
+(Apocapatrol) are left alone. Humans have no walk animation: walking is the run animation at half speed.
+`[Debug] ShowNavigation` shows homes (green), patrol points (lime), search points (violet) and what each raider is doing above
+its head.
+
 ## Install
 
 Needs BepInEx 5. Copy the `Apocaraider` folder into `BepInEx\plugins\`, so you have:
@@ -127,6 +140,7 @@ BepInEx\plugins\Apocaraider\Sounds\Gungirl\*.wav / *.ogg
   AdjustHumanBossHP (40 %: Duke Ironjaw and Buzzgut).
 - **[Detection]** PlayerShoutKey + PlayerShoutKeyModifier (Alt+Q), SightCone, SightRange, DarkSightRange.
 - **[Pathfinding]** ScaleWithActors.
+- **[Idle]** EnableIdleBehavior, Coyotes.
 - **[Debug]** VerboseLog (every log of the mod), ShowNavigation (ghosts, NPC states
   and map waypoints drawn in the world).
 

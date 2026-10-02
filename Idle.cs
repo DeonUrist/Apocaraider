@@ -158,6 +158,12 @@ namespace Apocaraider
                     _ctl[id] = c;
                 }
                 if (c.Excluded) continue;
+                if (a.T.parent != null)        // seated in a car (Apocapatrol crews): not ours - no home lookup, no logic, no label
+                {
+                    if (c.Moving || c.Leg != Leg.None || c.Turning) Stop(c, false);
+                    c.InSearch = false;
+                    continue;
+                }
                 if (!c.Resolved && now >= c.NextResolve) { try { Resolve(c, now); } catch (Exception e) { Plugin.Log.LogError("Idle: " + e); c.Excluded = true; continue; } if (c.Excluded) continue; }
                 bool searching = a.State == Senses.State.Search && a.Target == null && a.T.parent == null;
                 bool idle = a.State == Senses.State.Idle && a.Target == null && a.Ghost == null && a.T.parent == null
@@ -412,7 +418,7 @@ namespace Apocaraider
             foreach (var c in _ctl.Values)
             {
                 var a = c.A;
-                if (c.Excluded || a.Owner == null || (a.T.position - cp).sqrMagnitude > 200f * 200f) continue;
+                if (c.Excluded || a.Owner == null || a.T.parent != null || (a.T.position - cp).sqrMagnitude > 200f * 200f) continue;
                 if (c.HasHome)
                 {
                     Hud.Mark(c.Home + Vector3.up * 0.2f, c.Forgotten ? Color.gray : Color.green, 10f);
