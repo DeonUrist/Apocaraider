@@ -123,7 +123,7 @@ BepInEx\plugins\Apocaraider\Sounds\Gungirl\*.wav / *.ogg
 - **[Gunplay]** Tracers (draw bullet trails), PlayerGunTracers (also for your own shots), BulletSpeed, BoltSpeed, HeadshotMultiplier
   (1.5: your bullets in an NPC's head, NPC bullets in yours and in each other's), VehicleDamage, WheelPopOff, NpcAim,
   AdjustHumanBossHP (40 %: Duke Ironjaw and Buzzgut).
-- **[Detection]** PlayerShoutKey + PlayerShoutKeyModifier (Alt+Q), SightCone, SightRange, DarkSightRange, MuffleSounds.
+- **[Detection]** PlayerShoutKey + PlayerShoutKeyModifier (Alt+Q), SightCone, SightRange, DarkSightRange.
 - **[Pathfinding]** ScaleWithActors.
 - **[Debug]** VerboseLog (every log of the mod), ShowNavigation (ghosts, NPC states
   and map waypoints drawn in the world).

@@ -18,7 +18,7 @@ namespace Apocaraider
     {
         public const string GUID = "com.denis.apocalypter.apocaraider";
         public const string NAME = "Apocaraider";
-        public const string VERSION = "1.1.0";
+        public const string VERSION = "1.1.1";
 
         internal static ManualLogSource Log;
         internal static string Dir;
@@ -101,7 +101,7 @@ namespace Apocaraider
             SightCone = Config.Bind("Detection", "SightCone", 100f, new ConfigDescription("Width of an NPC's field of view, degrees.", new AcceptableValueRange<float>(10f, 360f)));
             SightRange = Config.Bind("Detection", "SightRange", 100f, new ConfigDescription("How far an NPC sees in daylight, m (and at any light if your flashlight is on).", new AcceptableValueRange<float>(5f, 300f)));
             DarkSightRange = Config.Bind("Detection", "DarkSightRange", 5f, new ConfigDescription("How far an NPC sees in full darkness, m.", new AcceptableValueRange<float>(0f, 100f)));
-            MuffleSounds = Config.Bind("Detection", "MuffleSounds", false, "Walls muffle sounds: an NPC with no line to a sound hears it only within half its range.");
+            MuffleSounds = H("Detection", "MuffleSounds", false, "Walls muffle sounds: an NPC with no line to a sound hears it only within half its range.");
 
             ScaleWithActors = Config.Bind("Pathfinding", "ScaleWithActors", false, "With many NPCs around, each one thinks less often (saves CPU in big fights).");
 
@@ -279,8 +279,8 @@ namespace Apocaraider
             NavBakeBudgetMs = H("Nav", "BakeBudgetMs", 1f, new ConfigDescription("CPU time per frame spent mapping a structure, ms.", new AcceptableValueRange<float>(0.2f, 10f)));
             NavFieldSeconds = H("Nav", "FieldSeconds", 1f, new ConfigDescription("How long a computed route to one goal is reused by every NPC heading there, s.", new AcceptableValueRange<float>(0.2f, 10f)));
             NavDump = H("Debug", "NavDump", false, "Map pictures (BMP) in config/Apocaraider/NavDump - written synchronously, 0.5-4 MB each, so not part of VerboseLog.");
-            SpawnKey = H("Debug", "SpawnKey", Key.F2,
-                "Spawns a Gungirl 6 m in front of you (a real raider: she fights and is saved). None = off.");
+            SpawnKey = H("Debug", "SpawnKey", Key.None,
+                "Debug: spawns a Gungirl 6 m in front of you (a real raider: she fights and is saved). None = off (F2 clashed with normal play).");
             DamageFontSize = H("Hud", "DamageFontSize", 14, new ConfigDescription("Font size of the damage numbers, px.", new AcceptableValueRange<int>(8, 40)));
             HitMarkerSize = H("Hud", "HitMarkerSize", 22, new ConfigDescription("Hit marker size, px.", new AcceptableValueRange<int>(6, 100)));
 
