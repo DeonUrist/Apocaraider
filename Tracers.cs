@@ -822,9 +822,9 @@ namespace Apocaraider
                 if (col == null) continue;
                 var root = col.transform.root;
                 if (root == _wCam.root || root.name == "Player") continue;   // the player's own body / arms
-                var part = OwningPart(col.transform);
-                if (part != null && part.parent != null && part.parent.name.StartsWith("hinge_wheel", StringComparison.Ordinal)) { wheel = part; at = _wHits[i].point; break; }
-                if (!col.isTrigger) return;          // something solid first: the game's own cast handles that
+                var w = FittedWheelAt(col.transform);
+                if (w != null) { wheel = w; at = _wHits[i].point; break; }
+                if (!col.isTrigger) return;          // something solid first (a body panel, a door, the ground): the game's own cast handles that
             }
             if (wheel == null) return;
             _wDone = true;
@@ -842,6 +842,25 @@ namespace Apocaraider
                 break;
             }
             if (Plugin.WheelPopOff.Value && before > 0f) _meleeWheels.Add(new MeleeWheel { Part = wheel, Before = before, Dir = _wCam.forward, Frame = Time.frameCount });
+        }
+
+        // (1.5.3) The wheel a collider belongs to: the wheel item itself (tag vehPart on a hinge_wheel*), or anything else under a wheel
+        // hinge - the solid sphere collider of hinge_wheel*/wheel_hub (the game's AddSphereCollider, about the tyre's size, part of the
+        // FRAME) wraps the fitted wheel, so a swing meets it before the tyre's own trigger and 1.5.1 stopped there as "solid first".
+        // That hub now counts as the wheel on its hinge. Another part on the way up (a fender, a plate) = not a wheel.
+        private static Transform FittedWheelAt(Transform t)
+        {
+            for (var a = t; a != null; a = a.parent)
+            {
+                if (a.CompareTag("vehPart"))
+                    return a.parent != null && a.parent.name.StartsWith("hinge_wheel", StringComparison.Ordinal) ? a : null;
+                if (a.name.StartsWith("hinge_wheel", StringComparison.Ordinal))
+                {
+                    for (int i = 0; i < a.childCount; i++) if (a.GetChild(i).CompareTag("vehPart")) return a.GetChild(i);
+                    return null;                     // a bare hub: no wheel fitted
+                }
+            }
+            return null;
         }
 
         // the weapon's "hit" state value (SetFsmFloat Bodypart.Damage, old_knife -12); a weapon with a Reload FSM is a gun
