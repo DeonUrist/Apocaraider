@@ -144,7 +144,8 @@ BepInEx\plugins\Apocaraider\Sounds\Gungirl\*.wav / *.ogg
 - **[General]** EnableHudEffects (damage numbers and hit marker), EnableGunplay (real bullets, falloff, headshots, NPC aim pacing,
   vehicle damage), EnableNpcDetection (sight, hearing, ghosts, search), EnableNpcPathfinding (steering, structure maps, shooting
   positions), EnableFemaleNpc (Gungirls among the raiders).
-- **[Hud]** FloatingDamage (0 off, 1 list top right, 2 floating numbers), HitMarker.
+- **[Hud]** FloatingDamage (0 off, 1 list top right, 2 floating numbers), HitMarker, TurnOffCrosshair (hides the game's centre dot and
+  gun crosshair; off by default).
 - **[Gunplay]** Tracers (draw bullet trails), PlayerGunTracers (also for your own shots), BulletSpeed, BoltSpeed, HeadshotMultiplier
   (1.5: your bullets in an NPC's head, NPC bullets in yours and in each other's), VehicleDamage, WheelPopOff, NpcAim,
   AdjustHumanBossHP (40 %: Duke Ironjaw and Buzzgut).

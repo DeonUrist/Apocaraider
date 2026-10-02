@@ -18,7 +18,7 @@ namespace Apocaraider
     {
         public const string GUID = "com.denis.apocalypter.apocaraider";
         public const string NAME = "Apocaraider";
-        public const string VERSION = "1.4.12";
+        public const string VERSION = "1.4.13";
 
         internal static ManualLogSource Log;
         internal static string Dir;
@@ -29,7 +29,7 @@ namespace Apocaraider
         internal static ConfigEntry<int> GungirlChance;
         internal static ConfigEntry<string> GungirlModel, GungirlTexture, GungirlVoice, GungirlHideParts;
         internal static ConfigEntry<Key> SpawnKey;
-        internal static ConfigEntry<bool> TracersEnabled, VehicleDamage, PlayerTracers, NpcAimAtBody, AimEnabled, HitMarker, LeadTargets, ImpactEffects, MetalSparks;
+        internal static ConfigEntry<bool> TracersEnabled, VehicleDamage, PlayerTracers, NpcAimAtBody, AimEnabled, HitMarker, TurnOffCrosshair, LeadTargets, ImpactEffects, MetalSparks;
         internal static ConfigEntry<float> LeadAccuracy, LeadError, MaxLeadTime;
         internal static ConfigEntry<int> DamageNumbers, DamageFontSize, HitMarkerSize;
         internal static ConfigEntry<float> AimTimeScale, FacingTolerance, AimBaseDistance, AimDelayPer5m, SpreadPer5m, EngagePercent, EngagePatience, HoldRecheckMin, HoldRecheckMax;
@@ -83,6 +83,7 @@ namespace Apocaraider
                 "Damage your hits do, shown as: 0 = nothing, 1 = a list in the top right corner, 2 = numbers floating up from the hit point. White = damage, red with '!' = headshot, light blue = % of condition taken off a vehicle part.",
                 new AcceptableValueRange<int>(0, 2)));
             HitMarker = Config.Bind("Hud", "HitMarker", true, "A diagonal cross flashes at the screen centre when your bullet hits a creature (white, red for a headshot).");
+            TurnOffCrosshair = Config.Bind("Hud", "TurnOffCrosshair", false, "Hides the game's centre dot and the crosshair shown with a gun drawn.");
 
             TracersDraw = Config.Bind("Gunplay", "Tracers", true, "Draw the glowing trail of every bullet in flight (crossbow bolts are always drawn).");
             PlayerGunTracers = Config.Bind("Gunplay", "PlayerGunTracers", true, "Draw tracers for your own shots too.");
@@ -383,7 +384,7 @@ namespace Apocaraider
 
     internal class Runner : MonoBehaviour
     {
-        private void Update() { Voice.EnsureLoading(this); try { Gungirl.Tick(); } catch (Exception e) { Plugin.Log.LogError("Gungirl: " + e); } try { Tracers.Tick(); } catch (Exception e) { Plugin.Log.LogError("Tracers: " + e); } try { Senses.Tick(this); } catch (Exception e) { Plugin.Log.LogError("Senses: " + e); } try { Nav.Tick(); } catch (Exception e) { Plugin.Log.LogError("Nav: " + e); } Brain.Tick(); try { Bosses.Tick(); } catch (Exception e) { Plugin.Log.LogError("Bosses: " + e); } try { Idle.Tick(); } catch (Exception e) { Plugin.Log.LogError("Idle: " + e); } try { Passthrough.Tick(); } catch (Exception e) { Plugin.Log.LogError("Passthrough: " + e); } }
+        private void Update() { Voice.EnsureLoading(this); try { Gungirl.Tick(); } catch (Exception e) { Plugin.Log.LogError("Gungirl: " + e); } try { Tracers.Tick(); } catch (Exception e) { Plugin.Log.LogError("Tracers: " + e); } try { Senses.Tick(this); } catch (Exception e) { Plugin.Log.LogError("Senses: " + e); } try { Nav.Tick(); } catch (Exception e) { Plugin.Log.LogError("Nav: " + e); } Brain.Tick(); try { Bosses.Tick(); } catch (Exception e) { Plugin.Log.LogError("Bosses: " + e); } try { Idle.Tick(); } catch (Exception e) { Plugin.Log.LogError("Idle: " + e); } try { Passthrough.Tick(); } catch (Exception e) { Plugin.Log.LogError("Passthrough: " + e); } try { Hud.CrosshairTick(); } catch (Exception e) { Plugin.Log.LogError("Hud: " + e); } }
         private void LateUpdate() { try { Brain.LateTick(); } catch (Exception e) { Plugin.Log.LogError("Brain: " + e); } }
         private void OnGUI() { try { Hud.OnGUI(); } catch (Exception e) { Plugin.Log.LogError("Hud: " + e); } }
     }

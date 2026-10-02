@@ -200,5 +200,49 @@ namespace Apocaraider
             GUI.Label(r, text, style);
             GUI.color = old;
         }
+    
+        // ---------- [Hud] TurnOffCrosshair ----------
+        // The game's screen-centre cursors are children of the HUD root "Canvas": MousePoint (the 10x10 dot) and MouseCrosshair (the 50x50
+        // crosshair its FSMs switch on with a gun drawn). The FSMs only toggle them active, so they are hidden by scale 0 (restored when the
+        // setting goes off). Looked up again every 2 s while missing (scene load, menu).
+        private static Transform _dot, _cross; private static Vector3 _dotScale = Vector3.one, _crossScale = Vector3.one;
+        private static float _nextCursorLook; private static bool _cursorsHidden;
+        internal static void CrosshairTick()
+        {
+            bool want = Plugin.TurnOffCrosshair.Value;
+            if (!want && !_cursorsHidden) return;
+            if ((_dot == null || _cross == null) && Time.unscaledTime >= _nextCursorLook)
+            {
+                _nextCursorLook = Time.unscaledTime + 2f;
+                _dot = null; _cross = null; _cursorsHidden = false;
+                foreach (var root in UnityEngine.SceneManagement.SceneManager.GetActiveScene().GetRootGameObjects())
+                {
+                    if (root.name != "Canvas") continue;
+                    var d = root.transform.Find("MousePoint"); var c = root.transform.Find("MouseCrosshair");
+                    if (d == null && c == null) continue;
+                    _dot = d; _cross = c;
+                    if (_dot != null) _dotScale = _dot.localScale == Vector3.zero ? Vector3.one : _dot.localScale;
+                    if (_cross != null) _crossScale = _cross.localScale == Vector3.zero ? Vector3.one : _cross.localScale;
+                    break;
+                }
+                if (_dot == null && _cross == null)        // the HUD in another loaded scene: by the dot's name
+                {
+                    var g = GameObject.Find("MousePoint");
+                    if (g != null && g.transform.parent != null) { _dot = g.transform; _dotScale = _dot.localScale == Vector3.zero ? Vector3.one : _dot.localScale; _cross = g.transform.parent.Find("MouseCrosshair"); if (_cross != null) _crossScale = _cross.localScale == Vector3.zero ? Vector3.one : _cross.localScale; }
+                }
+            }
+            if (want)
+            {
+                if (_dot != null && _dot.localScale != Vector3.zero) _dot.localScale = Vector3.zero;
+                if (_cross != null && _cross.localScale != Vector3.zero) _cross.localScale = Vector3.zero;
+                _cursorsHidden = _dot != null || _cross != null;
+            }
+            else
+            {
+                if (_dot != null) _dot.localScale = _dotScale;
+                if (_cross != null) _cross.localScale = _crossScale;
+                _cursorsHidden = false;
+            }
+        }
     }
 }
