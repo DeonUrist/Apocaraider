@@ -1059,6 +1059,125 @@ namespace Apocaraider
             _debug[owner] = new Mark { Next = next, Where = s.Name, At = Time.time };
         }
 
+        // ---------- for Idle (read-only) ----------
+        // the root of the structure whose footprint contains p (any bake state), or null
+        internal static Transform StructureRootAt(Vector3 p)
+        {
+            Transform best = null; float bestDy = float.MaxValue;
+            foreach (var s in _structures)
+            {
+                if (s.Root == null || !Inside(s, p)) continue;
+                float dy = Mathf.Abs(p.y - s.RefY);
+                if (dy < bestDy) { bestDy = dy; best = s.Root; }
+            }
+            return best;
+        }
+
+        // the baked structure under p whose floor there is closest to p.y (the NPC is on that map), or null (not baked yet / outside)
+        private static Structure BakedAt(Vector3 p, out int cell)
+        {
+            cell = -1; Structure best = null; float bestDy = float.MaxValue;
+            foreach (var s in _structures)
+            {
+                int x, z;
+                if (!s.Baked || s.FloorY == null || s.Root == null || !CellOf(s, p, out x, out z)) continue;
+                int i = z * s.W + x;
+                if (float.IsNaN(s.FloorY[i])) continue;
+                float dy = Mathf.Abs(p.y - s.FloorY[i]);
+                if (dy < 2.5f && dy < bestDy) { bestDy = dy; best = s; cell = i; }
+            }
+            return best;
+        }
+
+        // Up to max patrol points around home, each CLEARLY reachable on a straight line: every cell of the line walkable and connected to
+        // the next one (Move: no wall, spike or step), the cells half a metre either side walkable too (elbow room), the end at least 1 m
+        // from anything unwalkable, and a body-sized capsule swept along the line hits nothing solid. 16 bearings x 5 distances (longest
+        // clear one per bearing), then the points are picked >= 60 deg apart, longest first. -1 = home's map is not baked (yet), 0 = none.
+        internal static int PatrolPoints(Vector3 home, List<Vector3> pts, int max, float minD, float maxD)
+        {
+            pts.Clear();
+            int hc; var s = BakedAt(home, out hc);
+            if (s == null) return -1;
+            float hy = s.FloorY[hc];
+            Vector3 h0 = new Vector3(home.x, hy, home.z);
+            var cand = new List<KeyValuePair<float, Vector3>>();     // bearing (deg), point
+            float[] dists = { maxD, maxD * 0.8f, maxD * 0.6f, (maxD + minD) * 0.5f * 0.7f, minD };
+            for (int b = 0; b < 16; b++)
+            {
+                float ang = b * 22.5f;
+                Vector3 dir = Quaternion.Euler(0f, ang, 0f) * Vector3.forward;
+                foreach (float d in dists)
+                {
+                    if (d < minD - 0.01f) continue;
+                    Vector3 end;
+                    if (ClearLine(s, h0, dir, d, out end)) { cand.Add(new KeyValuePair<float, Vector3>(ang, end)); break; }
+                }
+            }
+            cand.Sort((a, c) => (c.Value - h0).sqrMagnitude.CompareTo((a.Value - h0).sqrMagnitude));
+            foreach (var c in cand)
+            {
+                bool far = true;
+                foreach (var p in pts) { if (Mathf.Abs(Mathf.DeltaAngle(Bearing(h0, p), c.Key)) < 60f) { far = false; break; } }
+                if (!far) continue;
+                pts.Add(c.Value);
+                if (pts.Count >= max) break;
+            }
+            return pts.Count;
+        }
+
+        private static float Bearing(Vector3 from, Vector3 to) { Vector3 d = to - from; return Mathf.Atan2(d.x, d.z) * Mathf.Rad2Deg; }
+
+        private static bool ClearLine(Structure s, Vector3 h0, Vector3 dir, float dist, out Vector3 end)
+        {
+            end = h0;
+            int prev = -1, x, z;
+            if (!CellOf(s, h0, out x, out z)) return false;
+            int comp = s.Comp != null ? s.Comp[z * s.W + x] : -2;
+            Vector3 side = new Vector3(dir.z, 0f, -dir.x) * 0.5f;
+            float step = s.Cell * 0.5f;
+            for (float t = 0f; t <= dist + 1e-3f; t += step)
+            {
+                Vector3 p = h0 + dir * t;
+                if (!CellOf(s, p, out x, out z)) return false;
+                int i = z * s.W + x;
+                if (float.IsNaN(s.FloorY[i]) || (comp != -2 && s.Comp[i] != comp)) return false;
+                if (prev >= 0 && prev != i && !Move(s, prev, i)) return false;
+                prev = i;
+                if (!Walkable(s, p + side) || !Walkable(s, p - side)) return false;
+            }
+            Vector3 e = h0 + dir * dist;
+            if (!CellOf(s, e, out x, out z)) return false;
+            for (int dz = -2; dz <= 2; dz++)                      // >= 1 m from anything unwalkable
+                for (int dx = -2; dx <= 2; dx++)
+                {
+                    int cx = x + dx, cz = z + dz;
+                    if (cx < 0 || cz < 0 || cx >= s.W || cz >= s.H || float.IsNaN(s.FloorY[cz * s.W + cx])) return false;
+                }
+            float ey = s.FloorY[z * s.W + x];
+            end = new Vector3(e.x, ey, e.z);
+            // physics: the body swept along the line (floors differ a little: from the higher end, 0.25 m clear of the floor)
+            float top = Mathf.Max(h0.y, ey);
+            Vector3 a1 = new Vector3(h0.x, top + 0.25f + Radius, h0.z), a2 = new Vector3(h0.x, top + HeadTop - Radius, h0.z);
+            Vector3 flat = new Vector3(e.x - h0.x, 0f, e.z - h0.z);
+            if (Physics.CapsuleCast(a1, a2, Radius + 0.05f, flat.normalized, flat.magnitude, BakeMask, QueryTriggerInteraction.Ignore)) return false;
+            return true;
+        }
+
+        private static bool Walkable(Structure s, Vector3 p)
+        {
+            int x, z;
+            return CellOf(s, p, out x, out z) && !float.IsNaN(s.FloorY[z * s.W + x]);
+        }
+
+        // a body capsule swept from a to b (patrol legs are re-checked before walking: a car parked there since the bake)
+        internal static bool BodyPathClear(Vector3 a, Vector3 b)
+        {
+            Vector3 flat = new Vector3(b.x - a.x, 0f, b.z - a.z);
+            float top = Mathf.Max(a.y, b.y);
+            Vector3 a1 = new Vector3(a.x, top + 0.25f + Radius, a.z), a2 = new Vector3(a.x, top + HeadTop - Radius, a.z);
+            return flat.sqrMagnitude < 0.01f || !Physics.CapsuleCast(a1, a2, Radius, flat.normalized, flat.magnitude, BakeMask, QueryTriggerInteraction.Ignore);
+        }
+
         internal static void DrawDebug()
         {
             if (!On || !Plugin.ShowNav.Value) return;

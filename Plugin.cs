@@ -18,7 +18,7 @@ namespace Apocaraider
     {
         public const string GUID = "com.denis.apocalypter.apocaraider";
         public const string NAME = "Apocaraider";
-        public const string VERSION = "1.2.3";
+        public const string VERSION = "1.3.0";
 
         internal static ManualLogSource Log;
         internal static string Dir;
@@ -47,7 +47,8 @@ namespace Apocaraider
         internal static ConfigEntry<Key> ShoutKey, ShoutModifier;
         internal static ConfigEntry<string> ShoutBlocksButtons;
         internal static ConfigEntry<string> NpcShotRanges, HumanFactions, BlastPrefabs;
-        internal static ConfigEntry<bool> NavEnabled, NavLog, ShowNav, NavDump, WheelPopOff;
+        internal static ConfigEntry<bool> NavEnabled, NavLog, ShowNav, NavDump, WheelPopOff, IdleEnabled, IdleCoyotes;
+        internal static ConfigEntry<float> IdleReturnDelay, IdleRetrySeconds, IdleWalkRadius; internal static ConfigEntry<int> IdleReturnTries;
         internal static ConfigEntry<float> NavBakeRange, NavCellSize, NavMargin, NavMaxStep, NavBakeBudgetMs, NavFieldSeconds;
 
         private static GameObject _runner;
@@ -104,6 +105,9 @@ namespace Apocaraider
             MuffleSounds = H("Detection", "MuffleSounds", false, "Walls muffle sounds: an NPC with no line to a sound hears it only within half its range.");
 
             ScaleWithActors = Config.Bind("Pathfinding", "ScaleWithActors", false, "With many NPCs around, each one thinks less often (saves CPU in big fights).");
+
+            IdleEnabled = Config.Bind("Idle", "EnableIdleBehavior", true, "Camp raiders who lose you go back to their spawn spot, and walk a short round in their camp while nothing happens.");
+            IdleCoyotes = Config.Bind("Idle", "Coyotes", false, "The same for the peaceful Coyote towns.");
 
             VerboseLog = Config.Bind("Debug", "VerboseLog", false, "Detailed logs for every part of the mod (hits, detection, movement, maps).");
             HitLog = NavLog = SensesLog = BrainLog = VerboseLog;
@@ -281,6 +285,10 @@ namespace Apocaraider
             NavMaxStep = H("Nav", "MaxStep", 0.25f, new ConfigDescription("Largest height step between neighbouring map cells (0.5 m apart) an NPC can walk, m. An NPC's body can't climb much more than a kerb.", new AcceptableValueRange<float>(0.1f, 2f)));
             NavBakeBudgetMs = H("Nav", "BakeBudgetMs", 1f, new ConfigDescription("CPU time per frame spent mapping a structure, ms.", new AcceptableValueRange<float>(0.2f, 10f)));
             NavFieldSeconds = H("Nav", "FieldSeconds", 1f, new ConfigDescription("How long a computed route to one goal is reused by every NPC heading there, s.", new AcceptableValueRange<float>(0.2f, 10f)));
+            IdleReturnDelay = H("Idle", "ReturnDelay", 15f, new ConfigDescription("Seconds an NPC stays where it lost track of everything before it heads home.", new AcceptableValueRange<float>(0f, 300f)));
+            IdleReturnTries = H("Idle", "ReturnTries", 10, new ConfigDescription("Failed attempts to get home before the NPC forgets its home.", new AcceptableValueRange<int>(1, 100)));
+            IdleRetrySeconds = H("Idle", "RetrySeconds", 5f, new ConfigDescription("Pause between two attempts to get home, s.", new AcceptableValueRange<float>(0f, 60f)));
+            IdleWalkRadius = H("Idle", "WalkRadius", 200f, new ConfigDescription("Camp walks only for NPCs within this distance of the camera, m.", new AcceptableValueRange<float>(20f, 1000f)));
             NavDump = H("Debug", "NavDump", false, "Map pictures (BMP) in config/Apocaraider/NavDump - written synchronously, 0.5-4 MB each, so not part of VerboseLog.");
             SpawnKey = H("Debug", "SpawnKey", Key.None,
                 "Debug: spawns a Gungirl 6 m in front of you (a real raider: she fights and is saved). None = off (F2 clashed with normal play).");
@@ -339,13 +347,14 @@ namespace Apocaraider
                 h.Patch(AccessTools.Method(typeof(Micosmo.SensorToolkit.PlayMaker.SensorGetLineOfSightResult), "OnUpdate3D"), prefix: new HarmonyMethod(typeof(Senses), nameof(Senses.BeforeLosResult)));
                 h.Patch(AccessTools.Method(typeof(AudioPlay), "OnEnter"), prefix: new HarmonyMethod(typeof(Senses), nameof(Senses.BeforeAudioPlay)));
                 h.Patch(AccessTools.Method(typeof(CreateObject), "OnEnter"), postfix: new HarmonyMethod(typeof(Senses), nameof(Senses.AfterCreateObject)));
+                h.Patch(AccessTools.Method(typeof(CreateObject), "OnEnter"), postfix: new HarmonyMethod(typeof(Idle), nameof(Idle.AfterCreateObject)));
                 h.Patch(AccessTools.Method(typeof(GetButton), "DoGetButton"), prefix: new HarmonyMethod(typeof(Senses), nameof(Senses.BeforeGetButton)));
                 h.Patch(AccessTools.Method(typeof(GetButtonDown), "OnUpdate"), prefix: new HarmonyMethod(typeof(Senses), nameof(Senses.BeforeGetButtonDown)));
                 h.Patch(AccessTools.Method(typeof(GetButtonUp), "OnUpdate"), prefix: new HarmonyMethod(typeof(Senses), nameof(Senses.BeforeGetButtonUp)));
             }
             catch (Exception e) { Log.LogError("Harmony patch failed, no senses: " + e); }
 
-            SceneManager.sceneLoaded += (s, m) => { EnsureRunner(); Gungirl.OnSceneLoaded(); Tracers.OnSceneLoaded(); Brain.OnSceneLoaded(); Senses.OnSceneLoaded(); Nav.OnSceneLoaded(); Bosses.OnSceneLoaded(); };
+            SceneManager.sceneLoaded += (s, m) => { EnsureRunner(); Gungirl.OnSceneLoaded(); Tracers.OnSceneLoaded(); Brain.OnSceneLoaded(); Senses.OnSceneLoaded(); Nav.OnSceneLoaded(); Bosses.OnSceneLoaded(); Idle.OnSceneLoaded(); };
             EnsureRunner();
             Log.LogInfo(NAME + " " + VERSION + " loaded");
         }
@@ -364,7 +373,7 @@ namespace Apocaraider
 
     internal class Runner : MonoBehaviour
     {
-        private void Update() { Voice.EnsureLoading(this); try { Gungirl.Tick(); } catch (Exception e) { Plugin.Log.LogError("Gungirl: " + e); } try { Tracers.Tick(); } catch (Exception e) { Plugin.Log.LogError("Tracers: " + e); } try { Senses.Tick(this); } catch (Exception e) { Plugin.Log.LogError("Senses: " + e); } try { Nav.Tick(); } catch (Exception e) { Plugin.Log.LogError("Nav: " + e); } Brain.Tick(); try { Bosses.Tick(); } catch (Exception e) { Plugin.Log.LogError("Bosses: " + e); } }
+        private void Update() { Voice.EnsureLoading(this); try { Gungirl.Tick(); } catch (Exception e) { Plugin.Log.LogError("Gungirl: " + e); } try { Tracers.Tick(); } catch (Exception e) { Plugin.Log.LogError("Tracers: " + e); } try { Senses.Tick(this); } catch (Exception e) { Plugin.Log.LogError("Senses: " + e); } try { Nav.Tick(); } catch (Exception e) { Plugin.Log.LogError("Nav: " + e); } Brain.Tick(); try { Bosses.Tick(); } catch (Exception e) { Plugin.Log.LogError("Bosses: " + e); } try { Idle.Tick(); } catch (Exception e) { Plugin.Log.LogError("Idle: " + e); } }
         private void LateUpdate() { try { Brain.LateTick(); } catch (Exception e) { Plugin.Log.LogError("Brain: " + e); } }
         private void OnGUI() { try { Hud.OnGUI(); } catch (Exception e) { Plugin.Log.LogError("Hud: " + e); } }
     }

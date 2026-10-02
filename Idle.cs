@@ -1,0 +1,350 @@
+using System;
+using System.Collections.Generic;
+using HutongGames.PlayMaker.Actions;
+using UnityEngine;
+
+namespace Apocaraider
+{
+    // [Idle] EnableIdleBehavior: what camp raiders do when nothing is going on (prototype, 1.3.0). Separate from the fight logic: it only
+    // drives an NPC while the senses have it Idle (no target, no ghost, not searching) and nothing is detected - the moment it sees or
+    // hears anything it lets go (animation and velocity handed back) and the senses / brain take over as before.
+    //
+    // Who: raiders spawned by a camp's EnemySpawn_Scrapyard_* spawner (incl. boss and bodyguards; the _Attack raid spawners excluded),
+    // Coyotes from EnemySpawn_Coyotes_* with [Idle] Coyotes. Home = the exact spawn point ("spawn (n)" under the spawner's
+    // spawn_locations_enemy* sibling) the CreateObject used; after a load (restored NPCs are not re-spawned) the nearest free spawn
+    // point of the right faction in the structure it stands in, the floor under it.
+    //
+    // 1. Return home: idle for [Idle] ReturnDelay (15 s) since it last had a target / ghost / search and > 2.5 m from home -> runs back
+    //    (camp map routes when on a baked map, else straight with three body feelers). An attempt fails after 2 s without getting
+    //    closer; then 5 s standing, then the next; after 10 failed attempts home is forgotten. Any loaded NPC, any distance.
+    // 2. Base walk: standing at home, within [Idle] WalkRadius (200 m) of the camera, on a baked map: 1-3 patrol points (Nav.PatrolPoints:
+    //    clearly reachable on a straight line, elbow room, body sweep). Stand 10-25 s, walk to one, stand 4-10 s looking around, walk
+    //    back. Every leg is swept again before it starts; a bump drops that point for 5 min. No points = it just stands, as vanilla.
+    // Gait: humans have only idle / run / attack clips - "walking" is the run clip at half speed (2.5 m/s); full run when far from home.
+    internal static class Idle
+    {
+        private enum Leg { None, Home, ToPoint, Back }
+
+        private sealed class Ctl
+        {
+            public Senses.Agent A; public Rigidbody Rb; public Animator Anim;
+            public bool Resolved, Excluded; public float NextResolve;
+            public Vector3 Home; public bool HasHome, Forgotten; public int SpotId;
+            public float BusyAt, NextThink, WaitUntil, LegStart, ProgressAt, BestLeft;
+            public int Tries; public Leg Leg; public Vector3 Goal; public int PointIdx = -1;
+            public Vector3 Steer; public float Speed; public bool Moving, AtHome;
+            public List<Vector3> Points; public int PointsState;   // 0 not tried, -1 map not baked yet, 1 done
+            public float NextPoints; public float[] DroppedUntil; public int PointsTries;
+            public float LookYaw, NextLook; public bool Turning, PendingBack;
+        }
+
+        private sealed class Spot { public Transform T; public bool Coyotes; }
+
+        private static readonly Dictionary<int, Ctl> _ctl = new Dictionary<int, Ctl>();
+        private static readonly Dictionary<int, Spot> _spawnOf = new Dictionary<int, Spot>();        // NPC instance id -> its spawn point
+        private static readonly Dictionary<int, List<Spot>> _spots = new Dictionary<int, List<Spot>>();   // structure root id -> spawn points
+        private static readonly HashSet<int> _claimed = new HashSet<int>();                          // spawn point ids already someone's home
+        private static readonly List<int> _dead = new List<int>();
+        private static int _stagger;
+
+        internal static bool On { get { return Plugin.IdleEnabled != null && Plugin.IdleEnabled.Value && Senses.On; } }
+
+        public static void OnSceneLoaded() { _ctl.Clear(); _spawnOf.Clear(); _spots.Clear(); _claimed.Clear(); }
+
+        // ---------- spawn points ----------
+        // postfix on CreateObject.OnEnter (its own; Senses' and Gungirl's postfixes are separate): a camp spawner made an NPC at a spawn point
+        public static void AfterCreateObject(CreateObject __instance)
+        {
+            try
+            {
+                if (__instance.spawnPoint == null || __instance.storeObject == null) return;
+                var made = __instance.storeObject.Value; var at = __instance.spawnPoint.Value;
+                var owner = __instance.Fsm != null ? __instance.Fsm.GameObject : null;
+                if (made == null || at == null || owner == null) return;
+                string n = owner.name;
+                bool scrap = n.StartsWith("EnemySpawn_Scrapyard", StringComparison.Ordinal), coy = n.StartsWith("EnemySpawn_Coyotes", StringComparison.Ordinal);
+                if ((!scrap && !coy) || n.IndexOf("Attack", StringComparison.Ordinal) >= 0) return;
+                _spawnOf[made.GetInstanceID()] = new Spot { T = at.transform, Coyotes = coy };
+            }
+            catch (Exception e) { Plugin.Log.LogError("Idle: " + e); }
+        }
+
+        // the spawn points of a structure: children of each spawn_locations_enemy* that follows an EnemySpawn_Scrapyard / _Coyotes spawner
+        private static List<Spot> SpotsOf(Transform root)
+        {
+            List<Spot> list;
+            int id = root.GetInstanceID();
+            if (_spots.TryGetValue(id, out list)) return list;
+            list = new List<Spot>();
+            for (int i = 0; i < root.childCount; i++)
+            {
+                var c = root.GetChild(i);
+                string n = c.name;
+                if (!n.StartsWith("spawn_locations_enemy", StringComparison.Ordinal)) continue;
+                // the spawner is the sibling just before it (EnemySpawn_X then spawn_locations_enemy_X in every camp prefab read)
+                var sp = i > 0 ? root.GetChild(i - 1).name : "";
+                bool scrap = sp.StartsWith("EnemySpawn_Scrapyard", StringComparison.Ordinal), coy = sp.StartsWith("EnemySpawn_Coyotes", StringComparison.Ordinal);
+                if ((!scrap && !coy) || sp.IndexOf("Attack", StringComparison.Ordinal) >= 0) continue;
+                for (int k = 0; k < c.childCount; k++) list.Add(new Spot { T = c.GetChild(k), Coyotes = coy });
+            }
+            _spots[id] = list;
+            return list;
+        }
+
+        private static bool Wanted(Spot s) { return s != null && s.T != null && (!s.Coyotes || Plugin.IdleCoyotes.Value); }
+
+        private static Vector3 FloorUnder(Vector3 p)
+        {
+            RaycastHit h;
+            return Physics.Raycast(p + Vector3.up * 0.5f, Vector3.down, out h, 6f, (1 << 0) | (1 << 14), QueryTriggerInteraction.Ignore) ? h.point : p;
+        }
+
+        private static void Resolve(Ctl c, float now)
+        {
+            var a = c.A;
+            if (a.Tag != "Scrapyard" && a.Tag != "Coyotes") { c.Excluded = true; c.Resolved = true; return; }
+            Spot spot;
+            if (_spawnOf.TryGetValue(a.Owner.GetInstanceID(), out spot))
+            {
+                c.Resolved = true;
+                if (!Wanted(spot)) { c.Excluded = true; return; }
+                SetHome(c, spot);
+                return;
+            }
+            // restored from a save: the nearest free spawn point of its faction in the structure it stands in
+            var root = Nav.StructureRootAt(a.T.position);
+            if (root == null) { c.NextResolve = now + 10f; return; }      // not in a known camp (yet): try again later
+            Spot best = null; float bd = 40f * 40f;
+            foreach (var s in SpotsOf(root))
+            {
+                if (s.T == null || _claimed.Contains(s.T.GetInstanceID()) || s.Coyotes != (a.Tag == "Coyotes")) continue;
+                float d = (s.T.position - a.T.position).sqrMagnitude;
+                if (d < bd) { bd = d; best = s; }
+            }
+            c.Resolved = true;
+            if (best == null || !Wanted(best)) { c.Excluded = true; return; }
+            SetHome(c, best);
+        }
+
+        private static void SetHome(Ctl c, Spot s)
+        {
+            c.Home = FloorUnder(s.T.position); c.HasHome = true; c.SpotId = s.T.GetInstanceID(); _claimed.Add(c.SpotId);
+            Log(c, "home at " + s.T.parent.name + "/" + s.T.name);
+        }
+
+        // ---------- per frame ----------
+        public static void Tick()
+        {
+            if (!On) { if (_ctl.Count > 0) { foreach (var kv in _ctl) Stop(kv.Value, true); _ctl.Clear(); _claimed.Clear(); } return; }
+            float now = Time.time, dt = Time.deltaTime;
+            if (dt <= 0f) return;
+            foreach (var a in Senses.AllAgents)
+            {
+                if (a.Owner == null) continue;
+                int id = a.Owner.GetInstanceID();
+                Ctl c;
+                if (!_ctl.TryGetValue(id, out c))
+                {
+                    c = new Ctl { A = a, Rb = a.Owner.GetComponent<Rigidbody>(), BusyAt = now, NextThink = now + (_stagger++ % 10) * 0.02f };
+                    var anim = a.T.Find("Anim");
+                    c.Anim = anim != null ? anim.GetComponent<Animator>() : a.Owner.GetComponentInChildren<Animator>();
+                    _ctl[id] = c;
+                }
+                if (c.Excluded) continue;
+                bool idle = a.State == Senses.State.Idle && a.Target == null && a.Ghost == null && a.T.parent == null
+                            && (a.DetectedVar == null || a.DetectedVar.Value == null);
+                if (!idle)
+                {
+                    if (c.Leg != Leg.None || c.Moving || c.Turning) Stop(c, false);   // the fight logic takes over: its own animation, not ours
+                    c.BusyAt = now; c.Tries = 0; c.WaitUntil = 0f; c.PendingBack = false; c.AtHome = false;
+                    continue;
+                }
+                if (now >= c.NextThink)
+                {
+                    c.NextThink = now + 0.2f;
+                    try { Think(c, now); } catch (Exception e) { Plugin.Log.LogError("Idle: " + e); Stop(c); c.Excluded = true; }
+                }
+                if (c.Moving) Drive(c, dt);
+                else if (c.Turning)
+                {
+                    float y = Mathf.MoveTowardsAngle(a.T.eulerAngles.y, c.LookYaw, Mathf.Max(10f, Plugin.TurnRate.Value) * 0.5f * dt);
+                    a.T.rotation = Quaternion.Euler(0f, y, 0f);
+                    if (Mathf.Abs(Mathf.DeltaAngle(y, c.LookYaw)) < 1f) c.Turning = false;
+                }
+            }
+            // forget dead NPCs (and free their spawn points)
+            if (_ctl.Count > 0 && (Time.frameCount & 63) == 0)
+            {
+                _dead.Clear();
+                foreach (var kv in _ctl) if (kv.Value.A.Owner == null) { _dead.Add(kv.Key); if (kv.Value.HasHome) _claimed.Remove(kv.Value.SpotId); }
+                foreach (var k in _dead) _ctl.Remove(k);
+            }
+        }
+
+        private static void Think(Ctl c, float now)
+        {
+            if (!c.Resolved) { if (now >= c.NextResolve) Resolve(c, now); if (!c.Resolved) return; }
+            if (c.Excluded || !c.HasHome || c.Forgotten) return;
+            Vector3 pos = c.A.T.position;
+            if (now - c.BusyAt < Mathf.Max(0f, Plugin.IdleReturnDelay.Value)) return;      // just lost its target: stays a moment
+
+            if (c.Leg != Leg.None) { LegThink(c, now, pos); return; }
+            if (now < c.WaitUntil) { LookAround(c, now); return; }
+            if (c.PendingBack) { c.PendingBack = false; StartLeg(c, Leg.Back, c.Home, now, 2.5f); return; }   // stood at the patrol point: back home
+
+            float dHome = Flat(pos - c.Home);
+            if (dHome > 2.5f || Mathf.Abs(pos.y - c.Home.y) > 2.5f) { c.AtHome = false; StartLeg(c, Leg.Home, c.Home, now, dHome > 25f ? 5f : 2.5f); return; }
+
+            // at home: the base walk, near the camera only
+            if (!c.AtHome) { c.AtHome = true; c.WaitUntil = now + UnityEngine.Random.Range(10f, 25f); return; }
+            var cam = Camera.main;
+            if (cam == null || Flat(cam.transform.position - pos) > Plugin.IdleWalkRadius.Value) return;
+            if (c.PointsState != 1 && now >= c.NextPoints)
+            {
+                if (c.Points == null) c.Points = new List<Vector3>();
+                int r = Nav.PatrolPoints(c.Home, c.Points, 3, 4f, 15f);
+                if (r < 0)       // home's map not baked yet (or home is off the map: a platform high above the camp floor)
+                {
+                    c.PointsState = -1; c.NextPoints = now + 10f;
+                    if (++c.PointsTries >= 30) { c.PointsState = 1; c.Points.Clear(); c.DroppedUntil = new float[0]; Log(c, "no camp map at its home - stands"); }
+                    return;
+                }
+                c.PointsState = 1; c.DroppedUntil = new float[c.Points.Count];
+                Log(c, r + " patrol point(s)" + (r == 0 ? " - stands" : ""));
+            }
+            if (c.PointsState != 1 || c.Points.Count == 0) return;
+            int pick = -1, tries = 0;
+            while (tries++ < 6) { int i = UnityEngine.Random.Range(0, c.Points.Count); if (now >= c.DroppedUntil[i]) { pick = i; break; } }
+            if (pick < 0) { c.WaitUntil = now + 10f; return; }
+            if (!Nav.BodyPathClear(c.Home, c.Points[pick])) { c.DroppedUntil[pick] = now + 300f; c.WaitUntil = now + 5f; Log(c, "patrol point " + pick + " blocked now, skipped"); return; }
+            c.PointIdx = pick;
+            StartLeg(c, Leg.ToPoint, c.Points[pick], now, 2.5f);
+        }
+
+        private static void StartLeg(Ctl c, Leg leg, Vector3 goal, float now, float speed)
+        {
+            c.Leg = leg; c.Goal = goal; c.LegStart = now; c.ProgressAt = now; c.BestLeft = float.MaxValue; c.Speed = speed;
+            if (leg == Leg.Home) Log(c, "runs home (" + Flat(c.A.T.position - goal).ToString("0") + " m, try " + (c.Tries + 1) + ")");
+            LegThink(c, now, c.A.T.position);
+            if (c.Leg != Leg.None) Go(c, speed);
+        }
+
+        private static void LegThink(Ctl c, float now, Vector3 pos)
+        {
+            float left = Flat(pos - c.Goal);
+            float arrive = c.Leg == Leg.Home ? 1.5f : 0.8f;
+            if (left <= arrive && Mathf.Abs(pos.y - c.Goal.y) < 2.5f) { Arrived(c, now); return; }
+            Vector3 next; float pathLeft;
+            if (Nav.On && Nav.Next(c.A.Owner, pos, c.Goal, out next, out pathLeft)) { c.Steer = next; left = pathLeft; }
+            else { c.Steer = c.Goal; }
+            if (c.Leg == Leg.Home && left <= 25f && c.Speed > 2.5f) Go(c, 2.5f);      // slows to a walk near home
+            if (left < c.BestLeft - 0.5f) { c.BestLeft = left; c.ProgressAt = now; }
+            float patience = c.Leg == Leg.Home ? 2f : 1f;
+            if (now - c.ProgressAt > patience) Failed(c, now);
+        }
+
+        private static void Arrived(Ctl c, float now)
+        {
+            var leg = c.Leg;
+            Stop(c);
+            if (leg == Leg.Home) { c.Tries = 0; c.AtHome = true; c.WaitUntil = now + UnityEngine.Random.Range(10f, 25f); Log(c, "is home"); }
+            else if (leg == Leg.ToPoint) { c.WaitUntil = now + UnityEngine.Random.Range(4f, 10f); c.NextLook = now + 1f; c.AtHome = false; c.PendingBack = true; }
+            else { c.AtHome = true; c.WaitUntil = now + UnityEngine.Random.Range(10f, 25f); }
+        }
+
+        private static void Failed(Ctl c, float now)
+        {
+            var leg = c.Leg;
+            Stop(c);
+            if (leg == Leg.Home)
+            {
+                c.Tries++;
+                int max = Math.Max(1, Plugin.IdleReturnTries.Value);
+                if (c.Tries >= max) { c.Forgotten = true; _claimed.Remove(c.SpotId); Log(c, "can't get home after " + c.Tries + " tries, forgets it"); return; }
+                c.WaitUntil = now + Mathf.Max(0f, Plugin.IdleRetrySeconds.Value);
+                Log(c, "gets nowhere going home (try " + c.Tries + "/" + max + "), waits");
+            }
+            else
+            {
+                if (leg == Leg.ToPoint && c.PointIdx >= 0 && c.DroppedUntil != null && c.PointIdx < c.DroppedUntil.Length) c.DroppedUntil[c.PointIdx] = now + 300f;
+                Log(c, "bumped on its walk, goes home");
+                c.AtHome = false;          // next think: back home (a normal return)
+            }
+        }
+
+        private static void LookAround(Ctl c, float now)
+        {
+            if (!c.PendingBack || now < c.NextLook) return;       // looks around at the patrol point only (at home it just stands, as vanilla)
+            c.NextLook = now + UnityEngine.Random.Range(1.5f, 3f);
+            c.LookYaw = c.A.T.eulerAngles.y + UnityEngine.Random.Range(-70f, 70f);
+            c.Turning = true;
+        }
+
+        // ---------- the body ----------
+        private static void Go(Ctl c, float speed)
+        {
+            c.Speed = speed;
+            if (c.Anim != null)
+            {
+                if (!c.Moving) c.Anim.Play("run", 0, UnityEngine.Random.value);
+                c.Anim.speed = speed / 5f;
+            }
+            c.Moving = true;
+        }
+
+        private static void Stop(Ctl c) { Stop(c, true); }
+        private static void Stop(Ctl c, bool playIdle)
+        {
+            if (c.Moving)
+            {
+                if (c.Anim != null) { c.Anim.speed = 1f; if (playIdle) c.Anim.Play("idle", 0, 0f); }
+                if (c.Rb != null) { var v = c.Rb.velocity; c.Rb.velocity = new Vector3(0f, v.y, 0f); }
+            }
+            c.Moving = false; c.Leg = Leg.None; c.Turning = false;
+        }
+
+        private static readonly float[] Fan = { 0f, -35f, 35f, -70f, 70f };
+        private static void Drive(Ctl c, float dt)
+        {
+            if (c.Rb == null) { Stop(c); return; }
+            var t = c.A.T;
+            Vector3 to = c.Steer - t.position; to.y = 0f;
+            if (to.sqrMagnitude < 0.0001f) return;
+            float want = Mathf.Atan2(to.x, to.z) * Mathf.Rad2Deg;
+            // three-way body feelers (only off a map route): the first free heading nearest the wanted one
+            float chosen = want;
+            Vector3 low = t.position + Vector3.up * 0.6f, high = t.position + Vector3.up * 1.3f;
+            for (int i = 0; i < Fan.Length; i++)
+            {
+                Vector3 d = Quaternion.Euler(0f, want + Fan[i], 0f) * Vector3.forward;
+                if (!Physics.CapsuleCast(low, high, 0.3f, d, 1.2f, FeelMask, QueryTriggerInteraction.Ignore)) { chosen = want + Fan[i]; break; }
+            }
+            float yaw = Mathf.MoveTowardsAngle(t.eulerAngles.y, chosen, Mathf.Max(10f, Plugin.TurnRate.Value) * dt);
+            t.rotation = Quaternion.Euler(0f, yaw, 0f);
+            Vector3 v = t.forward * c.Speed;
+            v.y = c.Rb.velocity.y;
+            c.Rb.velocity = v;
+        }
+        private const int FeelMask = (1 << 0) | (1 << 8) | (1 << 11);     // Default (walls, rock, props), Car, Door - not Ground (slopes)
+
+        private static float Flat(Vector3 v) { v.y = 0f; return v.magnitude; }
+
+        private static void Log(Ctl c, string msg)
+        {
+            if (Plugin.BrainLog.Value) Plugin.Log.LogInfo("Idle: " + (c.A.Owner != null ? c.A.Owner.name : "?") + " " + msg);
+        }
+
+        // [Debug] ShowNavigation: home (green) and patrol points (lime) of managed NPCs near the camera
+        internal static void DrawDebug()
+        {
+            if (!Plugin.ShowNav.Value || _ctl.Count == 0) return;
+            var cam = Camera.main; if (cam == null) return;
+            foreach (var c in _ctl.Values)
+            {
+                if (!c.HasHome || c.A.Owner == null || (c.Home - cam.transform.position).sqrMagnitude > 200f * 200f) continue;
+                Hud.Mark(c.Home + Vector3.up * 0.2f, c.Forgotten ? Color.gray : Color.green, 10f);
+                if (c.Points != null) foreach (var p in c.Points) Hud.Mark(p + Vector3.up * 0.2f, new Color(0.6f, 1f, 0.2f), 7f);
+            }
+        }
+    }
+}
