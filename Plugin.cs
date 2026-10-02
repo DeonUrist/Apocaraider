@@ -18,7 +18,7 @@ namespace Apocaraider
     {
         public const string GUID = "com.denis.apocalypter.apocaraider";
         public const string NAME = "Apocaraider";
-        public const string VERSION = "1.4.2";
+        public const string VERSION = "1.4.3";
 
         internal static ManualLogSource Log;
         internal static string Dir;
@@ -47,7 +47,7 @@ namespace Apocaraider
         internal static ConfigEntry<Key> ShoutKey, ShoutModifier;
         internal static ConfigEntry<string> ShoutBlocksButtons;
         internal static ConfigEntry<string> NpcShotRanges, HumanFactions, BlastPrefabs;
-        internal static ConfigEntry<bool> NavEnabled, NavLog, ShowNav, NavDump, WheelPopOff, IdleEnabled, IdleCoyotes;
+        internal static ConfigEntry<bool> NavEnabled, NavLog, ShowNav, NavDump, WheelPopOff, IdleEnabled, IdleCoyotes, FriendsPassThrough;
         internal static ConfigEntry<float> IdleReturnDelay, IdleRetrySeconds, IdleWalkRadius; internal static ConfigEntry<int> IdleReturnTries;
         internal static ConfigEntry<float> NavBakeRange, NavCellSize, NavMargin, NavMaxStep, NavBakeBudgetMs, NavFieldSeconds;
 
@@ -105,12 +105,14 @@ namespace Apocaraider
             MuffleSounds = H("Detection", "MuffleSounds", false, "Walls muffle sounds: an NPC with no line to a sound hears it only within half its range.");
 
             ScaleWithActors = Config.Bind("Pathfinding", "ScaleWithActors", false, "With many NPCs around, each one thinks less often (saves CPU in big fights).");
+            FriendsPassThrough = Config.Bind("Pathfinding", "FriendsPassThrough", true, "NPCs of the same faction walk through each other while they fight, search or walk home - no bumping, no blocking a passage. Solid again once they are idle.");
 
             IdleEnabled = Config.Bind("Idle", "EnableIdleBehavior", true, "Camp raiders who lose you go back to their spawn spot, and walk a short round in their camp while nothing happens.");
             IdleCoyotes = Config.Bind("Idle", "Coyotes", false, "The same for the peaceful Coyote towns.");
 
             VerboseLog = Config.Bind("Debug", "VerboseLog", false, "Detailed logs for every part of the mod (hits, detection, movement, maps).");
             HitLog = NavLog = SensesLog = BrainLog = VerboseLog;
+            NavDump = Config.Bind("Debug", "NavDump", false, "Map pictures (BMP) of every camp map made, and of NPCs that find no route, in config/Apocaraider/NavDump (0.5-4 MB each; for troubleshooting).");
             ShowNav = Config.Bind("Debug", "ShowNavigation", false, "Draw the detection ghosts, NPC states and the structure maps' waypoints in the world.");
             ShowGhosts = ShowNav;
 
@@ -289,7 +291,7 @@ namespace Apocaraider
             IdleReturnTries = H("Idle", "ReturnTries", 10, new ConfigDescription("Failed attempts to get home before the NPC forgets its home.", new AcceptableValueRange<int>(1, 100)));
             IdleRetrySeconds = H("Idle", "RetrySeconds", 5f, new ConfigDescription("Pause between two attempts to get home, s.", new AcceptableValueRange<float>(0f, 60f)));
             IdleWalkRadius = H("Idle", "WalkRadius", 200f, new ConfigDescription("Camp walks only for NPCs within this distance of the camera, m.", new AcceptableValueRange<float>(20f, 1000f)));
-            NavDump = H("Debug", "NavDump", false, "Map pictures (BMP) in config/Apocaraider/NavDump - written synchronously, 0.5-4 MB each, so not part of VerboseLog.");
+
             SpawnKey = H("Debug", "SpawnKey", Key.None,
                 "Debug: spawns a Gungirl 6 m in front of you (a real raider: she fights and is saved). None = off (F2 clashed with normal play).");
             DamageFontSize = H("Hud", "DamageFontSize", 14, new ConfigDescription("Font size of the damage numbers, px.", new AcceptableValueRange<int>(8, 40)));
@@ -354,7 +356,7 @@ namespace Apocaraider
             }
             catch (Exception e) { Log.LogError("Harmony patch failed, no senses: " + e); }
 
-            SceneManager.sceneLoaded += (s, m) => { EnsureRunner(); Gungirl.OnSceneLoaded(); Tracers.OnSceneLoaded(); Brain.OnSceneLoaded(); Senses.OnSceneLoaded(); Nav.OnSceneLoaded(); Bosses.OnSceneLoaded(); Idle.OnSceneLoaded(); };
+            SceneManager.sceneLoaded += (s, m) => { EnsureRunner(); Gungirl.OnSceneLoaded(); Tracers.OnSceneLoaded(); Brain.OnSceneLoaded(); Senses.OnSceneLoaded(); Nav.OnSceneLoaded(); Bosses.OnSceneLoaded(); Idle.OnSceneLoaded(); Passthrough.OnSceneLoaded(); };
             EnsureRunner();
             Log.LogInfo(NAME + " " + VERSION + " loaded");
         }
@@ -373,7 +375,7 @@ namespace Apocaraider
 
     internal class Runner : MonoBehaviour
     {
-        private void Update() { Voice.EnsureLoading(this); try { Gungirl.Tick(); } catch (Exception e) { Plugin.Log.LogError("Gungirl: " + e); } try { Tracers.Tick(); } catch (Exception e) { Plugin.Log.LogError("Tracers: " + e); } try { Senses.Tick(this); } catch (Exception e) { Plugin.Log.LogError("Senses: " + e); } try { Nav.Tick(); } catch (Exception e) { Plugin.Log.LogError("Nav: " + e); } Brain.Tick(); try { Bosses.Tick(); } catch (Exception e) { Plugin.Log.LogError("Bosses: " + e); } try { Idle.Tick(); } catch (Exception e) { Plugin.Log.LogError("Idle: " + e); } }
+        private void Update() { Voice.EnsureLoading(this); try { Gungirl.Tick(); } catch (Exception e) { Plugin.Log.LogError("Gungirl: " + e); } try { Tracers.Tick(); } catch (Exception e) { Plugin.Log.LogError("Tracers: " + e); } try { Senses.Tick(this); } catch (Exception e) { Plugin.Log.LogError("Senses: " + e); } try { Nav.Tick(); } catch (Exception e) { Plugin.Log.LogError("Nav: " + e); } Brain.Tick(); try { Bosses.Tick(); } catch (Exception e) { Plugin.Log.LogError("Bosses: " + e); } try { Idle.Tick(); } catch (Exception e) { Plugin.Log.LogError("Idle: " + e); } try { Passthrough.Tick(); } catch (Exception e) { Plugin.Log.LogError("Passthrough: " + e); } }
         private void LateUpdate() { try { Brain.LateTick(); } catch (Exception e) { Plugin.Log.LogError("Brain: " + e); } }
         private void OnGUI() { try { Hud.OnGUI(); } catch (Exception e) { Plugin.Log.LogError("Hud: " + e); } }
     }

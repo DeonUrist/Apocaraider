@@ -75,6 +75,7 @@ namespace Apocaraider
 
         private static readonly Dictionary<int, Agent> _agents = new Dictionary<int, Agent>();
         internal static Dictionary<int, Agent>.ValueCollection AllAgents { get { return _agents.Values; } }   // read-only use (Idle)
+        internal static string TagOf(GameObject owner) { Agent a; return owner != null && _agents.TryGetValue(owner.GetInstanceID(), out a) ? a.Tag : null; }
         internal static bool Blown(GameObject owner) { Agent a; return owner != null && _agents.TryGetValue(owner.GetInstanceID(), out a) && a.Blown; }
         private static readonly HashSet<int> _ignored = new HashSet<int>();
         private static readonly List<Ghost> _ghosts = new List<Ghost>();

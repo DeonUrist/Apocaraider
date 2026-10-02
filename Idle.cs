@@ -285,6 +285,13 @@ namespace Apocaraider
         }
 
         // for the brain: this NPC is walking its search round (the brain leaves the body's facing to it while it does)
+        // walking home or on a search round (Passthrough keeps friends' bodies apart only once this is over)
+        internal static bool Busy(GameObject owner)
+        {
+            Ctl c;
+            return owner != null && _ctl.TryGetValue(owner.GetInstanceID(), out c) && (c.InSearch || c.Leg == Leg.Home);
+        }
+
         internal static bool SearchWalking(GameObject owner)
         {
             Ctl c;

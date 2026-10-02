@@ -510,9 +510,11 @@ namespace Apocaraider
             Vector3 fwd = Quaternion.Euler(0f, heading, 0f) * Vector3.forward;
             var tgt = n.Target.Value; Transform troot = tgt != null ? tgt.transform.root : null;
             float push = 0f; bool passing = false;
+            string myTag = Plugin.FriendsPassThrough.Value ? Senses.TagOf(n.Owner) : null;
             foreach (var a in Senses.AllAgents)
             {
                 if (a.Owner == null || a.T == n.T || a.T.parent != null || (troot != null && a.T == troot)) continue;
+                if (myTag != null && a.Tag == myTag) continue;      // same faction: walks through them (Passthrough)
                 Vector3 rel = a.T.position - me;
                 if (Mathf.Abs(rel.y) > 2f) continue;
                 rel.y = 0f;
@@ -570,9 +572,11 @@ namespace Apocaraider
         private static bool FriendInTheWay(Npc n)
         {
             Vector3 me = n.T.position, fwd = n.T.forward; fwd.y = 0f;
+            string myTag = Plugin.FriendsPassThrough.Value ? Senses.TagOf(n.Owner) : null;
             foreach (var a in Senses.AllAgents)
             {
                 if (a.Owner == null || a.T == n.T || a.T.parent != null) continue;
+                if (myTag != null && a.Tag == myTag) continue;      // same faction: no bump possible (Passthrough)
                 Vector3 rel = a.T.position - me;
                 if (Mathf.Abs(rel.y) > 2f) continue;
                 rel.y = 0f;
