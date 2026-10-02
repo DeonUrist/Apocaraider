@@ -39,14 +39,14 @@ namespace Apocaraiders
     // [Senses] Enabled = false restores the game's sensors and detection untouched.
     internal static class Senses
     {
-        internal enum Src { None = 0, Engine = 1, Thrown = 2, Gunshot = 3, Taunt = 4, Hit = 5, Vision = 6 }
+        internal enum Src { None = 0, Engine = 1, Thrown = 2, Gunshot = 3, Shout = 4, Hit = 5, Vision = 6 }
         internal enum State { Idle, Combat, Investigate, Search }
 
-        // Three ranks (Denis): VISION > GUNSHOT > CAR. Sight (own, or passed on by a friend's shout) is vision; every sound (gunshot, a bullet
-        // hitting, an explosion, a thrown item, an enemy's shout) ranks as a gunshot; the engine is the lowest. The Src kinds stay for labels.
+        // Ranks (Denis): VISION > GUNSHOT > SHOUT > CAR. Sight (own, or passed on by a friend's shout) is vision; a gunshot, a bullet hitting,
+        // an explosion or a thrown item rank as a gunshot; an enemy's shout (an NPC's, or the player's shout key) below that; the engine last.
         internal static int Rank(Src s)
         {
-            switch (s) { case Src.None: return 0; case Src.Engine: return 1; case Src.Vision: return 3; default: return 2; }
+            switch (s) { case Src.None: return 0; case Src.Engine: return 1; case Src.Shout: return 2; case Src.Vision: return 4; default: return 3; }
         }
 
         internal sealed class Ghost
@@ -116,6 +116,7 @@ namespace Apocaraiders
             }
             Persist.Tick(runner);
             if (!_patrolChecked && Time.unscaledTime > 2f) HookApocapatrol();
+            if (on) { try { ShoutKey(); } catch (Exception e) { Plugin.Log.LogError("Senses shout: " + e); } }
             if (!on) return;
             if (_player == null) return;
 
@@ -542,7 +543,66 @@ namespace Apocaraiders
             }
             // enemies: the shouter gave itself away
             string ttag = t.Tag;
-            Noise(t.Owner, t.T.position, range, Src.Taunt, Name(t.Owner) + " shouting", a => a.Hostile.Contains(ttag), null, t.Owner);
+            Noise(t.Owner, t.T.position, range, Src.Shout, Name(t.Owner) + " shouting", a => a.Hostile.Contains(ttag), null, t.Owner);
+        }
+
+        // ---------- the player's shout ([Senses] ShoutKey) ----------
+        // A human raider's voice (the enemy_human_single clips of a Scraffa/Flexa's Sound FSM) from the player, and a SHOUT ghost at the player
+        // for every NPC hostile to the player within PlayerShoutRange. Only in play (not paused, not in a menu that stops time), once per
+        // ShoutCooldown.
+        private static float _nextShout;
+        private static AudioClip[] _voice;
+        private static void ShoutKey()
+        {
+            var key = Plugin.ShoutKey.Value;
+            if (key == UnityEngine.InputSystem.Key.None) return;
+            var kb = UnityEngine.InputSystem.Keyboard.current;
+            if (kb == null || !kb[key].wasPressedThisFrame) return;
+            if (Time.timeScale <= 0f || Time.unscaledTime < _nextShout) return;
+            FindPlayer();
+            if (_player == null) return;
+            _nextShout = Time.unscaledTime + Mathf.Max(0f, Plugin.ShoutCooldown.Value);
+            var clip = Voice();
+            if (clip != null)
+            {
+                var cam = Camera.main;
+                AudioSource.PlayClipAtPoint(clip, cam != null ? cam.transform.position : _player.transform.position, Mathf.Clamp01(Plugin.ShoutVolume.Value));
+            }
+            Noise(_player, _player.transform.position, Plugin.PlayerShoutRange.Value, Src.Shout, "the player shouting", a => a.Hostile.Contains("Player"), null, _player);
+            if (Plugin.SensesLog.Value) Plugin.Log.LogInfo("Senses: the player shouts (" + Plugin.PlayerShoutRange.Value.ToString("0") + " m)" + (clip == null ? ", no voice clip found" : ""));
+        }
+
+        private static AudioClip Voice()
+        {
+            if (_voice == null || _voice.Length == 0 || _voice[0] == null)
+            {
+                _voice = null;
+                // a male raider's own Sound FSM array (not a Gungirl, whose array carries her voice)
+                foreach (var kv in _agents)
+                {
+                    var a = kv.Value;
+                    if (a.Owner == null || !a.Human || a.Owner.name.StartsWith(Gungirl.Name)) continue;
+                    foreach (var f in a.Owner.GetComponents<PlayMakerFSM>())
+                    {
+                        if (f == null || f.FsmName != "Sound") continue;
+                        var arr = f.FsmVariables.FindFsmArray("soundArray");
+                        if (arr == null || arr.Values == null) continue;
+                        var list = new List<AudioClip>();
+                        foreach (var v in arr.Values) { var c = v as AudioClip; if (c != null) list.Add(c); }
+                        if (list.Count > 0) { _voice = list.ToArray(); break; }
+                    }
+                    if (_voice != null) break;
+                }
+                if (_voice == null)
+                {
+                    var list = new List<AudioClip>();
+                    foreach (var c in Resources.FindObjectsOfTypeAll<AudioClip>())
+                        if (c != null && c.name.StartsWith("enemy_human_single_")) list.Add(c);
+                    if (list.Count > 0) _voice = list.ToArray();
+                }
+                if (_voice == null) return null;
+            }
+            return _voice[UnityEngine.Random.Range(0, _voice.Length)];
         }
 
         // Tracers: a bullet hit a creature - it knows where that came from
@@ -922,7 +982,7 @@ namespace Apocaraiders
             {
                 var c = SrcColor[(int)g.Src];
                 Hud.Mark(g.Pos + Vector3.up * 1.2f, c, 14f);
-                Hud.Label(g.Pos + Vector3.up * 1.6f, "#" + g.Id + " " + (g.Src == Src.Taunt ? "SHOUT" : g.Src.ToString().ToUpperInvariant()) + " " + g.About + "  (" + g.Holders.Count + ", " + (now - g.Born).ToString("0") + " s)", c);
+                Hud.Label(g.Pos + Vector3.up * 1.6f, "#" + g.Id + " " + g.Src.ToString().ToUpperInvariant() + " " + g.About + "  (" + g.Holders.Count + ", " + (now - g.Born).ToString("0") + " s)", c);
             }
             foreach (var kv in _agents)
             {
@@ -932,7 +992,7 @@ namespace Apocaraiders
                 switch (a.State)
                 {
                     case State.Combat: s = "COMBAT " + Name(a.Target); c = SrcColor[(int)Src.Vision]; break;
-                    case State.Investigate: s = "-> ghost #" + (a.Ghost != null ? a.Ghost.Id.ToString() : "?") + " (" + (Rank(a.GhostPrio) == 3 ? "vision" : Rank(a.GhostPrio) == 2 ? "sound" : "engine") + ")"; c = a.Ghost != null ? SrcColor[(int)a.Ghost.Src] : Color.white; break;
+                    case State.Investigate: s = "-> ghost #" + (a.Ghost != null ? a.Ghost.Id.ToString() : "?") + " (" + (Rank(a.GhostPrio) == 4 ? "vision" : Rank(a.GhostPrio) == 3 ? "gunshot" : Rank(a.GhostPrio) == 2 ? "shout" : "engine") + ")"; c = a.Ghost != null ? SrcColor[(int)a.Ghost.Src] : Color.white; break;
                     default: s = "SEARCH " + Mathf.Max(0f, a.SearchUntil - now).ToString("0") + " s"; c = new Color(0.75f, 0.6f, 1f); break;
                 }
                 Vector3 top = a.Col != null ? new Vector3(a.Col.bounds.center.x, a.Col.bounds.max.y, a.Col.bounds.center.z) : a.T.position + Vector3.up * 2f;
