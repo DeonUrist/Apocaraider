@@ -429,7 +429,7 @@ namespace Apocaraider
             }
             float yaw = Mathf.MoveTowardsAngle(t.eulerAngles.y, chosen, Mathf.Max(10f, Plugin.TurnRate.Value) * dt);
             t.rotation = Quaternion.Euler(0f, yaw, 0f);
-            Vector3 v = t.forward * c.Speed;
+            Vector3 v = t.forward * (c.Speed * Brain.TurnSpeedFactor(Mathf.Abs(Mathf.DeltaAngle(yaw, chosen))));   // slows down while turning: no arcs
             v.y = c.Rb.velocity.y;
             c.Rb.velocity = v;
         }

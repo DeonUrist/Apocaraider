@@ -168,7 +168,10 @@ namespace Apocaraider
                 }
                 if (n.Mode == Mode.Off || n.Mode == Mode.BackUp) continue;
                 if (n.Frozen && state != "trigger" && state != "run") Unfreeze(n);      // the burst (or a melee swing, a hide run): let the animation play
-                if (state != "trigger" && state != "run" && state != "attack_ranged") continue;   // melee swing, hide run ...: the game's own facing
+                bool steering = (n.Mode == Mode.Chase || n.Mode == Mode.Advance) && n.HasHeading && state != "attack_melee" && state != "hide";
+                if (state != "trigger" && state != "run" && state != "attack_ranged" && !steering) continue;   // melee swing, hide run ...: the game's own facing
+                // (1.4.6) a moving NPC is turned to its steered heading in every Attack state but the swing / hide: the run velocity is ours in all
+                // of them, and an unturned body used to run on along its old facing (an idle raider: toward home, away from the way out)
                 var target = n.Target.Value;
                 if (target == null) continue;
                 Vector3 to;
@@ -334,6 +337,13 @@ namespace Apocaraider
                 float off = Mathf.DeltaAngle(want, n.Heading);
                 if (Mathf.Abs(off) > 30f) Plugin.Log.LogInfo("Trace: " + n.Owner.name + " feelers turn " + off.ToString("0") + " deg off the " + (n.OnNav ? "map waypoint" : n.HasWaypoint ? "corner" : "straight line"));
             }
+        }
+
+        // speed while turning: 1 within 30 deg of the wanted heading, down to 0.1 at 120 deg and beyond (also used by Idle)
+        internal static float TurnSpeedFactor(float offDeg)
+        {
+            if (offDeg <= 30f) return 1f;
+            return Mathf.Lerp(1f, 0.1f, Mathf.Clamp01((offDeg - 30f) / 90f));
         }
 
         // ---------- walking a map route (1.4.5) ----------
@@ -1230,6 +1240,13 @@ namespace Apocaraider
                 if (z <= 0f) return true;      // the Idle / attack states' "stop": vanilla
                 if (n.Rb == null) return true;
                 float speed = n.Mode == Mode.BackUp ? -Mathf.Min(z, 2.5f) : (n.Mode == Mode.Hold || n.Mode == Mode.Rest || n.Mode == Mode.Search) ? 0f : z * n.SpeedScale;
+                if (n.Mode == Mode.Chase || n.Mode == Mode.Advance)
+                {
+                    // deliberate movement only: no heading yet (the first think after the alert) -> stand; facing away from the heading -> slow
+                    // down while turning (full speed within 30 deg, 40 % at 90, 10 % from 120: a big turn is made nearly on the spot, not as an arc)
+                    if (!n.HasHeading) speed = 0f;
+                    else speed *= TurnSpeedFactor(Mathf.Abs(Mathf.DeltaAngle(n.T.eulerAngles.y, n.Heading)));
+                }
                 Vector3 v = n.T.forward * speed;
                 v.y = n.Rb.velocity.y;
                 n.Rb.velocity = v;
