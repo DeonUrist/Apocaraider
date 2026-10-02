@@ -313,6 +313,7 @@ namespace Apocaraiders
                 }
             }
             RaycastHit hit;
+            float feetY = n.Col != null ? n.Col.bounds.min.y : n.T.position.y - 1f;
             int centre = count / 2;
             int touching = 0;
             if (adv)
@@ -324,7 +325,7 @@ namespace Apocaraiders
                 {
                     var c = _touch[k];
                     if (c == null || c.transform.root == n.T || (troot != null && c.transform.root == troot)) { _touch[k] = null; continue; }
-                    if (c.gameObject.layer == 14) { _touch[k] = null; continue; }      // the ground under the feet
+                    if (Nav.IsFloorCollider(c) && c.ClosestPoint(origin).y <= feetY + 0.3f) { _touch[k] = null; continue; }      // the ground under the feet (terrain, a cave floor)
                 }
             }
             for (int i = 0; i < count; i++)
@@ -344,7 +345,7 @@ namespace Apocaraiders
                 bool hitSomething = adv ? Physics.CapsuleCast(p1, p2, radius, dir, out hit, len, mask, QueryTriggerInteraction.Ignore)
                                         : Physics.Raycast(origin, dir, out hit, len, mask, QueryTriggerInteraction.Ignore);
                 if (hitSomething && (troot == null || hit.collider.transform.root != troot) && hit.collider.transform.root != n.T
-                    && !(adv && hit.collider.gameObject.layer == 14 && hit.normal.y > 0.6f))      // gentle ground ahead is not a wall
+                    && !(adv && Nav.IsFloor(hit.collider, hit.normal)))      // gentle ground ahead is not a wall (terrain or a cave floor rising)
                 { free = Mathf.Max(0f, hit.distance); normal = hit.normal; }
                 _free[i] = free; _normals[i] = normal; _blocks[i] = 1f - free / len;
             }
@@ -475,7 +476,7 @@ namespace Apocaraiders
                 float free = ScoutLength;
                 if (Physics.CapsuleCast(p1, p2, radius, dir, out hit, ScoutLength, mask, QueryTriggerInteraction.Ignore)
                     && (troot == null || hit.collider.transform.root != troot) && hit.collider.transform.root != n.T
-                    && !(hit.collider.gameObject.layer == 14 && hit.normal.y > 0.6f))
+                    && !Nav.IsFloor(hit.collider, hit.normal))
                     free = hit.distance;
                 // walk the free stretch from near to far: the first point with a clear line to the target is the corner
                 float reach = free - radius - 0.3f;
@@ -485,7 +486,7 @@ namespace Apocaraiders
                     Vector3 toT = targetChest - (end + chestOff);
                     if (Physics.Raycast(end + chestOff, toT.normalized, out hit, toT.magnitude, mask, QueryTriggerInteraction.Ignore)
                         && (troot == null || hit.collider.transform.root != troot) && hit.collider.transform.root != n.T
-                        && !(hit.collider.gameObject.layer == 14 && hit.normal.y > 0.6f)) continue;
+                        && !Nav.IsFloor(hit.collider, hit.normal)) continue;
                     float cost = along + (origin + toReal - end).magnitude;
                     if (cost < bestCost) { bestCost = cost; bestEnd = end; bestAngle = _scoutAngles[k]; }
                     break;      // farther points on this ray only add path
@@ -514,7 +515,7 @@ namespace Apocaraiders
             if (!Physics.CapsuleCast(p1, p2, radius, dir, out hit, Mathf.Max(0.1f, dist - 0.5f), PathMask, QueryTriggerInteraction.Ignore)) return true;
             if (troot != null && hit.collider.transform.root == troot) return true;
             if (hit.collider.transform.root == n.T) return true;
-            return hit.collider.gameObject.layer == 14 && hit.normal.y > 0.6f;
+            return Nav.IsFloor(hit.collider, hit.normal);
         }
 
         // moving modes: is the NPC getting anywhere? (called from Think) - 5 s without coming nearer flips the side once, then rests
@@ -749,7 +750,7 @@ namespace Apocaraiders
             RaycastHit h;
             if (!Physics.CapsuleCast(p1, p2, r, d.normalized, out h, len, NavGateMask, QueryTriggerInteraction.Ignore)) return true;
             if (h.collider.transform.root == n.T) return true;
-            if (h.collider.gameObject.layer == 14 && h.normal.y > 0.6f) return true;
+            if (Nav.IsFloor(h.collider, h.normal)) return true;
             if (Plugin.BrainLog.Value) Plugin.Log.LogInfo("Brain: " + n.Owner.name + " map waypoint blocked by " + h.collider.name + ", steers without the map");
             return false;
         }

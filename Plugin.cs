@@ -18,7 +18,7 @@ namespace Apocaraiders
     {
         public const string GUID = "com.denis.apocalypter.apocaraiders";
         public const string NAME = "Apocaraiders";
-        public const string VERSION = "0.13.2";
+        public const string VERSION = "0.13.3";
 
         internal static ManualLogSource Log;
         internal static string Dir;
@@ -43,9 +43,10 @@ namespace Apocaraiders
         internal static ConfigEntry<bool> SensesEnabled, MuffleSounds, SensesLog, ShowGhosts, BailOutAware;
         internal static ConfigEntry<float> SightCone, SightRange, DarkSightRange, DaylightIntensity, NoticeSeconds, LoseSeconds, SearchSeconds, ReachSeconds, LookInterval, ArriveDistance, MuffleFactor,
             ShotRangePistol, ShotRangeSmg, ShotRangeRifle, ShotRangeSniper, ShotRangeShotgun, ShotRangeCrossbow, TauntRange, EngineMinRange, EngineMaxRange, EngineMinHp, EngineMaxHp, EngineIdleFactor, ThrowRange, BailOutAwareRange, ExplosionRange, BlastRange, PlayerShoutRange, ShoutCooldown, ShoutVolume;
-        internal static ConfigEntry<Key> ShoutKey;
+        internal static ConfigEntry<Key> ShoutKey, ShoutModifier;
+        internal static ConfigEntry<string> ShoutBlocksButtons;
         internal static ConfigEntry<string> NpcShotRanges, HumanFactions, BlastPrefabs;
-        internal static ConfigEntry<bool> NavEnabled, NavLog, ShowNav;
+        internal static ConfigEntry<bool> NavEnabled, NavLog, ShowNav, NavDump;
         internal static ConfigEntry<float> NavBakeRange, NavCellSize, NavMargin, NavMaxStep, NavBakeBudgetMs, NavFieldSeconds;
 
         private static GameObject _runner;
@@ -219,8 +220,12 @@ namespace Apocaraiders
             NpcShotRanges = Config.Bind("Senses", "NpcShotRanges", "Flexa=150, Gungirl=150, Lugnut=150, Scrud=150, Boltjaw=120, Sprokka=80, Pistoleer=80, Gunnar=150, Lugger=150",
                 "How far each NPC type's gunfire is heard, m, as Type=metres pairs; a type not listed uses the range of its weapon class above.");
             TauntRange = Config.Bind("Senses", "TauntRange", 15f, new ConfigDescription("A human's shout passes on what it knows to same-faction humans within this range - what it sees (as sight) or the spot it is going to check (at that spot's own rank) - and tells its enemies where it stands, m. 0 = off.", new AcceptableValueRange<float>(0f, 200f)));
-            ShoutKey = Config.Bind("Senses", "ShoutKey", Key.CapsLock,
-                "Your shout: you yell like a raider and every NPC hostile to you within PlayerShoutRange comes to check (a SHOUT, below gunshots). Caps Lock sits right next to A and the game doesn't use it. None = off.");
+            ShoutKey = Config.Bind("Senses", "ShoutKey", Key.Q,
+                "Your shout (with ShoutModifier held): you yell like a raider and every NPC hostile to you within PlayerShoutRange comes to check (a SHOUT, below gunshots). None = off.");
+            ShoutModifier = Config.Bind("Senses", "ShoutModifier", Key.LeftAlt,
+                "Hold this and press ShoutKey to shout (either Alt works when this is an Alt key). While it is held, the game's own buttons on the same key (ShoutBlocksButtons) do nothing, so Alt+Q shouts without kicking. None = ShoutKey alone.");
+            ShoutBlocksButtons = Config.Bind("Senses", "ShoutBlocksButtons", "Kick,ShiftDown",
+                "The game's input buttons (Input Manager names) ignored while ShoutModifier is held.");
             PlayerShoutRange = Config.Bind("Senses", "PlayerShoutRange", 25f, new ConfigDescription("How far your shout carries, m.", new AcceptableValueRange<float>(0f, 300f)));
             ShoutCooldown = Config.Bind("Senses", "ShoutCooldown", 1.5f, new ConfigDescription("Shortest time between two of your shouts, s.", new AcceptableValueRange<float>(0f, 30f)));
             ShoutVolume = Config.Bind("Senses", "ShoutVolume", 1f, new ConfigDescription("Volume of your shout.", new AcceptableValueRange<float>(0f, 1f)));
@@ -256,6 +261,7 @@ namespace Apocaraiders
             HitLog = Config.Bind("Debug", "HitLog", false, "Log every bullet hit on a creature: who, what, distance, damage, and its Health before and after.");
             VerboseLog = Config.Bind("Debug", "VerboseLog", false, "Log every Gungirl that is dressed (spawn, corpse, after a load).");
             NavLog = Config.Bind("Debug", "NavLog", false, "Log the structures found and mapped (size, cells, time taken).");
+            NavDump = Config.Bind("Debug", "NavDump", false, "Save each structure map as a picture when it is baked, and again (with the NPC, its reachable area, the goal and the exit marked) when an NPC finds no map route: BepInEx/config/Apocaraiders/NavDump/*.bmp.");
             ShowNav = Config.Bind("Debug", "ShowNav", false, "Draw each nearby structure's mapping state and, in cyan, the next map waypoint of every NPC routing through one.");
             SensesLog = Config.Bind("Debug", "SensesLog", false, "Log every detection event: who sees, hears, loses, searches, gives up; every ghost made.");
             ShowGhosts = Config.Bind("Debug", "ShowGhosts", false, "Draw the ghosts in the world (a diamond and a label: number, source, what it is about, holders, age) and each alert NPC's state above its head. Colours: red sight (own, or passed on by a friend's shout), magenta hit, yellow gunshot, green thrown item, orange shout (an enemy NPC's or yours), blue engine. Ranks: sight > gunshot (and hits, explosions, thrown items) > shout > engine.");
@@ -302,6 +308,9 @@ namespace Apocaraiders
                 h.Patch(AccessTools.Method(typeof(Micosmo.SensorToolkit.PlayMaker.SensorGetLineOfSightResult), "OnUpdate3D"), prefix: new HarmonyMethod(typeof(Senses), nameof(Senses.BeforeLosResult)));
                 h.Patch(AccessTools.Method(typeof(AudioPlay), "OnEnter"), prefix: new HarmonyMethod(typeof(Senses), nameof(Senses.BeforeAudioPlay)));
                 h.Patch(AccessTools.Method(typeof(CreateObject), "OnEnter"), postfix: new HarmonyMethod(typeof(Senses), nameof(Senses.AfterCreateObject)));
+                h.Patch(AccessTools.Method(typeof(GetButton), "DoGetButton"), prefix: new HarmonyMethod(typeof(Senses), nameof(Senses.BeforeGetButton)));
+                h.Patch(AccessTools.Method(typeof(GetButtonDown), "OnUpdate"), prefix: new HarmonyMethod(typeof(Senses), nameof(Senses.BeforeGetButtonDown)));
+                h.Patch(AccessTools.Method(typeof(GetButtonUp), "OnUpdate"), prefix: new HarmonyMethod(typeof(Senses), nameof(Senses.BeforeGetButtonUp)));
             }
             catch (Exception e) { Log.LogError("Harmony patch failed, no senses: " + e); }
 

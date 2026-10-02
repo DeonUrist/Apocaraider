@@ -617,7 +617,7 @@ namespace Apocaraiders
             var key = Plugin.ShoutKey.Value;
             if (key == UnityEngine.InputSystem.Key.None) return;
             var kb = UnityEngine.InputSystem.Keyboard.current;
-            if (kb == null || !kb[key].wasPressedThisFrame) return;
+            if (kb == null || !kb[key].wasPressedThisFrame || !ModifierHeld()) return;
             if (Time.timeScale <= 0f || Time.unscaledTime < _nextShout) return;
             FindPlayer();
             if (_player == null) return;
@@ -625,11 +625,70 @@ namespace Apocaraiders
             var clip = Voice();
             if (clip != null)
             {
-                var cam = Camera.main;
-                AudioSource.PlayClipAtPoint(clip, cam != null ? cam.transform.position : _player.transform.position, Mathf.Clamp01(Plugin.ShoutVolume.Value));
+                // your own voice: a 2D source on the camera, so it stays with you (PlayClipAtPoint left it hanging in the air where you shouted)
+                var src = VoiceSource();
+                if (src != null) src.PlayOneShot(clip, Mathf.Clamp01(Plugin.ShoutVolume.Value));
             }
             Noise(_player, _player.transform.position, Plugin.PlayerShoutRange.Value, Src.Shout, "the player shouting", a => a.Hostile.Contains("Player"), null, _player);
             if (Plugin.SensesLog.Value) Plugin.Log.LogInfo("Senses: the player shouts (" + Plugin.PlayerShoutRange.Value.ToString("0") + " m)" + (clip == null ? ", no voice clip found" : ""));
+        }
+
+        private static AudioSource _voiceSrc;
+        private static AudioSource VoiceSource()
+        {
+            var cam = Camera.main;
+            if (cam == null) return null;
+            if (_voiceSrc != null && _voiceSrc.transform.parent == cam.transform) return _voiceSrc;
+            var go = new GameObject("Apocaraiders.Voice");
+            go.transform.SetParent(cam.transform, false);
+            _voiceSrc = go.AddComponent<AudioSource>();
+            _voiceSrc.spatialBlend = 0f; _voiceSrc.playOnAwake = false; _voiceSrc.loop = false;
+            return _voiceSrc;
+        }
+
+        // ShoutModifier held (an Alt key stands for either Alt)
+        private static bool ModifierHeld()
+        {
+            var m = Plugin.ShoutModifier.Value;
+            if (m == UnityEngine.InputSystem.Key.None) return true;
+            var kb = UnityEngine.InputSystem.Keyboard.current;
+            if (kb == null) return false;
+            if (m == UnityEngine.InputSystem.Key.LeftAlt || m == UnityEngine.InputSystem.Key.RightAlt) return kb.altKey.isPressed;
+            if (m == UnityEngine.InputSystem.Key.LeftCtrl || m == UnityEngine.InputSystem.Key.RightCtrl) return kb.ctrlKey.isPressed;
+            if (m == UnityEngine.InputSystem.Key.LeftShift || m == UnityEngine.InputSystem.Key.RightShift) return kb.shiftKey.isPressed;
+            return kb[m].isPressed;
+        }
+
+        // the game's own buttons on the shout key do nothing while the modifier is held (Alt+Q must not kick)
+        private static HashSet<string> _blocked; private static string _blockedSrc;
+        private static bool Blocked(FsmString name)
+        {
+            if (name == null || Plugin.ShoutModifier.Value == UnityEngine.InputSystem.Key.None || Plugin.ShoutKey.Value == UnityEngine.InputSystem.Key.None) return false;
+            string cfg = Plugin.ShoutBlocksButtons.Value ?? "";
+            if (_blocked == null || _blockedSrc != cfg)
+            {
+                _blockedSrc = cfg; _blocked = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                foreach (var part in cfg.Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries)) _blocked.Add(part.Trim());
+            }
+            return _blocked.Contains(name.Value ?? "") && ModifierHeld();
+        }
+        public static bool BeforeGetButton(GetButton __instance)
+        {
+            try { if (Blocked(__instance.buttonName)) { if (__instance.storeResult != null) __instance.storeResult.Value = false; return false; } }
+            catch (Exception) { }
+            return true;
+        }
+        public static bool BeforeGetButtonDown(GetButtonDown __instance)
+        {
+            try { if (Blocked(__instance.buttonName)) { if (__instance.storeResult != null) __instance.storeResult.Value = false; return false; } }
+            catch (Exception) { }
+            return true;
+        }
+        public static bool BeforeGetButtonUp(GetButtonUp __instance)
+        {
+            try { if (Blocked(__instance.buttonName)) { if (__instance.storeResult != null) __instance.storeResult.Value = false; return false; } }
+            catch (Exception) { }
+            return true;
         }
 
         private static AudioClip Voice()

@@ -80,7 +80,7 @@ shout about you). A shout is not a ghost of its own: it passes on what the shout
 NPC that can't reach its spot within ReachSeconds (plus travel time) searches from where it got. If it lost you from sight it first goes to where it last saw you and, finding nothing, follows to where you really
 are one to three times (PursuitMin/Max). At the spot it looks around for 30 s and, seeing nothing, loses interest and idles where it stands. Being
 shot tells it where that came from. The same rules run between NPC factions. Ghosts and alert states are saved with the game and
-restored after a load. You can shout too (Caps Lock, `[Senses] ShoutKey`): you yell like a raider and NPCs hostile to you within
+restored after a load. You can shout too (Alt+Q, `[Senses] ShoutModifier` + `ShoutKey`; Alt keeps Q from kicking): you yell like a raider and NPCs hostile to you within
 25 m come to check. With Apocapatrol installed, a raider bailing out of a car keeps its crew's knowledge (it fights if it sees you,
 otherwise heads for where you were) and an exploding car is heard like a gunshot. `[Senses] Enabled = false` gives the game's own sensors back; `[Debug] ShowGhosts` draws every ghost and
 alert NPC's state in the world.
@@ -90,8 +90,10 @@ alert NPC's state in the world.
 NPCs know their camps, buildings and caves. When you come within 200 m of one, it is mapped once in the background: a 0.5 m grid of
 where a body fits (spikes at a cave mouth, braziers, crates and walls are obstacles; the clean opening is not). An NPC inside a
 mapped structure takes the real way to you or to the spot it is checking: out through the exit that is shortest overall, around the
-walls, instead of feeling its way and running into a dead end. Outside structures nothing changes. `[Nav] Enabled = false` turns it
-off; `[Debug] ShowNav` shows the mapping state and each NPC's next map waypoint.
+walls, instead of feeling its way and running into a dead end; when the map can't reach the spot it at least leads the NPC out into the
+open (a cave mouth, a building's door) and the feelers take over. The surfaces the maps find to be floor (a cave's rock floor, a camp
+deck) count as ground for the feelers too. Outside structures nothing changes. `[Nav] Enabled = false` turns it
+off; `[Debug] ShowNav` shows the mapping state and each NPC's next map waypoint; `[Debug] NavDump` saves the maps as pictures.
 
 ## Install
 

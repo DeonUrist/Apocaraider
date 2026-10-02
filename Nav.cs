@@ -30,6 +30,11 @@ namespace Apocaraiders
             public float[] FloorY;                  // NaN = blocked
             public bool Baked; public int Next;     // bake progress (cell index)
             public int Walkable, NoFloor, Tight, Solid; public float BakeMs; public int BakeFrames;
+            public byte[] Why;                      // per cell: 0 walkable, 1 no floor, 2 too tight, 3 inside rock
+            public bool[] Open;                     // walkable cell with open sky above (not under a cave roof / building)
+            public int EdgeCells, EdgeWalkable;     // the outer ring of the footprint
+            public Dictionary<int, int> FloorHits;  // collider id -> walkable cells it is the floor of (during the bake)
+            public float NextDump;
             public readonly Dictionary<long, Field> Fields = new Dictionary<long, Field>();
         }
 
@@ -43,11 +48,13 @@ namespace Apocaraiders
         // solid for baking: everything the feelers see, minus cars (8) and loose items (9) - those move
         private static readonly int BakeMask = ~((1 << 1) | (1 << 2) | (1 << 4) | (1 << 5) | (1 << 6) | (1 << 7) | (1 << 8) | (1 << 9) | (1 << 10) | (1 << 12) | (1 << 13) | (1 << 15) | (1 << 17) | (1 << 19) | (1 << 22));
         private const float Radius = 0.26f, Ankle = 0.2f, HeadTop = 1.5f;   // a human NPC: capsule r 0.28, 1.5 m tall - a little less, so a tight gap counts
+        private static readonly HashSet<int> _floorCols = new HashSet<int>();   // colliders that are the floor of >= FloorColCells map cells (cave floors, camp decks)
+        private const int FloorColCells = 40;
         private static readonly Vector2[] SubOffsets = { new Vector2(0.15f, 0f), new Vector2(-0.15f, 0f), new Vector2(0f, 0.15f), new Vector2(0f, -0.15f) };
 
         internal static bool On { get { return Plugin.NavEnabled != null && Plugin.NavEnabled.Value; } }
 
-        public static void OnSceneLoaded() { _structures.Clear(); _known.Clear(); _baking = null; _nextScan = 0f; _debug.Clear(); }
+        public static void OnSceneLoaded() { _structures.Clear(); _known.Clear(); _baking = null; _nextScan = 0f; _debug.Clear(); _floorCols.Clear(); _exits.Clear(); }
 
         // ---------- discovery + baking (per frame) ----------
         public static void Tick()
@@ -150,7 +157,7 @@ namespace Apocaraiders
 
         private static void BeginBake(Structure s)
         {
-            s.FloorY = new float[s.W * s.H];
+            s.FloorY = new float[s.W * s.H]; s.Why = new byte[s.W * s.H]; s.Open = new bool[s.W * s.H]; s.FloorHits = new Dictionary<int, int>();
             s.Next = 0; s.Walkable = 0; s.NoFloor = 0; s.Tight = 0; s.Solid = 0; s.BakeMs = 0f; s.BakeFrames = 0;
             // the base height: the floor under the structure's pivot (a ray from well above, first walkable surface below the pivot + 2 m)
             Vector3 p = s.Root.position;
@@ -168,27 +175,41 @@ namespace Apocaraiders
             while (s.Next < n && _sw.Elapsed.TotalMilliseconds < budget)
             {
                 int i = s.Next++;
-                s.FloorY[i] = Floor(s, i % s.W, i / s.W);
-                if (!float.IsNaN(s.FloorY[i])) s.Walkable++;
+                Collider fc; byte why; bool open;
+                s.FloorY[i] = Floor(s, i % s.W, i / s.W, out fc, out why, out open);
+                s.Why[i] = why; s.Open[i] = open;
+                if (!float.IsNaN(s.FloorY[i]))
+                {
+                    s.Walkable++;
+                    if (fc != null) { int id = fc.GetInstanceID(), c; s.FloorHits.TryGetValue(id, out c); s.FloorHits[id] = c + 1; }
+                }
             }
             _sw.Stop();
             s.BakeMs += (float)_sw.Elapsed.TotalMilliseconds; s.BakeFrames++;
             if (s.Next >= n)
             {
                 s.Baked = true; _baking = null;
-                if (Plugin.NavLog.Value) Plugin.Log.LogInfo("Nav: baked " + s.Name + ": " + s.W + " x " + s.H + " cells of " + s.Cell.ToString("0.00") + " m, " + s.Walkable + " walkable (" + (100f * s.Walkable / Mathf.Max(1, s.W * s.H)).ToString("0") + " %), "
-                    + s.NoFloor + " no floor, " + s.Tight + " too tight, " + s.Solid + " inside rock; " + s.BakeMs.ToString("0") + " ms over " + s.BakeFrames + " frames");
+                int floorCols = 0;
+                foreach (var kv in s.FloorHits) if (kv.Value >= FloorColCells && _floorCols.Add(kv.Key)) floorCols++;
+                s.FloorHits = null;
+                s.EdgeCells = 0; s.EdgeWalkable = 0;
+                for (int i = 0; i < n; i++) if (IsEdge(s, i)) { s.EdgeCells++; if (!float.IsNaN(s.FloorY[i])) s.EdgeWalkable++; }
+                int open = 0; for (int i = 0; i < n; i++) if (s.Open[i]) open++;
+                if (Plugin.NavLog.Value) Plugin.Log.LogInfo("Nav: baked " + s.Name + ": " + s.W + " x " + s.H + " cells of " + s.Cell.ToString("0.00") + " m, " + s.Walkable + " walkable (" + (100f * s.Walkable / Mathf.Max(1, s.W * s.H)).ToString("0") + " %, " + open + " under open sky), "
+                    + s.NoFloor + " no floor, " + s.Tight + " too tight, " + s.Solid + " inside rock; outer ring " + s.EdgeWalkable + "/" + s.EdgeCells + " walkable; " + floorCols + " new floor collider(s); "
+                    + s.BakeMs.ToString("0") + " ms over " + s.BakeFrames + " frames");
+                if (Plugin.NavDump.Value) Dump(s, "baked", -1, -1, -1, null);
             }
         }
 
         // the floor of a cell: the lowest walkable surface (upward facing, room for a body above it, not inside rock) within 6 m of the base height.
         // Ray by ray from the top down (a multi-hit query reports one hit per collider, and a cave's roof and floor can be one mesh; ray
         // casts skip back faces, so the inside of a cave roof is passed through and its floor is found).
-        private static float Floor(Structure s, int x, int z)
+        private static float Floor(Structure s, int x, int z, out Collider col, out byte why, out bool open)
         {
             Vector3 c = CellCenter(s, x, z, s.RefY);
             float y0 = s.Box.max.y + 1f, bottom = s.RefY - 8f;
-            float best = float.NaN;
+            float best = float.NaN; col = null; why = 1; open = false;
             RaycastHit h;
             for (int k = 0; k < 8 && y0 > bottom; k++)
             {
@@ -199,20 +220,31 @@ namespace Apocaraiders
                 if (y > s.RefY + 6f) continue;                          // roofs, rock tops above the structure
                 if (y < s.RefY - 6f) break;
                 Vector3 f = new Vector3(c.x, y, c.z);
-                if (InsideSolid(f)) { s.Solid++; continue; }
+                if (InsideSolid(f)) { s.Solid++; why = 3; continue; }
                 if (!BodyFits(f))
                 {
                     // the cell centre is too close to a wall or a spike: an NPC can still pass through the cell a little to the side (a 0.6 m
                     // gap between spikes, a wall edge) - try four offsets before calling the cell blocked
                     bool any = false;
                     for (int so = 0; so < SubOffsets.Length && !any; so++) any = BodyFits(new Vector3(f.x + SubOffsets[so].x, f.y, f.z + SubOffsets[so].y));
-                    if (!any) { s.Tight++; continue; }
+                    if (!any) { s.Tight++; why = 2; continue; }
                 }
-                best = y;                                               // keep going: the LOWEST free surface is the floor (a wreck's deck,
+                best = y; col = h.collider; why = 0;                                              // keep going: the LOWEST free surface is the floor (a wreck's deck,
             }                                                           // a crate top or a cave roof above it is not where NPCs walk)
-            if (float.IsNaN(best)) s.NoFloor++;
+            if (float.IsNaN(best)) { if (why == 1) s.NoFloor++; }
+            else open = !Physics.Raycast(new Vector3(c.x, best + 1.6f, c.z), Vector3.up, 40f, BakeMask, QueryTriggerInteraction.Ignore);
             return best;
         }
+
+        // Something the brain's sweeps hit is floor, not an obstacle, when it faces up (a slope you can walk) and is the terrain or a collider
+        // that the maps found to be the floor of a large area (a cave's rock mesh, which is one Default-layer collider for floor, walls and
+        // roof; a camp's deck). A brazier, a crate or a spike is never one of those, so its top still counts as an obstacle.
+        internal static bool IsFloor(Collider c, Vector3 normal)
+        {
+            if (c == null || normal.y <= 0.6f) return false;
+            return c.gameObject.layer == 14 || _floorCols.Contains(c.GetInstanceID());
+        }
+        internal static bool IsFloorCollider(Collider c) { return c != null && (c.gameObject.layer == 14 || _floorCols.Contains(c.GetInstanceID())); }
 
         // An overlap test against a non-convex mesh collider (a cave's rock) only sees its triangles, so a capsule wholly inside the rock
         // passes as free and the terrain under the rock looked like floor. One ray up with back faces on: from inside solid rock it meets the
@@ -313,7 +345,25 @@ namespace Apocaraiders
 
             var f = FieldFor(s, goal, goalInside, goalCell);
             float d0 = f.Dist[from];
-            if (float.IsInfinity(d0)) { LastReason = "no way out of this spot on the " + s.Name + " map"; return false; }                       // no way from here (walled-in spot): let the feelers try
+            if (float.IsInfinity(d0))
+            {
+                // The map has no way from here to the goal (the goal is outside and the footprint's outer ring can't be reached, or the goal sits
+                // on a part of the map this spot doesn't connect to). Then the map's only job is to get the NPC out into the open: head for the
+                // reachable open-sky cell that is best overall (path to it + straight line from it to the goal) - the cave mouth, the yard
+                // outside a building - and the feelers take it from there.
+                int exit = ExitCell(owner, s, from, goal, goalInside, goalCell);
+                if (exit < 0 || exit == from) { LastReason = "no way out of this spot on the " + s.Name + " map" + (exit == from ? " (already at the best open spot)" : ""); return false; }
+                f = FieldFor(s, CellCenter(s, exit % s.W, exit / s.W, s.FloorY[exit]), true, exit);
+                d0 = f.Dist[from];
+                if (float.IsInfinity(d0)) { LastReason = "no way to the exit on the " + s.Name + " map"; return false; }
+                Vector3 ec = CellCenter(s, exit % s.W, exit / s.W, 0f);
+                d0 += new Vector2(goal.x - ec.x, goal.z - ec.z).magnitude;
+                if (GridSight(s, from, exit))
+                {
+                    next = CellCenter(s, exit % s.W, exit / s.W, s.FloorY[exit]);
+                    pathLeft = d0; Remember(owner, next, s); return true;
+                }
+            }
             pathLeft = d0;
             // descend the field up to 16 cells, keep the farthest cell still in grid sight
             int cur = from, pick = from;
@@ -328,6 +378,120 @@ namespace Apocaraiders
             next = CellCenter(s, pick % s.W, pick / s.W, s.FloorY[pick]);
             Remember(owner, next, s);
             return true;
+        }
+
+        // ---------- the way out when the map can't reach the goal ----------
+        private sealed class ExitMemo { public int Exit; public float Until; public int GoalKey; }
+        private static readonly Dictionary<int, ExitMemo> _exits = new Dictionary<int, ExitMemo>();
+        private static int ExitCell(GameObject owner, Structure s, int from, Vector3 goal, bool goalInside, int goalCell)
+        {
+            int oid = owner != null ? owner.GetInstanceID() : 0;
+            int gkey = Mathf.FloorToInt(goal.x / 4f) * 73856093 ^ Mathf.FloorToInt(goal.z / 4f) * 19349663;
+            ExitMemo m;
+            float now = Time.time;
+            if (_exits.TryGetValue(oid, out m) && now < m.Until && m.GoalKey == gkey && m.Exit >= 0 && m.Exit < s.W * s.H && !float.IsNaN(s.FloorY[m.Exit])) return m.Exit;
+            // distances from the NPC over its part of the map
+            var mine = Build(s, goal, true, from);
+            int n = s.W * s.H, best = -1, bestAny = -1, size = 0, open = 0; bool edge = false;
+            float bc = float.MaxValue, bca = float.MaxValue;
+            for (int i = 0; i < n; i++)
+            {
+                float d = mine.Dist[i];
+                if (float.IsInfinity(d)) continue;
+                size++;
+                if (IsEdge(s, i)) edge = true;
+                Vector3 c = CellCenter(s, i % s.W, i / s.W, 0f);
+                float cost = d + new Vector2(goal.x - c.x, goal.z - c.z).magnitude;
+                if (cost < bca) { bca = cost; bestAny = i; }
+                if (s.Open == null || !s.Open[i]) continue;
+                open++;
+                if (cost < bc) { bc = cost; best = i; }
+            }
+            if (best < 0) best = bestAny;
+            _exits[oid] = new ExitMemo { Exit = best, Until = now + 2f, GoalKey = gkey };
+            if (Plugin.NavLog.Value)
+                Plugin.Log.LogInfo("Nav: " + (owner != null ? owner.name : "?") + " has no map route to its goal on " + s.Name + " (goal " + (goalInside ? "inside, cell " + (goalCell % s.W) + "," + (goalCell / s.W) : "outside the footprint")
+                    + " at " + goal.x.ToString("0") + "," + goal.z.ToString("0") + "; its area " + size + " cells, " + open + " under open sky, " + (edge ? "reaches" : "does NOT reach") + " the outer ring ("
+                    + s.EdgeWalkable + "/" + s.EdgeCells + " ring cells walkable)) -> " + (best < 0 ? "nowhere to go" : "heads for cell " + (best % s.W) + "," + (best / s.W) + (s.Open != null && s.Open[best] ? " (open sky)" : " (no open sky in its area)")));
+            if (Plugin.NavDump.Value && now >= s.NextDump)
+            {
+                s.NextDump = now + 20f;
+                Dump(s, "noroute_" + (owner != null ? owner.name.Replace("(Clone)", "") : "npc"), from, goalInside ? goalCell : -1, best, mine.Dist);
+            }
+            return best;
+        }
+
+        // ---------- [Debug] NavDump: the map as a picture ----------
+        // BepInEx/config/Apocaraiders/NavDump/<structure>_<x>_<z>_<tag>.bmp, 2 px per cell, north up. Walkable: grey by height (open sky
+        // greenish, under a roof bluish); a walkable cell next to a walkable one more than MaxStep higher or lower: yellow; no floor: black;
+        // too tight for a body: red; inside rock: brown. On a "no route" dump: the NPC's reachable area is tinted, the NPC white, the goal
+        // magenta, the chosen exit cyan.
+        private static void Dump(Structure s, string tag, int npc, int goalCell, int exit, float[] area)
+        {
+            try
+            {
+                int W = s.W, H = s.H, sc = 2, pw = W * sc, ph = H * sc, row = (pw * 3 + 3) & ~3;
+                var px = new byte[row * ph];
+                float step = Mathf.Max(0.1f, Plugin.NavMaxStep.Value);
+                for (int z = 0; z < H; z++)
+                    for (int x = 0; x < W; x++)
+                    {
+                        int i = z * W + x; byte r, g, b;
+                        if (float.IsNaN(s.FloorY[i]))
+                        {
+                            switch (s.Why[i]) { case 2: r = 200; g = 30; b = 30; break; case 3: r = 110; g = 70; b = 30; break; default: r = 0; g = 0; b = 0; break; }
+                        }
+                        else
+                        {
+                            float t = Mathf.Clamp01((s.FloorY[i] - s.RefY + 3f) / 6f);
+                            int v = (int)(90 + 140 * t);
+                            if (s.Open[i]) { r = (byte)(v * 0.85f); g = (byte)v; b = (byte)(v * 0.8f); } else { r = (byte)(v * 0.75f); g = (byte)(v * 0.8f); b = (byte)v; }
+                            bool cliff = false;
+                            for (int k = 0; k < 4 && !cliff; k++)
+                            {
+                                int cx = x + (k == 0 ? 1 : k == 1 ? -1 : 0), cz = z + (k == 2 ? 1 : k == 3 ? -1 : 0);
+                                if (cx < 0 || cz < 0 || cx >= W || cz >= H) continue;
+                                float o = s.FloorY[cz * W + cx];
+                                if (!float.IsNaN(o) && Mathf.Abs(o - s.FloorY[i]) > step) cliff = true;
+                            }
+                            if (cliff) { r = 240; g = 220; b = 40; }
+                            if (area != null && !float.IsInfinity(area[i])) { r = (byte)(r * 0.6f); g = (byte)(g * 0.6f + 80); b = (byte)(b * 0.6f + 60); }
+                        }
+                        if (i == exit) { r = 0; g = 255; b = 255; }
+                        if (i == goalCell) { r = 255; g = 0; b = 255; }
+                        if (i == npc) { r = 255; g = 255; b = 255; }
+                        for (int dy = 0; dy < sc; dy++)
+                            for (int dx = 0; dx < sc; dx++)
+                            {
+                                int o = (z * sc + dy) * row + (x * sc + dx) * 3;
+                                px[o] = b; px[o + 1] = g; px[o + 2] = r;
+                            }
+                    }
+                // marks a little bigger so they show
+                foreach (var m in new[] { npc, goalCell, exit })
+                {
+                    if (m < 0) continue;
+                    int mx = m % W, mz = m / W;
+                    byte r = m == npc ? (byte)255 : m == goalCell ? (byte)255 : (byte)0, g = m == npc ? (byte)255 : m == goalCell ? (byte)0 : (byte)255, b = 255;
+                    for (int dz = -2; dz <= 2; dz++) for (int dx = -2; dx <= 2; dx++)
+                    {
+                        int cx = mx + dx, cz = mz + dz; if (cx < 0 || cz < 0 || cx >= W || cz >= H) continue;
+                        for (int yy = 0; yy < sc; yy++) for (int xx = 0; xx < sc; xx++) { int o = (cz * sc + yy) * row + (cx * sc + xx) * 3; px[o] = b; px[o + 1] = g; px[o + 2] = r; }
+                    }
+                }
+                string dir = System.IO.Path.Combine(System.IO.Path.Combine(BepInEx.Paths.ConfigPath, "Apocaraiders"), "NavDump");
+                System.IO.Directory.CreateDirectory(dir);
+                string file = System.IO.Path.Combine(dir, s.Name.Replace("(Clone)", "") + "_" + Mathf.RoundToInt(s.Root.position.x) + "_" + Mathf.RoundToInt(s.Root.position.z) + "_" + tag + ".bmp");
+                using (var fs = new System.IO.FileStream(file, System.IO.FileMode.Create))
+                using (var w = new System.IO.BinaryWriter(fs))
+                {
+                    w.Write((byte)'B'); w.Write((byte)'M'); w.Write(54 + px.Length); w.Write(0); w.Write(54);
+                    w.Write(40); w.Write(pw); w.Write(ph); w.Write((short)1); w.Write((short)24); w.Write(0); w.Write(px.Length); w.Write(2835); w.Write(2835); w.Write(0); w.Write(0);
+                    w.Write(px);
+                }
+                Plugin.Log.LogInfo("Nav: map picture " + file + " (cell " + s.Cell.ToString("0.00") + " m, origin " + s.Box.min.x.ToString("0.0") + "," + s.Box.min.z.ToString("0.0") + ", base y " + s.RefY.ToString("0.0") + ")");
+            }
+            catch (Exception e) { Plugin.Log.LogError("Nav: dump failed: " + e.Message); }
         }
 
         private static bool IsEdge(Structure s, int i) { int x = i % s.W, z = i / s.W; return x == 0 || z == 0 || x == s.W - 1 || z == s.H - 1; }
