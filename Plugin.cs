@@ -18,7 +18,7 @@ namespace Apocaraiders
     {
         public const string GUID = "com.denis.apocalypter.apocaraiders";
         public const string NAME = "Apocaraiders";
-        public const string VERSION = "0.13.1";
+        public const string VERSION = "0.13.2";
 
         internal static ManualLogSource Log;
         internal static string Dir;
@@ -42,9 +42,9 @@ namespace Apocaraiders
         internal static ConfigEntry<int> FeelerCount, StuckGiveUpCount, PursuitMin, PursuitMax;
         internal static ConfigEntry<bool> SensesEnabled, MuffleSounds, SensesLog, ShowGhosts, BailOutAware;
         internal static ConfigEntry<float> SightCone, SightRange, DarkSightRange, DaylightIntensity, NoticeSeconds, LoseSeconds, SearchSeconds, ReachSeconds, LookInterval, ArriveDistance, MuffleFactor,
-            ShotRangePistol, ShotRangeSmg, ShotRangeRifle, ShotRangeSniper, ShotRangeShotgun, ShotRangeCrossbow, TauntRange, EngineMinRange, EngineMaxRange, EngineMinHp, EngineMaxHp, EngineIdleFactor, ThrowRange, BailOutAwareRange, ExplosionRange, PlayerShoutRange, ShoutCooldown, ShoutVolume;
+            ShotRangePistol, ShotRangeSmg, ShotRangeRifle, ShotRangeSniper, ShotRangeShotgun, ShotRangeCrossbow, TauntRange, EngineMinRange, EngineMaxRange, EngineMinHp, EngineMaxHp, EngineIdleFactor, ThrowRange, BailOutAwareRange, ExplosionRange, BlastRange, PlayerShoutRange, ShoutCooldown, ShoutVolume;
         internal static ConfigEntry<Key> ShoutKey;
-        internal static ConfigEntry<string> NpcShotRanges, HumanFactions;
+        internal static ConfigEntry<string> NpcShotRanges, HumanFactions, BlastPrefabs;
         internal static ConfigEntry<bool> NavEnabled, NavLog, ShowNav;
         internal static ConfigEntry<float> NavBakeRange, NavCellSize, NavMargin, NavMaxStep, NavBakeBudgetMs, NavFieldSeconds;
 
@@ -234,6 +234,8 @@ namespace Apocaraiders
                 "With Apocapatrol: a raider bailing out of a car keeps what its crew knew - it fights at once if it sees you, otherwise it heads for where you were and searches.");
             BailOutAwareRange = Config.Bind("Senses", "BailOutAwareRange", 150f, new ConfigDescription("With Apocapatrol: a crew bailing out knows where you are if you are within this range of its car, m.", new AcceptableValueRange<float>(0f, 1000f)));
             ExplosionRange = Config.Bind("Senses", "ExplosionRange", 150f, new ConfigDescription("With Apocapatrol: an exploding raider car is heard this far (like a gunshot), m. 0 = silent.", new AcceptableValueRange<float>(0f, 1000f)));
+            BlastRange = Config.Bind("Senses", "BlastRange", 150f, new ConfigDescription("Grenades, blast lances, Blast Rats and Blast Zombies exploding are heard this far (like a gunshot), m. 0 = silent.", new AcceptableValueRange<float>(0f, 1000f)));
+            BlastPrefabs = Config.Bind("Senses", "BlastPrefabs", "Explosion_Grenade,Explosion_Can,Explosion_BlastRat,Explosion_BlastZombie", "Explosion prefabs heard within BlastRange when the game spawns them (Explosion_Grenade = grenade + blast lance, Explosion_Can = stronger blast lance, Explosion_BlastRat / Explosion_BlastZombie = the exploding creatures).");
             ThrowRange = Config.Bind("Senses", "ThrowRange", 10f, new ConfigDescription("An item you throw draws NPCs within this range of where it lands, m. 0 = off.", new AcceptableValueRange<float>(0f, 200f)));
             NavEnabled = Config.Bind("Nav", "Enabled", true,
                 "NPCs know the camps, buildings and caves: each one near you is mapped once (spread over frames) and NPCs inside it take the real way out through its exits and around its walls, spikes and props, instead of feeling their way. Off = feelers only.");
@@ -299,6 +301,7 @@ namespace Apocaraiders
                 h.Patch(AccessTools.Method(typeof(Micosmo.SensorToolkit.PlayMaker.SensorGetLineOfSightResult), "OnEnter3D"), prefix: new HarmonyMethod(typeof(Senses), nameof(Senses.BeforeLosResult)));
                 h.Patch(AccessTools.Method(typeof(Micosmo.SensorToolkit.PlayMaker.SensorGetLineOfSightResult), "OnUpdate3D"), prefix: new HarmonyMethod(typeof(Senses), nameof(Senses.BeforeLosResult)));
                 h.Patch(AccessTools.Method(typeof(AudioPlay), "OnEnter"), prefix: new HarmonyMethod(typeof(Senses), nameof(Senses.BeforeAudioPlay)));
+                h.Patch(AccessTools.Method(typeof(CreateObject), "OnEnter"), postfix: new HarmonyMethod(typeof(Senses), nameof(Senses.AfterCreateObject)));
             }
             catch (Exception e) { Log.LogError("Harmony patch failed, no senses: " + e); }
 

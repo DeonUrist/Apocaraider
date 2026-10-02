@@ -65,6 +65,7 @@ namespace Apocaraiders
             public float SeenFor, UnseenFor, SearchUntil, NextLook, Stagger, LastLog, InvestigateUntil, InvestigateSince; public Vector3 LastSeen;
             public GameObject Pursue; public int Pursuits;     // the target it lost from sight, and how many more times it will go to where that target really is
             public Behaviour[] Sensors; public bool SensorsOff;
+            public readonly HashSet<int> Heard = new HashSet<int>();   // ghosts it already got from a friend's shout, and enemy shouters (instance ids, negated) it already went to: a shout never re-sends them
         }
 
         private static readonly Dictionary<int, Agent> _agents = new Dictionary<int, Agent>();
@@ -320,7 +321,7 @@ namespace Apocaraiders
         {
             if (a.State == State.Combat && a.Target == target) return;
             Release(a);
-            a.State = State.Combat; a.Target = target; a.UnseenFor = 0f; a.Pursuits = 0; a.Pursue = null;
+            a.State = State.Combat; a.Target = target; a.UnseenFor = 0f; a.Pursuits = 0; a.Pursue = null; a.Heard.RemoveWhere(x => x < 0);
             Log(a, "sees " + Name(target) + " at " + Vector3.Distance(a.T.position, target.transform.position).ToString("0") + " m");
         }
 
@@ -341,7 +342,7 @@ namespace Apocaraiders
         {
             // it lost its target from sight a moment ago: before searching it goes to where that target really is now, a few times -
             // stepping behind a barrel does not shake off a raider who was right behind you
-            if (a.Pursuits > 0 && a.Pursue != null && a.Ghost != null && a.Ghost.Subject == a.Pursue && Rank(a.GhostPrio) == Rank(Src.Vision))
+            if (a.Pursuits > 0 && a.Pursue != null && a.Ghost != null && a.Ghost.Subject == a.Pursue)
             {
                 a.Pursuits--;
                 Vector3 real = a.Pursue.transform.position;
@@ -358,6 +359,7 @@ namespace Apocaraiders
         {
             Release(a);
             a.State = State.Idle; a.Target = null; a.SeenFor = 0f;
+            a.Heard.RemoveWhere(x => x < 0);    // the alert is over: a new shout from the same enemy is news again
             Log(a, "gives up (" + why + "), idle");
         }
 
@@ -447,7 +449,7 @@ namespace Apocaraiders
 
         // ---------- sounds ----------
         // one ghost per event, offered to every NPC within the radius (walls halve the radius with [Senses] MuffleSounds)
-        private static void Noise(GameObject source, Vector3 pos, float radius, Src src, string about, Func<Agent, bool> filter, Func<Agent, Vector3> at, GameObject subject = null)
+        private static void Noise(GameObject source, Vector3 pos, float radius, Src src, string about, Func<Agent, bool> filter, Func<Agent, Vector3> at, GameObject subject = null, Action<Agent> told1 = null)
         {
             if (radius <= 0f || !On) return;
             float now = Time.time;
@@ -470,7 +472,7 @@ namespace Apocaraiders
                 }
                 Ghost g = shared;
                 if (g == null) { g = GetOrMake(src, at(a), source, about, 0f, 1f, now); g.Subject = subject; }
-                if (Assign(a, g, src, now)) told++;
+                if (Assign(a, g, src, now)) { told++; if (told1 != null) told1(a); }
             }
             if (shared != null && shared.Holders.Count == 0) { int i = _ghosts.IndexOf(shared); if (i >= 0) KillGhost(i); }
             if (Plugin.SensesLog.Value && told > 0) Plugin.Log.LogInfo("Senses: " + src + " (" + about + ") within " + radius.ToString("0") + " m alerts " + told + (shared != null ? " -> ghost #" + shared.Id : ""));
@@ -516,6 +518,41 @@ namespace Apocaraiders
             return PlayerShotRange(k);
         }
 
+        // ---------- explosions ----------
+        // Grenades and blast lance 1 (Explosion_Grenade), blast lance 2 (Explosion_Can), Blast Rat and Blast Zombie deaths (Explosion_BlastRat /
+        // _BlastZombie): each item/creature FSM spawns the blast prefab with a CreateObject action (explode state, Health FSM). Harmony postfix on
+        // CreateObject.OnEnter: a spawned prefab named in [Senses] BlastPrefabs is a GUNSHOT-ranked noise within BlastRange at the blast.
+        // Car explosions are not CreateObject spawns (Apocapatrol instantiates its blast itself) - they come only through AfterBlast.
+        private static HashSet<string> _blastNames; private static string _blastSrc;
+        public static void AfterCreateObject(CreateObject __instance)
+        {
+            try
+            {
+                if (!On || Plugin.BlastRange.Value <= 0f || __instance.gameObject == null) return;
+                var prefab = __instance.gameObject.Value;
+                if (prefab == null) return;
+                string cfg = Plugin.BlastPrefabs.Value ?? "";
+                if (_blastNames == null || _blastSrc != cfg)
+                {
+                    _blastSrc = cfg; _blastNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    foreach (var part in cfg.Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries)) _blastNames.Add(part.Trim());
+                }
+                if (!_blastNames.Contains(Prefab(prefab.name))) return;
+                Vector3 pos;
+                var made = __instance.storeObject != null ? __instance.storeObject.Value : null;
+                if (made != null && Prefab(made.name) == Prefab(prefab.name)) pos = made.transform.position;
+                else
+                {
+                    var sp = __instance.spawnPoint != null ? __instance.spawnPoint.Value : null;
+                    pos = sp != null ? sp.transform.position : (__instance.Fsm != null && __instance.Fsm.GameObject != null ? __instance.Fsm.GameObject.transform.position : Vector3.zero);
+                    if (__instance.position != null && !__instance.position.IsNone) pos += __instance.position.Value;
+                }
+                var owner = __instance.Fsm != null ? __instance.Fsm.GameObject : null;
+                Noise(owner, pos, Plugin.BlastRange.Value, Src.Gunshot, (owner != null ? Prefab(owner.name) : "something") + " exploding", null, null);
+            }
+            catch (Exception e) { Plugin.Log.LogError("Senses: " + e); }
+        }
+
         // the human Sound FSM's combat shout (Harmony prefix on AudioPlay.OnEnter, FSM "Sound", state "attack")
         public static bool BeforeAudioPlay(AudioPlay __instance)
         {
@@ -554,14 +591,19 @@ namespace Apocaraiders
                     var f = kv.Value;
                     if (f == t || f.Owner == null || !f.Human || f.Tag != tag || f.T.parent != null) continue;
                     if ((f.T.position - t.T.position).sqrMagnitude > range * range) continue;
-                    if (Assign(f, shared, relay, now)) told++;
+                    // a ghost acquired once (from a shout or any other way) is never re-sent by a shout: it would wake a searching NPC
+                    // back to investigating the same spot again and again while its friends keep shouting
+                    if (f.Ghost == shared || f.Heard.Contains(shared.Id)) continue;
+                    if (Assign(f, shared, relay, now)) { told++; f.Heard.Add(shared.Id); }
                 }
                 if (shared != tg && shared.Holders.Count == 0) { int i = _ghosts.IndexOf(shared); if (i >= 0) KillGhost(i); }
                 if (Plugin.SensesLog.Value && told > 0) Plugin.Log.LogInfo("Senses: " + Name(t.Owner) + "'s shout sends " + told + " " + tag + " to " + (tg != null ? "ghost #" + tg.Id : "its target"));
             }
             // enemies: the shouter gave itself away
             string ttag = t.Tag;
-            Noise(t.Owner, t.T.position, range, Src.Shout, Name(t.Owner) + " shouting", a => a.Hostile.Contains(ttag), null, t.Owner);
+            int key = -t.Owner.GetInstanceID();
+            Noise(t.Owner, t.T.position, range, Src.Shout, Name(t.Owner) + " shouting", a => a.Hostile.Contains(ttag) && !a.Heard.Contains(key), null, t.Owner,
+                a => a.Heard.Add(key));
         }
 
         // ---------- the player's shout ([Senses] ShoutKey) ----------

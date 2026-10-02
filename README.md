@@ -70,12 +70,13 @@ waits, and NPCs farther than 150 m move the game's way. `[Brain] Enabled = false
 NPCs no longer see through the back of their heads. Each one looks with a 100-degree cone from its head, with a ray to your head or
 body, 100 m in daylight and down to 5 m in full darkness (your flashlight gives you away at full range from any angle). They hear:
 your gunshots (80 m for a pistol, up to 150 m for rifles and shotguns), each other's gunfire, a human's combat shout (it tells its
-own faction within 15 m where you are and tells its enemies where it stands), an item you throw (10 m around where it lands) and
+own faction within 15 m where you are and tells its enemies where it stands), explosions (grenades, blast lances, Blast Rats and
+Blast Zombies, 150 m, like a gunshot), an item you throw (10 m around where it lands) and
 your running engine (50 m for the weakest engines to 150 m for the strongest, half while idling, nothing when it's off). What an NPC
 hears or saw becomes a "ghost", a remembered spot it goes to check; one event makes one ghost shared by everyone it alerted, and an
 NPC keeps the more trustworthy knowledge (sight over a gunshot - or a hit, an explosion, a thrown item - over a shout, over an
 engine; the newest of equal rank; newer news about the same person always wins, so a shot you fire pulls NPCs away from an older
-shout about you). A shout is not a ghost of its own: it passes on what the shouter knows, what it sees (as sight) or the ghost it is going to, with that ghost's own rank. An
+shout about you). A shout is not a ghost of its own: it passes on what the shouter knows, what it sees (as sight) or the ghost it is going to, with that ghost's own rank; a spot an NPC already got is never sent to it again by a shout, and an enemy's shouts draw it only once per alert. An
 NPC that can't reach its spot within ReachSeconds (plus travel time) searches from where it got. If it lost you from sight it first goes to where it last saw you and, finding nothing, follows to where you really
 are one to three times (PursuitMin/Max). At the spot it looks around for 30 s and, seeing nothing, loses interest and idles where it stands. Being
 shot tells it where that came from. The same rules run between NPC factions. Ghosts and alert states are saved with the game and
@@ -125,7 +126,7 @@ BepInEx\plugins\Apocaraiders\Sounds\Gungirl\*.wav / *.ogg
   recheck that a holding gunman runs at you) and AdvanceMin/Max (s), StuckBackupSeconds, StuckMemorySeconds, StuckGiveUpCount, MaxDistance.
 - **[Senses]**: on/off, SightCone, SightRange / DarkSightRange, DaylightIntensity, NoticeSeconds, LoseSeconds, SearchSeconds, ArriveDistance,
   LookInterval, MuffleSounds / MuffleFactor (off), ReachSeconds, ShoutKey / PlayerShoutRange / ShoutCooldown / ShoutVolume, ShotRange per weapon class, NpcShotRanges (per NPC type), TauntRange, HumanFactions,
-  EngineMinRange / EngineMaxRange / EngineMinHp / EngineMaxHp / EngineIdleFactor, ThrowRange, BailOutAware / BailOutAwareRange / ExplosionRange (with Apocapatrol).
+  EngineMinRange / EngineMaxRange / EngineMinHp / EngineMaxHp / EngineIdleFactor, BlastRange / BlastPrefabs, ThrowRange, BailOutAware / BailOutAwareRange / ExplosionRange (with Apocapatrol).
 - **[Nav]**: on/off, BakeRange, CellSize, Margin, MaxStep, BakeBudgetMs, FieldSeconds.
 - **[Hud]**: DamageNumbers (0/1/2), DamageFontSize, HitMarker on/off, HitMarkerSize.
 - **[Debug] HitLog**: logs every bullet that hits a creature with its damage and the creature's health before and after.
