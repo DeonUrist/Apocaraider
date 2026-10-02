@@ -1362,7 +1362,9 @@ namespace Apocaraider
                 {
                     var n = NpcOf(__instance.Fsm, "Unstuck");
                     if (n == null) return true;
-                    OnStuck(n);
+                    // (1.4.8) the game's Unstuck calls "moved < 0.2 m in 0.3 s" stuck - a deliberate turn on the spot (or the moment after a step
+                    // back) looks just like that. While the brain moves the NPC its own Blocked() (driven vs covered distance) judges instead.
+                    if (n.Mode != Mode.Chase && n.Mode != Mode.Advance) OnStuck(n);
                     __instance.Finish();
                     return false;
                 }
