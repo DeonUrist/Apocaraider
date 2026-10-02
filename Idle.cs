@@ -17,7 +17,7 @@ namespace Apocaraider
     // 1. Return home: idle for [Idle] ReturnDelay (15 s) since it last had a target / ghost / search and > 2.5 m from home -> runs back
     //    (camp map routes when on a baked map, else straight with three body feelers). An attempt fails after 2 s without getting
     //    closer; then 5 s standing, then the next; after 10 failed attempts home is forgotten. Any loaded NPC, any distance.
-    // 2. Base walk: standing at home, within [Idle] WalkRadius (200 m) of the camera, on a baked map: 1-3 patrol points (Nav.PatrolPoints:
+    // 2. Base walk: standing at home, within [Idle] WalkRadius (200 m) of the camera, on a baked map: 1-4 patrol points (Nav.PatrolPoints:
     //    clearly reachable on a straight line, elbow room, body sweep). Stand 10-25 s, walk to one, stand 4-10 s looking around, walk
     //    back. Every leg is swept again before it starts; a bump drops that point for 5 min. No points = it just stands, as vanilla.
     // 3. Search walk: while the senses have it searching (a spot it went to check, nothing there), it walks short rounds from where the
@@ -40,7 +40,7 @@ namespace Apocaraider
             public List<Vector3> Points; public int PointsState;   // 0 not tried, -1 map not baked yet, 1 done
             public float NextPoints; public float[] DroppedUntil; public int PointsTries;
             public float LookYaw, NextLook; public bool Turning, PendingBack;
-            public bool NoHome, LastWasSearch;
+            public bool NoHome, LastWasSearch, Fresh;
             public bool InSearch, SAtOrigin; public Vector3 SOrigin; public List<Vector3> SPts; public float[] SDropped; public int SLast = -1;
         }
 
@@ -152,7 +152,7 @@ namespace Apocaraider
                 Ctl c;
                 if (!_ctl.TryGetValue(id, out c))
                 {
-                    c = new Ctl { A = a, Rb = a.Owner.GetComponent<Rigidbody>(), BusyAt = now, NextThink = now + (_stagger++ % 10) * 0.02f };
+                    c = new Ctl { A = a, Rb = a.Owner.GetComponent<Rigidbody>(), BusyAt = -1000f, Fresh = true, NextThink = now + (_stagger++ % 10) * 0.02f };   // never busy yet: no return delay after a load
                     var anim = a.T.Find("Anim");
                     c.Anim = anim != null ? anim.GetComponent<Animator>() : a.Owner.GetComponentInChildren<Animator>();
                     _ctl[id] = c;
@@ -165,7 +165,7 @@ namespace Apocaraider
                 if (searching)
                 {
                     if (!c.InSearch && (c.Leg != Leg.None || c.Moving || c.Turning)) Stop(c, false);
-                    c.BusyAt = now; c.LastWasSearch = true; c.Tries = 0; c.PendingBack = false; c.AtHome = false;
+                    c.BusyAt = now; c.LastWasSearch = true; c.Fresh = false; c.Tries = 0; c.PendingBack = false; c.AtHome = false;
                     if (now >= c.NextThink)
                     {
                         c.NextThink = now + 0.2f;
@@ -178,7 +178,7 @@ namespace Apocaraider
                 if (!idle)
                 {
                     if (c.Leg != Leg.None || c.Moving || c.Turning) Stop(c, false);   // the fight logic takes over: its own animation, not ours
-                    c.BusyAt = now; c.LastWasSearch = false; c.Tries = 0; c.WaitUntil = 0f; c.PendingBack = false; c.AtHome = false;
+                    c.BusyAt = now; c.LastWasSearch = false; c.Fresh = false; c.Tries = 0; c.WaitUntil = 0f; c.PendingBack = false; c.AtHome = false;
                     continue;
                 }
                 if (now >= c.NextThink)
@@ -218,13 +218,13 @@ namespace Apocaraider
             if (dHome > 2.5f || Mathf.Abs(pos.y - c.Home.y) > 2.5f) { c.AtHome = false; StartLeg(c, Leg.Home, c.Home, now, dHome > 25f ? 5f : 2.5f); return; }
 
             // at home: the base walk, near the camera only
-            if (!c.AtHome) { c.AtHome = true; c.WaitUntil = now + UnityEngine.Random.Range(10f, 25f); return; }
+            if (!c.AtHome) { c.AtHome = true; c.WaitUntil = now + (c.Fresh ? UnityEngine.Random.Range(1f, 4f) : UnityEngine.Random.Range(10f, 25f)); c.Fresh = false; return; }   // just loaded: the first round soon
             var cam = Camera.main;
             if (cam == null || Flat(cam.transform.position - pos) > Plugin.IdleWalkRadius.Value) return;
             if (c.PointsState != 1 && now >= c.NextPoints)
             {
                 if (c.Points == null) c.Points = new List<Vector3>();
-                int r = Nav.PatrolPoints(c.Home, c.Points, 3, 4f, 15f);
+                int r = Nav.PatrolPoints(c.Home, c.Points, 4, 4f, 15f);
                 if (r < 0)       // home's map not baked yet (or home is off the map: a platform high above the camp floor)
                 {
                     c.PointsState = -1; c.NextPoints = now + 10f;
