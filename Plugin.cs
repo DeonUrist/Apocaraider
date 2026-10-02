@@ -18,7 +18,7 @@ namespace Apocaraiders
     {
         public const string GUID = "com.denis.apocalypter.apocaraiders";
         public const string NAME = "Apocaraiders";
-        public const string VERSION = "0.13.6";
+        public const string VERSION = "0.13.7";
 
         internal static ManualLogSource Log;
         internal static string Dir;
@@ -247,7 +247,7 @@ namespace Apocaraiders
             NavBakeRange = Config.Bind("Nav", "BakeRange", 200f, new ConfigDescription("A structure is mapped when you come within this distance of it, m.", new AcceptableValueRange<float>(30f, 1000f)));
             NavCellSize = Config.Bind("Nav", "CellSize", 0.5f, new ConfigDescription("Map resolution, m (smaller = narrower gaps found, slower mapping). Very large structures get coarser cells automatically.", new AcceptableValueRange<float>(0.25f, 2f)));
             NavMargin = Config.Bind("Nav", "Margin", 4f, new ConfigDescription("Open ground mapped around a structure's outline, m.", new AcceptableValueRange<float>(1f, 20f)));
-            NavMaxStep = Config.Bind("Nav", "MaxStep", 0.45f, new ConfigDescription("Largest height step between neighbouring map cells an NPC can walk, m.", new AcceptableValueRange<float>(0.1f, 2f)));
+            NavMaxStep = Config.Bind("Nav", "MaxStep", 0.25f, new ConfigDescription("Largest height step between neighbouring map cells (0.5 m apart) an NPC can walk, m. An NPC's body can't climb much more than a kerb.", new AcceptableValueRange<float>(0.1f, 2f)));
             NavBakeBudgetMs = Config.Bind("Nav", "BakeBudgetMs", 1f, new ConfigDescription("CPU time per frame spent mapping a structure, ms.", new AcceptableValueRange<float>(0.2f, 10f)));
             NavFieldSeconds = Config.Bind("Nav", "FieldSeconds", 1f, new ConfigDescription("How long a computed route to one goal is reused by every NPC heading there, s.", new AcceptableValueRange<float>(0.2f, 10f)));
             SpawnKey = Config.Bind("Debug", "SpawnKey", Key.F9,

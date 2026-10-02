@@ -67,7 +67,7 @@ namespace Apocaraiders
             public string NavReason = "";
             public bool ToGhost, OnNav, WasOnNav; public float LookYaw, NextLookTurn, NavOffUntil;                       // Senses: going to a ghost / looking around at it
             public float BestDist = float.MaxValue, NoProgressSince;
-            public int Stucks; public float FirstStuck;
+            public int Stucks; public float FirstStuck, LastHop = -10f;
             public float LosLostAt = -1f; public bool Los; public float Dist;
             public float LastLog;
         }
@@ -345,7 +345,7 @@ namespace Apocaraiders
                 bool hitSomething = adv ? Physics.CapsuleCast(p1, p2, radius, dir, out hit, len, mask, QueryTriggerInteraction.Ignore)
                                         : Physics.Raycast(origin, dir, out hit, len, mask, QueryTriggerInteraction.Ignore);
                 if (hitSomething && (troot == null || hit.collider.transform.root != troot) && hit.collider.transform.root != n.T
-                    && !(adv && Nav.IsFloor(hit.collider, hit.normal)))      // gentle ground ahead is not a wall (terrain or a cave floor rising)
+                    && !(adv && Nav.IsFloor(hit.collider, hit.normal, hit.point.y, feetY)))      // gentle ground ahead is not a wall (terrain or a cave floor rising)
                 { free = Mathf.Max(0f, hit.distance); normal = hit.normal; }
                 _free[i] = free; _normals[i] = normal; _blocks[i] = 1f - free / len;
             }
@@ -463,6 +463,7 @@ namespace Apocaraiders
         {
             float yaw0 = Mathf.Atan2(toReal.x, toReal.z) * Mathf.Rad2Deg;
             float dReal = toReal.magnitude;
+            float feetY = n.Col != null ? n.Col.bounds.min.y : n.T.position.y - 1f;
             Vector3 chestOff = p2 - origin;        // scouting at chest height
             Vector3 targetChest = origin + toReal + Vector3.up * 0.3f;
             bool blockedMem = now < n.BlockedUntil;
@@ -476,7 +477,7 @@ namespace Apocaraiders
                 float free = ScoutLength;
                 if (Physics.CapsuleCast(p1, p2, radius, dir, out hit, ScoutLength, mask, QueryTriggerInteraction.Ignore)
                     && (troot == null || hit.collider.transform.root != troot) && hit.collider.transform.root != n.T
-                    && !Nav.IsFloor(hit.collider, hit.normal))
+                    && !Nav.IsFloor(hit.collider, hit.normal, hit.point.y, feetY))
                     free = hit.distance;
                 // walk the free stretch from near to far: the first point with a clear line to the target is the corner
                 float reach = free - radius - 0.3f;
@@ -486,7 +487,7 @@ namespace Apocaraiders
                     Vector3 toT = targetChest - (end + chestOff);
                     if (Physics.Raycast(end + chestOff, toT.normalized, out hit, toT.magnitude, mask, QueryTriggerInteraction.Ignore)
                         && (troot == null || hit.collider.transform.root != troot) && hit.collider.transform.root != n.T
-                        && !Nav.IsFloor(hit.collider, hit.normal)) continue;
+                        && !Nav.IsFloor(hit.collider, hit.normal, hit.point.y, feetY)) continue;
                     float cost = along + (origin + toReal - end).magnitude;
                     if (cost < bestCost) { bestCost = cost; bestEnd = end; bestAngle = _scoutAngles[k]; }
                     break;      // farther points on this ray only add path
@@ -515,7 +516,7 @@ namespace Apocaraiders
             if (!Physics.CapsuleCast(p1, p2, radius, dir, out hit, Mathf.Max(0.1f, dist - 0.5f), PathMask, QueryTriggerInteraction.Ignore)) return true;
             if (troot != null && hit.collider.transform.root == troot) return true;
             if (hit.collider.transform.root == n.T) return true;
-            return Nav.IsFloor(hit.collider, hit.normal);
+            return Nav.IsFloor(hit.collider, hit.normal, hit.point.y, b.min.y);
         }
 
         // moving modes: is the NPC getting anywhere? (called from Think) - 5 s without coming nearer flips the side once, then rests
@@ -750,7 +751,7 @@ namespace Apocaraiders
             RaycastHit h;
             if (!Physics.CapsuleCast(p1, p2, r, d.normalized, out h, len, NavGateMask, QueryTriggerInteraction.Ignore)) return true;
             if (h.collider.transform.root == n.T) return true;
-            if (Nav.IsFloor(h.collider, h.normal)) return true;
+            if (Nav.IsFloor(h.collider, h.normal, h.point.y, b.min.y)) return true;
             if (Plugin.BrainLog.Value) Plugin.Log.LogInfo("Brain: " + n.Owner.name + " map waypoint blocked by " + h.collider.name + ", steers without the map");
             return false;
         }
@@ -792,8 +793,27 @@ namespace Apocaraiders
                 n.SideUntil = now + SideLock * 2f * R; n.ClearLooks = 0;
             }
             if (Plugin.BrainLog.Value) LogAhead(n);
+            if (TryHop(n, now)) return;
             n.ModeUntil = now + Mathf.Max(0.1f, Plugin.StuckBackupSeconds.Value) * R;
             SetMode(n, Mode.BackUp, "stuck " + n.Stucks + "x, backs up");
+        }
+
+        // Stuck on something low (a rock lip, a kerb, a pipe on the floor) with nothing above it: the game's own Unstuck would hop here (we
+        // block its AddForce while steering) - give one small hop forward instead of backing up. At most one hop per 2 s.
+        private static bool TryHop(Npc n, float now)
+        {
+            if (n.Rb == null || n.Col == null || now - n.LastHop < 2f) return false;
+            var b = n.Col.bounds;
+            Vector3 fwd = n.T.forward; fwd.y = 0f; if (fwd.sqrMagnitude < 0.01f) return false; fwd.Normalize();
+            Vector3 low = new Vector3(b.center.x, b.min.y + 0.1f, b.center.z), knee = new Vector3(b.center.x, b.min.y + 0.55f, b.center.z);
+            float reach = Mathf.Min(b.extents.x, b.extents.z) + 0.45f;
+            RaycastHit h;
+            if (!Physics.Raycast(low, fwd, out h, reach, PathMask, QueryTriggerInteraction.Ignore) || h.collider.transform.root == n.T) return false;
+            if (Physics.Raycast(knee, fwd, reach + 0.2f, PathMask, QueryTriggerInteraction.Ignore)) return false;      // something higher: not a hop
+            n.LastHop = now;
+            n.Rb.AddForce(Vector3.up * 3.2f + fwd * 1.5f, ForceMode.VelocityChange);
+            if (Plugin.BrainLog.Value) Plugin.Log.LogInfo("Brain: " + n.Owner.name + " hops over a low edge (" + h.collider.name + ")");
+            return true;
         }
 
         // ---------- NPC registry ----------

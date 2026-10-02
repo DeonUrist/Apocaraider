@@ -218,6 +218,7 @@ namespace Apocaraiders
                         float yb = s.FloorY[cz * s.W + cx];
                         if (float.IsNaN(yb) || Mathf.Abs(ya - yb) > Mathf.Max(0.1f, Plugin.NavMaxStep.Value)) continue;
                         Vector3 b = CellCenter(s, cx, cz, yb);
+                        if (Physics.Linecast(a + Vector3.up * 0.15f, b + Vector3.up * 0.15f, BakeMask, QueryTriggerInteraction.Ignore)) continue;   // a low rock lip / kerb
                         if (Physics.Linecast(a + Vector3.up * 0.5f, b + Vector3.up * 0.5f, BakeMask, QueryTriggerInteraction.Ignore)) continue;
                         if (Physics.Linecast(a + Vector3.up * 1.2f, b + Vector3.up * 1.2f, BakeMask, QueryTriggerInteraction.Ignore)) continue;
                         bits |= (byte)(1 << k);
@@ -297,7 +298,7 @@ namespace Apocaraiders
             {
                 if (!Physics.Raycast(new Vector3(c.x, y0, c.z), Vector3.down, out h, y0 - bottom, BakeMask, QueryTriggerInteraction.Ignore)) break;
                 y0 = h.point.y - 0.05f;
-                if (h.normal.y < 0.6f) continue;                       // a wall or a steep rock face
+                if (h.normal.y < WalkNormal) continue;                 // a wall or a rock face steeper than a body can walk
                 float y = h.point.y;
                 if (y > s.RefY + 6f) continue;                          // roofs, rock tops above the structure
                 if (y < s.RefY - 6f) break;
@@ -314,9 +315,12 @@ namespace Apocaraiders
         // Something the brain's sweeps hit is floor, not an obstacle, when it faces up (a slope you can walk) and is the terrain or a collider
         // that the maps found to be the floor of a large area (a cave's rock mesh, which is one Default-layer collider for floor, walls and
         // roof; a camp's deck). A brazier, a crate or a spike is never one of those, so its top still counts as an obstacle.
-        internal static bool IsFloor(Collider c, Vector3 normal)
+        // ... and only where a body can actually go: a slope no steeper than WalkNormal (~37 deg) and a contact no higher than Climb above the
+        // feet (a rock lip or a ledge the physics capsule can't get over is an obstacle even if its top faces up)
+        internal const float WalkNormal = 0.8f, Climb = 0.25f;
+        internal static bool IsFloor(Collider c, Vector3 normal, float pointY, float feetY)
         {
-            if (c == null || normal.y <= 0.6f) return false;
+            if (c == null || normal.y < WalkNormal || pointY - feetY > Climb) return false;
             return c.gameObject.layer == 14 || _floorCols.Contains(c.GetInstanceID());
         }
         internal static bool IsFloorCollider(Collider c) { return c != null && (c.gameObject.layer == 14 || _floorCols.Contains(c.GetInstanceID())); }

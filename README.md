@@ -93,7 +93,8 @@ where a body fits (spikes at a cave mouth, braziers, crates and walls are obstac
 mapped structure takes the real way to you or to the spot it is checking: out through the exit that is shortest overall, around the
 walls, instead of feeling its way and running into a dead end; when the map can't reach the spot it at least leads the NPC out into the
 open (a cave mouth, a building's door) and the feelers take over. The surfaces the maps find to be floor (a cave's rock floor, a camp
-deck) count as ground for the feelers too. Outside structures nothing changes. `[Nav] Enabled = false` turns it
+deck) count as ground for the feelers too, as long as they are no steeper than about 37 degrees and no higher than a kerb (0.25 m) where the
+body meets them; a lower step limit and a knee-low wall check keep routes off rock lips, and an NPC stuck on something low hops over it. Outside structures nothing changes. `[Nav] Enabled = false` turns it
 off; `[Debug] ShowNav` shows the mapping state and each NPC's next map waypoint; `[Debug] NavDump` saves the maps as pictures.
 
 ## Install
