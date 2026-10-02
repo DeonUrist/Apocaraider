@@ -69,7 +69,7 @@ namespace Apocaraider
             public string EventName = "Damage";
             public string EventFsm;         // the vanilla SendEvent's named FSM (null = every FSM on the object, as PlayMaker broadcasts)
             public string BodypartFsm = "Bodypart", BodypartVar = "Damage";
-            public float Retry;             // no weapon found: look again after this time (the gun model may be inactive for a frame)
+            public float Retry; public int Tries;   // no weapon found: look again after Retry (the gun model may be inactive for a frame), 10 tries at most
         }
 
         private static readonly List<Shot> _shots = new List<Shot>(256);
@@ -566,7 +566,8 @@ namespace Apocaraider
             ShooterInfo info;
             int id = owner.GetInstanceID();
             if (_shooters.TryGetValue(id, out info) && (info.Weapon != null ? info.Weapon.gameObject.activeInHierarchy : Time.time < info.Retry)) return info;
-            info = new ShooterInfo { Owner = owner, LeadSkill = UnityEngine.Random.Range(0.5f, 1f), Retry = Time.time + 1f };
+            int tries = info != null && info.Weapon == null ? info.Tries + 1 : 0;
+            info = new ShooterInfo { Owner = owner, LeadSkill = UnityEngine.Random.Range(0.5f, 1f), Tries = tries, Retry = tries < 10 ? Time.time + 1f : float.MaxValue };
             _shooters[id] = info;
 
             // the weapon in the hand: a model with a fire_effect child (guns) or an active "crossbow"
@@ -641,7 +642,7 @@ namespace Apocaraider
         {
             kind = Kind.Rifle;
             ShooterInfo info;
-            if (!_shooters.TryGetValue(owner.GetInstanceID(), out info) || (info.Weapon != null && !info.Weapon.gameObject.activeInHierarchy))
+            if (!_shooters.TryGetValue(owner.GetInstanceID(), out info) || (info.Weapon != null ? !info.Weapon.gameObject.activeInHierarchy : Time.time >= info.Retry))
             {
                 Fsm dr = null;
                 foreach (var f in owner.GetComponents<PlayMakerFSM>())

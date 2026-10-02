@@ -783,9 +783,8 @@ namespace Apocaraider
                 GameObject prefab = null;
                 if (Time.unscaledTime >= _nextFlexaScan)
                 {
-                    _nextFlexaScan = Time.unscaledTime + 30f;       // a full asset scan: at most every 30 s until Flexa's clips are found
-                    foreach (var go in Resources.FindObjectsOfTypeAll<GameObject>())
-                        if (go != null && go.name == "Flexa" && !go.scene.IsValid() && go.transform.parent == null) { prefab = go; break; }
+                    _nextFlexaScan = Time.unscaledTime + 30f;       // Gungirl keeps the Flexa prefab once found; looked up at most every 30 s until then
+                    prefab = Gungirl.FlexaPrefab();
                 }
                 if (prefab != null) _voice = FlexaClips(prefab);
                 if (_voice == null)
@@ -1078,6 +1077,8 @@ namespace Apocaraider
             a = Make(owner);
             if (a == null) { _ignored.Add(id); return null; }
             _agents[id] = a;
+            Bosses.Registered(owner);
+            Gungirl.Registered(owner);
             Handover(a);
             return a;
         }

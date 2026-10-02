@@ -8,8 +8,10 @@ namespace Apocaraider
 {
     // Structure navigation: NPCs know the camps, buildings and caves they are in.
     //
-    // The world's structures are instances of 30 prefabs (Camp_1..16, Building_1..7, Cave_1..7; asset read 2026-10-02). When the player
-    // comes within [Nav] BakeRange of one, its footprint (the union of its solid colliders + Margin) is baked into a walkability grid
+    // The world's structures are instances of 30 prefabs (Camp_1..16, Building_1..7, Cave_1..7; asset read 2026-10-02), found by a slow
+    // incremental sweep of the scene (MapMagic places them itself). Each is baked before the player could get near enough for his noise to
+    // reach its NPCs (Pick: distance, the fastest he moved lately, the bake's estimated time), or when he comes within [Nav] BakeRange:
+    // its footprint (the union of its solid colliders + Margin) is baked into a walkability grid
     // (CellSize, world-aligned): per cell one downward ray for the floor nearest the structure's base height (caves have a roof above the
     // floor), then a body-sized capsule from ankle (0.2 m) to head (1.7 m) height must be free of anything solid except cars, loose items
     // and creatures - so spikes at a cave mouth, a brazier, crates and walls are obstacles, the clean opening is not. Neighbouring cells
@@ -37,7 +39,8 @@ namespace Apocaraider
             public float NextDump;
             public byte[] Edges;                    // per cell, 1 = open edge toward +x (bit 0), +z (1), +x+z (2), -x+z (3): no wall or spike between the two cells
             public int[] Comp; public int[] CompSize;   // connected areas (flood fill over open edges) and their sizes
-            public int Phase;                       // bake: 0 floors, 1 edges, 2 done
+            public int Phase;                       // bake: 0 floors, 1 edges, 2 connected areas (sliced too), then Baked
+            public int CompScan, CompCur, CompCurSize; public Stack<int> CompStack; public List<int> CompSizes;   // phase 2 progress
             public readonly Dictionary<long, Field> Fields = new Dictionary<long, Field>();
         }
 
@@ -64,7 +67,7 @@ namespace Apocaraider
         private static readonly List<Structure> _structures = new List<Structure>();
         private static readonly HashSet<int> _known = new HashSet<int>();
         private static Structure _baking;
-        private static float _nextScan, _nextPick;
+        private static float _nextPick;
         private static readonly Stopwatch _sw = new Stopwatch();
         // solid for baking: everything the feelers see, minus cars (8) and loose items (9) - those move
         private static readonly int BakeMask = ~((1 << 1) | (1 << 2) | (1 << 4) | (1 << 5) | (1 << 6) | (1 << 7) | (1 << 8) | (1 << 9) | (1 << 10) | (1 << 12) | (1 << 13) | (1 << 15) | (1 << 17) | (1 << 19) | (1 << 22));
@@ -75,7 +78,7 @@ namespace Apocaraider
 
         internal static bool On { get { return Plugin.NavEnabled != null && Plugin.NavEnabled.Value; } }
 
-        public static void OnSceneLoaded() { _structures.Clear(); _known.Clear(); _baking = null; _nextScan = 0f; _debug.Clear(); _floorCols.Clear(); _exits.Clear(); _relaxedFields.Clear(); _pool.Clear(); _player = null; }
+        public static void OnSceneLoaded() { _structures.Clear(); _known.Clear(); _baking = null; _debug.Clear(); _floorCols.Clear(); _exits.Clear(); _relaxedFields.Clear(); _pool.Clear(); _player = null; _sweep.Clear(); _nodeKind.Clear(); _lastPickAt = 0f; _vPeak = 0f; }
 
         // ---------- discovery + baking (per frame) ----------
         public static void Tick()
@@ -84,24 +87,146 @@ namespace Apocaraider
             float now = Time.unscaledTime;
             var player = Player();
             if (player == null) return;
-            // structures spawned at run time arrive through Spawned() (the CreateObject hook); the full scene walk is a fallback once a minute
-            if (now >= _nextScan) { _nextScan = now + 60f; Discover(); }
-            if (_baking == null && now >= _nextPick)
-            {
-                _nextPick = now + 1f;
-                float best = float.MaxValue;
-                foreach (var s in _structures)
-                {
-                    if (s.Baked || s.Root == null) continue;
-                    float d = Mathf.Sqrt(s.Box.SqrDistance(player.position));
-                    if (d < Plugin.NavBakeRange.Value && d < best) { best = d; _baking = s; }
-                }
-                if (_baking != null) BeginBake(_baking);
-            }
+            float udt = Time.unscaledDeltaTime;
+            if (udt > 0f && udt < 0.5f) _dtAvg = _dtAvg <= 0f ? udt : _dtAvg + (udt - _dtAvg) * 0.1f;
+            // discovery: a slow walk over the scene hierarchy, a few hundred nodes per frame (each node's name read once and remembered by id)
+            try { SweepStep(now); } catch (Exception e) { Plugin.Log.LogError("Nav: discovery: " + e); _sweep.Clear(); _nextSweep = now + 5f; }
+            if (now >= _nextPick) { _nextPick = now + 0.5f; Pick(player.position, now); }
             if (_baking != null)
             {
                 try { BakeStep(_baking); }
                 catch (Exception e) { Plugin.Log.LogError("Nav: bake of " + _baking.Name + " failed: " + e); _baking.Baked = true; _baking.FloorY = null; _baking = null; }
+            }
+        }
+
+        // ---------- which structure to bake, and how fast ----------
+        // Every structure the player could reach before his noise could pull its NPCs out is mapped in time: "relevant" = within the
+        // farthest the player's own noise or sight carries (R, about 150 m); "in time" = the player, at the fastest he moved lately (or a
+        // run), could get within R of it before its bake would finish (estimated from its cell count and the measured cost per cell)
+        // x1.5 + 5 s. The direction does not matter (he could turn). Soonest-needed first; a far more urgent one takes over (the bake in
+        // progress pauses and resumes later). Within [Nav] BakeRange everything is baked as before.
+        private static float _lastPickAt, _vPeak, _vNow, _dtAvg, _msPerCell = 0.026f; private static Vector3 _lastPos;
+        private static bool _urgent;
+        private const float MaxBakeDistance = 2500f;
+
+        private static float Relevance()
+        {
+            float r = Mathf.Max(Plugin.SightRange.Value, Plugin.PlayerShoutRange.Value);
+            r = Mathf.Max(r, Mathf.Max(Plugin.ShotRangePistol.Value, Plugin.ShotRangeSmg.Value));
+            r = Mathf.Max(r, Mathf.Max(Plugin.ShotRangeRifle.Value, Plugin.ShotRangeSniper.Value));
+            r = Mathf.Max(r, Mathf.Max(Plugin.ShotRangeShotgun.Value, Plugin.BlastRange.Value));
+            return Mathf.Max(r, Plugin.EngineMaxRange.Value);
+        }
+
+        // remaining CPU time of a structure's bake, ms (phase 0 = floors ~65 %, phase 1 = edges ~30 %, phase 2 = areas)
+        private static float RemainingMs(Structure s)
+        {
+            int n = Math.Max(1, s.W * s.H);
+            float done = s.FloorY == null ? 0f : s.Phase == 0 ? 0.65f * s.Next / n : s.Phase == 1 ? 0.65f + 0.3f * s.Next / n : 0.95f;
+            return n * _msPerCell * (1f - done);
+        }
+
+        private static void Pick(Vector3 pp, float now)
+        {
+            float dtp = now - _lastPickAt;
+            if (_lastPickAt > 0f && dtp > 0.05f)
+            {
+                Vector3 dv = pp - _lastPos; dv.y = 0f;
+                float v = dv.magnitude / dtp;
+                if (v > 150f) v = 0f;                                       // a load / teleport, not a drive
+                _vNow = v;
+                _vPeak = Mathf.Max(v, _vPeak * Mathf.Pow(0.93f, dtp));      // the fastest lately, fading over ~15 s
+            }
+            _lastPos = pp; _lastPickAt = now;
+            float vEff = Mathf.Max(_vPeak, 7f), R = Relevance(), frame = Mathf.Clamp(_dtAvg > 0f ? _dtAvg : 1f / 60f, 1f / 240f, 0.1f);
+            float budget = BaseBudget();
+            Structure best = null; float bestSlack = float.MaxValue, curSlack = float.MaxValue;
+            for (int i = 0; i < _structures.Count; i++)
+            {
+                var s = _structures[i];
+                if (s.Baked || s.Root == null) continue;
+                Vector3 c = s.Box.ClosestPoint(new Vector3(pp.x, s.Box.center.y, pp.z));
+                float d = Mathf.Sqrt((c.x - pp.x) * (c.x - pp.x) + (c.z - pp.z) * (c.z - pp.z));
+                if (d > MaxBakeDistance) continue;
+                float bakeSec = RemainingMs(s) / budget * frame;
+                float slack = (d - R) / vEff - (bakeSec * 1.5f + 5f);       // seconds to spare before this map would come too late
+                if (s == _baking) curSlack = slack;
+                if (slack > 0f && d > Plugin.NavBakeRange.Value) continue;  // not needed yet
+                if (slack < bestSlack) { bestSlack = slack; best = s; }
+            }
+            if (best != null && (_baking == null || (best != _baking && bestSlack < curSlack - 5f)))
+            {
+                if (_baking != null && Plugin.NavLog.Value) Plugin.Log.LogInfo("Nav: pauses the bake of " + _baking.Name + " for " + best.Name);
+                _baking = best;
+                if (best.FloorY == null) BeginBake(best);        // else: resumes where it stopped
+            }
+            // the map is already late (the player is or soon will be within R) and the player stands still: bake faster
+            _urgent = _baking != null && (_baking == best ? bestSlack : curSlack) < 0f && _vNow < 2f;
+        }
+
+        private static float BaseBudget() { return Mathf.Max(0.2f, Plugin.NavBakeBudgetMs.Value); }
+
+        // this frame's slice: fixed by [Nav] BakeBudgetMs and the headroom - never more because the player is fast, only when frames are
+        // cheap (x2 above ~90 fps), the game is paused (x4, nothing moves), or a late map is needed where the player stands (x3 above ~50 fps);
+        // halved below ~45 fps
+        private static float FrameBudget()
+        {
+            float b = BaseBudget(), dt = _dtAvg > 0f ? _dtAvg : 1f / 60f;
+            if (Time.timeScale <= 0f) return b * 4f;
+            if (dt > 1f / 45f) return b * 0.5f;
+            if (_urgent && dt < 1f / 50f) return b * 3f;
+            if (dt < 1f / 90f) return b * 2f;
+            return b;
+        }
+
+        // ---------- discovery: an incremental sweep ----------
+        private static readonly Stack<KeyValuePair<Transform, int>> _sweep = new Stack<KeyValuePair<Transform, int>>();
+        private static readonly Dictionary<int, byte> _nodeKind = new Dictionary<int, byte>();   // 1 descend, 2 leaf (body / too big), 3 structure
+        private static float _nextSweep; private static int _sweepAdded;
+        private const int SweepNodesPerFrame = 250;
+
+        private static void SweepStep(float now)
+        {
+            if (_sweep.Count == 0)
+            {
+                if (now < _nextSweep) return;
+                int gone = _structures.RemoveAll(s => s.Root == null);      // despawned camps: drop their grids and cached routes
+                if (gone > 0 && Plugin.NavLog.Value) Plugin.Log.LogInfo("Nav: " + gone + " structure(s) gone");
+                if (_baking != null && _baking.Root == null) _baking = null;
+                if (_nodeKind.Count > 200000) _nodeKind.Clear();
+                for (int i = 0; i < SceneManager.sceneCount; i++)
+                {
+                    var sc = SceneManager.GetSceneAt(i);
+                    if (!sc.isLoaded) continue;
+                    _roots.Clear(); sc.GetRootGameObjects(_roots);
+                    foreach (var r in _roots) _sweep.Push(new KeyValuePair<Transform, int>(r.transform, 0));
+                }
+                if (_sweep.Count == 0) { _nextSweep = now + 2f; return; }
+            }
+            int budget = SweepNodesPerFrame;
+            while (_sweep.Count > 0 && budget-- > 0)
+            {
+                var e = _sweep.Pop();
+                var t = e.Key;
+                if (t == null) continue;
+                int id = t.GetInstanceID();
+                byte k;
+                if (!_nodeKind.TryGetValue(id, out k))
+                {
+                    k = IsStructure(t.name) ? (byte)3 : t.GetComponent<Rigidbody>() != null ? (byte)2 : (byte)1;   // creatures, cars, items never hold structures
+                    _nodeKind[id] = k;
+                }
+                if (k == 3) { if (!_known.Contains(id) && t.gameObject.activeInHierarchy) _sweepAdded += Scan(t, 0); continue; }
+                if (k == 2 || e.Value >= 4) continue;
+                int cc = t.childCount;
+                if (cc > 3000) continue;
+                for (int i = 0; i < cc; i++) _sweep.Push(new KeyValuePair<Transform, int>(t.GetChild(i), e.Value + 1));
+            }
+            if (_sweep.Count == 0)
+            {
+                if (_sweepAdded > 0 && Plugin.NavLog.Value) Plugin.Log.LogInfo("Nav: " + _sweepAdded + " new structure(s), " + _structures.Count + " known");
+                _sweepAdded = 0;
+                _nextSweep = now + 2f;      // a full pass takes a few dozen frames; then a short pause
             }
         }
 
@@ -114,26 +239,11 @@ namespace Apocaraider
 
         // structures are found by name (Camp_N / Building_N / Cave_N, any "(Clone)" suffix) among the scene roots and their children
         private static readonly List<GameObject> _roots = new List<GameObject>();
-        // a structure instantiated at run time (MapMagic tiles spawn Camp_N / Cave_N prefabs with CreateObject): take it without a scene walk
+        // a structure instantiated with CreateObject: taken at once (MapMagic places its camps itself - those the sweep finds)
         internal static void Spawned(GameObject go)
         {
             if (go == null || !On || !IsStructure(go.name)) return;
             Scan(go.transform, 0);
-        }
-
-        private static void Discover()
-        {
-            int added = 0;
-            int gone = _structures.RemoveAll(s => s.Root == null);      // despawned camps: drop their grids and cached routes
-            if (gone > 0 && Plugin.NavLog.Value) Plugin.Log.LogInfo("Nav: " + gone + " structure(s) gone");
-            for (int i = 0; i < SceneManager.sceneCount; i++)
-            {
-                var sc = SceneManager.GetSceneAt(i);
-                if (!sc.isLoaded) continue;
-                _roots.Clear(); sc.GetRootGameObjects(_roots);
-                foreach (var r in _roots) added += Scan(r.transform, 0);
-            }
-            if (added > 0 && Plugin.NavLog.Value) Plugin.Log.LogInfo("Nav: " + added + " new structure(s), " + _structures.Count + " known");
         }
 
         private static int Scan(Transform t, int depth)
@@ -189,7 +299,7 @@ namespace Apocaraider
         private static void BeginBake(Structure s)
         {
             s.FloorY = new float[s.W * s.H]; s.Why = new byte[s.W * s.H]; s.Open = new bool[s.W * s.H]; s.FloorHits = new Dictionary<int, int>();
-            s.Edges = new byte[s.W * s.H]; s.Comp = null; s.CompSize = null; s.Phase = 0;
+            s.Edges = new byte[s.W * s.H]; s.Comp = null; s.CompSize = null; s.Phase = 0; s.CompStack = null; s.CompSizes = null;
             s.Next = 0; s.Walkable = 0; s.NoFloor = 0; s.Tight = 0; s.Solid = 0; s.ScanLimit = 0; s.BakeMs = 0f; s.BakeFrames = 0;
             // the base height: the floor under the structure's pivot (a ray from well above, first walkable surface below the pivot + 2 m)
             Vector3 p = s.Root.position;
@@ -202,9 +312,17 @@ namespace Apocaraider
         {
             if (s.Root == null) { _baking = null; return; }
             _sw.Reset(); _sw.Start();
-            float budget = Mathf.Max(0.2f, Plugin.NavBakeBudgetMs.Value);
+            float budget = FrameBudget();
             int n = s.W * s.H;
             if (s.Phase == 1) { BakeEdges(s, budget); return; }
+            if (s.Phase == 2)
+            {
+                bool done = ComponentsStep(s, budget);
+                _sw.Stop();
+                s.BakeMs += (float)_sw.Elapsed.TotalMilliseconds; s.BakeFrames++;
+                if (done) Finish(s);
+                return;
+            }
             while (s.Next < n && _sw.Elapsed.TotalMilliseconds < budget)
             {
                 int i = s.Next++;
@@ -257,16 +375,21 @@ namespace Apocaraider
             finally { Physics.queriesHitBackfaces = old; }
             _sw.Stop();
             s.BakeMs += (float)_sw.Elapsed.TotalMilliseconds; s.BakeFrames++;
-            if (s.Next >= n)
+            if (s.Next >= n) { s.Phase = 2; s.Next = 0; }     // the connected areas next frame, sliced as well
+        }
+
+        private static void Finish(Structure s)
+        {
+            int n = s.W * s.H;
             {
-                s.Phase = 2;
-                Components(s);
                 s.Baked = true; _baking = null;
+                _msPerCell = Mathf.Clamp(_msPerCell + (s.BakeMs / Math.Max(1, n) - _msPerCell) * 0.5f, 0.005f, 0.2f);   // learned for the next estimates
                 int floorCols = 0;
                 foreach (var kv in s.FloorHits) if (kv.Value >= FloorColCells && _floorCols.Add(kv.Key)) floorCols++;
                 s.FloorHits = null;
                 s.EdgeCells = 0; s.EdgeWalkable = 0;
                 for (int i = 0; i < n; i++) if (IsEdge(s, i)) { s.EdgeCells++; if (!float.IsNaN(s.FloorY[i])) s.EdgeWalkable++; }
+                if (!Plugin.NavLog.Value && !Plugin.NavDump.Value) return;     // the rest is statistics for the log
                 int open = 0; for (int i = 0; i < n; i++) if (s.Open[i]) open++;
                 int areas = 0, biggest = 0, islands = 0, walls = 0;
                 foreach (int sz in s.CompSize) { if (sz >= MinArea) areas++; else islands += sz; if (sz > biggest) biggest = sz; }
@@ -282,6 +405,44 @@ namespace Apocaraider
         // Ray by ray from the top down (a multi-hit query reports one hit per collider, and a cave's roof and floor can be one mesh; ray
         // casts skip back faces, so the inside of a cave roof is passed through and its floor is found).
         // connected areas over open edges (flood fill); the size of each
+        // connected areas, a slice per frame: a flood fill over open edges whose stack and scan position live on the structure
+        private static bool ComponentsStep(Structure s, float budget)
+        {
+            int n = s.W * s.H;
+            if (s.CompStack == null)
+            {
+                s.Comp = new int[n];
+                for (int i = 0; i < n; i++) s.Comp[i] = -1;
+                s.CompSizes = new List<int>(); s.CompStack = new Stack<int>(); s.CompScan = 0; s.CompCur = -1; s.CompCurSize = 0;
+            }
+            int ops = 0;
+            while (true)
+            {
+                if ((++ops & 255) == 0 && _sw.Elapsed.TotalMilliseconds >= budget) return false;
+                if (s.CompStack.Count > 0)
+                {
+                    int c = s.CompStack.Pop(); s.CompCurSize++;
+                    int x = c % s.W, z = c / s.W;
+                    for (int dz = -1; dz <= 1; dz++)
+                        for (int dx = -1; dx <= 1; dx++)
+                        {
+                            if (dx == 0 && dz == 0) continue;
+                            int cx = x + dx, cz = z + dz;
+                            if (cx < 0 || cz < 0 || cx >= s.W || cz >= s.H) continue;
+                            int j = cz * s.W + cx;
+                            if (s.Comp[j] >= 0 || !Move(s, c, j)) continue;
+                            s.Comp[j] = s.CompCur; s.CompStack.Push(j);
+                        }
+                    continue;
+                }
+                if (s.CompCur >= 0) { s.CompSizes.Add(s.CompCurSize); s.CompCur = -1; }
+                while (s.CompScan < n && (s.Comp[s.CompScan] >= 0 || float.IsNaN(s.FloorY[s.CompScan]))) s.CompScan++;
+                if (s.CompScan >= n) { s.CompSize = s.CompSizes.ToArray(); s.CompSizes = null; s.CompStack = null; return true; }
+                s.CompCur = s.CompSizes.Count; s.CompCurSize = 0;
+                s.Comp[s.CompScan] = s.CompCur; s.CompStack.Push(s.CompScan);
+            }
+        }
+
         private static void Components(Structure s)
         {
             int n = s.W * s.H;

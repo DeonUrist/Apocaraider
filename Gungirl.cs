@@ -34,7 +34,7 @@ namespace Apocaraider
         private static readonly Dictionary<string, Material> _mats = new Dictionary<string, Material>();   // by material name: per-instance copies share one
         private static readonly HashSet<int> _dressed = new HashSet<int>();     // root ids already dressed (a skinned prop never re-enters Apply)
         private static GameObject _prefab;
-        private static float _nextScan, _burstUntil;
+        private static float _nextScan, _burstUntil; private static bool _burstPending;
 
         // ---------- identity = the name ----------
         private static bool IsFlexa(string name) { return name == "Flexa" || name.StartsWith("Flexa(", StringComparison.Ordinal); }
@@ -106,7 +106,7 @@ namespace Apocaraider
 
         public static void OnSceneLoaded()
         {
-            _burstUntil = Time.unscaledTime + 20f;     // scan quickly while a save is being restored
+            _burstPending = true;      // the quick scans start when the player exists (the save is being restored then)
             _nextScan = 0f;
             _dressed.Clear();
         }
@@ -126,7 +126,11 @@ namespace Apocaraider
             float t = Time.unscaledTime;
             if (t < _nextScan) return;
             if (Nav.Player() == null) { _nextScan = t + 1f; return; }   // menu / loading: nobody to dress yet
-            _nextScan = t + (t < _burstUntil ? 0.5f : 5f);     // a safety net for loads without a scene change; FindObjectsOfType is not free
+            if (_burstPending) { _burstPending = false; _burstUntil = t + 45f; }
+            // restored Gungirls and corpses appear during the load: scan then. Afterwards living ones are dressed when NPC detection registers
+            // them (Registered); the slow scan stays only when NPC detection is off
+            if (t >= _burstUntil && Senses.On) { _nextScan = t + 1f; return; }
+            _nextScan = t + (t < _burstUntil ? 1f : 5f);
             try { Scan(); }
             catch (Exception e) { Plugin.Log.LogError("Scan: " + e); _nextScan = t + 10f; }
         }
@@ -406,7 +410,20 @@ namespace Apocaraider
             return depth > 0f ? depth : 1f;
         }
 
-        private static GameObject FlexaPrefab()
+        // NPC detection registered an NPC: a Gungirl from a save (or a pre-0.6.0 marked Flexa) is dressed now
+        internal static void Registered(GameObject owner)
+        {
+            try
+            {
+                if (owner == null || _dressed.Contains(owner.GetInstanceID())) return;
+                string n = owner.name;
+                if (IsGungirlName(n)) Apply(owner, "restored");
+                else if (IsFlexa(n) && IsOldMarked(owner.transform)) { Rename(owner); Apply(owner, "restored"); }
+            }
+            catch (Exception e) { Plugin.Log.LogError("Gungirl: " + e); }
+        }
+
+        internal static GameObject FlexaPrefab()
         {
             if (_prefab != null) return _prefab;
             foreach (var go in Resources.FindObjectsOfTypeAll<GameObject>())

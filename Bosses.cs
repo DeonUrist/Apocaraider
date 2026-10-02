@@ -5,7 +5,7 @@ using UnityEngine;
 namespace Apocaraider
 {
     // [Gunplay] AdjustHumanBossHP: the human bosses' health in % of the game's own (Duke Ironjaw 1500, Buzzgut 600; asset read 2026-10-02).
-    // Bosses carry the FSM "BossUI" (it shows the Health number) and a "Health" FSM. Bosses are registered when the game spawns them
+    // Bosses carry the FSM "BossUI" (it shows the Health number) and a "Health" FSM. Bosses are registered by NPC detection (Registered) and when the game spawns them
     // (Senses' CreateObject postfix -> Spawned) and by a scene scan shortly after each scene load (bosses restored from a save); only
     // that short list is checked every 3 s. A slow full scan every 60 s stays as a safety net. Health is capped at base x % - a cap,
     // not a multiplication, so it is safe with the game saving and reloading their Health and with any number of checks.
@@ -25,6 +25,14 @@ namespace Apocaraider
         public static void OnSceneLoaded() { _raised.Clear(); _bosses.Clear(); _next = 0f; _nextScan = Time.unscaledTime + 2f; _scanBurst = 4; }
 
         private static string Clean(string name) { int cut = name.IndexOf('('); return cut > 0 ? name.Substring(0, cut) : name; }
+
+        // NPC detection registered an NPC (every boss has a Detection FSM): no scene scans needed while detection is on
+        internal static void Registered(GameObject owner)
+        {
+            if (owner == null) return;
+            float b; string name = Clean(owner.name);
+            if (Base.TryGetValue(name, out b)) Add(owner, name, b);
+        }
 
         // from the CreateObject postfix: prefab name already known (cached), the instance is what was made
         internal static void Spawned(GameObject made, string prefabName)
@@ -57,9 +65,14 @@ namespace Apocaraider
             float now = Time.unscaledTime;
             if (now >= _nextScan)
             {
-                // a few quick scans after a scene load (the save restores bosses over several seconds), then one a minute
-                if (Nav.Player() != null) { Scan(); if (_scanBurst > 0) _scanBurst--; }
-                _nextScan = now + (_scanBurst > 0 ? 5f : 60f);
+                // with NPC detection on, bosses arrive through Registered (and CreateObject): no scans. Off: a few quick scans after a
+                // scene load (the save restores bosses over several seconds), then one a minute
+                if (Senses.On) _nextScan = now + 1f;
+                else
+                {
+                    if (Nav.Player() != null) { Scan(); if (_scanBurst > 0) _scanBurst--; }
+                    _nextScan = now + (_scanBurst > 0 ? 5f : 60f);
+                }
             }
             if (now < _next || _bosses.Count == 0) return;
             _next = now + 3f;

@@ -50,7 +50,7 @@ namespace Apocaraider
             public GameObject Owner; public Transform T; public Rigidbody Rb; public Collider Col;
             public PlayMakerFSM Attack, Movement;
             public FsmGameObject Target;              // Detection.detectedObj
-            public bool Ranged; public Tracers.Kind Kind;
+            public bool Ranged; public Tracers.Kind Kind; public PlayMakerFSM MovementFsm; public float MadeAt, NextRangedCheck;
             public Animator Anim; public string AimState; public bool Frozen;   // the shooting animation held on its first frame = aiming
             public int CanCrouch;                     // 0 unknown, 1 has the leg bones, -1 no
             public bool Crouched, PoseCaptured; public float Drop;
@@ -201,6 +201,12 @@ namespace Apocaraider
             float d = d3.magnitude;
             n.Dist = d;
             if (d > Plugin.MaxDistance.Value) { if (n.Mode != Mode.Off) SetMode(n, Mode.Off, "far"); return; }
+            if (!n.Ranged && now < n.MadeAt + 10f && now >= n.NextRangedCheck)     // a gun that was not in the hand at the spawn frame
+            {
+                n.NextRangedCheck = now + 1f;
+                Tracers.Kind gk;
+                if (Tracers.GunKindOf(n.Owner, out gk)) { n.Ranged = true; n.Kind = gk; SetupRanged(n); }
+            }
             int kind = Senses.KindOf(n.Owner);           // 0 vanilla / seen target, 1 seen target, 2 going to a ghost, 3 searching at it
             if (kind == 3) { if (n.Mode != Mode.Search) { n.NextLookTurn = 0f; SetMode(n, Mode.Search, "looks around"); } return; }
             n.ToGhost = kind == 2;
@@ -925,28 +931,37 @@ namespace Apocaraider
             Tracers.Kind kind;
             n.Ranged = Tracers.GunKindOf(owner, out kind);
             n.Kind = kind;
-            if (n.Ranged)
-            {
-                n.Anim = owner.GetComponentInChildren<Animator>(true);
-                try
-                {
-                    var mf = movement.Fsm;
-                    if (mf != null && mf.States != null)
-                        foreach (var st in mf.States)
-                        {
-                            if (st == null || st.Name != "AttackRanged" || st.Actions == null) continue;
-                            foreach (var a in st.Actions)
-                            {
-                                var ap = a as AnimatorPlay;
-                                if (ap != null && ap.stateName != null && !string.IsNullOrEmpty(ap.stateName.Value)) { n.AimState = ap.stateName.Value; break; }
-                            }
-                        }
-                }
-                catch (Exception e) { Plugin.Verbose("Brain: no aim pose for " + owner.name + ": " + e.Message); }
-            }
+            n.MovementFsm = movement;
+            n.MadeAt = Time.time;
+            if (n.Ranged) SetupRanged(n);
             n.Stagger = (_created++ % 10) * 0.01f;
             n.NextTick = Time.time + n.Stagger;
             return n;
+        }
+
+        // a gunman's aim pose (the Movement FSM's AttackRanged animator state); also run later for one whose gun showed up after its spawn
+        private static void SetupRanged(Npc n)
+        {
+            var owner = n.Owner; var movement = n.MovementFsm;
+            if (movement == null) return;
+
+            n.Anim = owner.GetComponentInChildren<Animator>(true);
+            try
+            {
+                var mf = movement.Fsm;
+                if (mf != null && mf.States != null)
+                    foreach (var st in mf.States)
+                    {
+                        if (st == null || st.Name != "AttackRanged" || st.Actions == null) continue;
+                        foreach (var a in st.Actions)
+                        {
+                            var ap = a as AnimatorPlay;
+                            if (ap != null && ap.stateName != null && !string.IsNullOrEmpty(ap.stateName.Value)) { n.AimState = ap.stateName.Value; break; }
+                        }
+                    }
+            }
+            catch (Exception e) { Plugin.Verbose("Brain: no aim pose for " + owner.name + ": " + e.Message); }
+        
         }
 
         private static Npc NpcOf(Fsm fsm, string fsmName)
