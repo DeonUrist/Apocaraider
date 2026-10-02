@@ -226,6 +226,9 @@ namespace Apocaraider
 
         private static bool Visible(Agent a, Vector3 eye, GameObject target, bool isPlayer, bool targetInStorm)
         {
+            // the game's God Mode (F11, Player [GODMODE]) moves the Player, camera holder and head to layer 5 (UI) - the vanilla sensors never
+            // see that layer, so neither does this sight. Hearing, ghosts and hits are untouched.
+            if (isPlayer && target.layer == 5) return false;
             Vector3 tp = target.transform.position;
             Vector3 flat = tp - a.T.position; flat.y = 0f;
             float d = flat.magnitude;
