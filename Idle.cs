@@ -20,10 +20,14 @@ namespace Apocaraider
     // 2. Base walk: standing at home, within [Idle] WalkRadius (200 m) of the camera, on a baked map: 1-3 patrol points (Nav.PatrolPoints:
     //    clearly reachable on a straight line, elbow room, body sweep). Stand 10-25 s, walk to one, stand 4-10 s looking around, walk
     //    back. Every leg is swept again before it starts; a bump drops that point for 5 min. No points = it just stands, as vanilla.
+    // 3. Search walk: while the senses have it searching (a spot it went to check, nothing there), it walks short rounds from where the
+    //    search began instead of standing: 1-3 points made like the camp walk's (Nav.SearchPoints: the camp map when it stands on one,
+    //    otherwise physics only), out to a point and back through the start, the brain's look-around in the pauses. When the search
+    //    ends it heads home at once (ReturnDelay counts only after a fight that did not end in a search).
     // Gait: humans have only idle / run / attack clips - "walking" is the run clip at half speed (2.5 m/s); full run when far from home.
     internal static class Idle
     {
-        private enum Leg { None, Home, ToPoint, Back }
+        private enum Leg { None, Home, ToPoint, Back, SearchOut, SearchBack }
 
         private sealed class Ctl
         {
@@ -36,6 +40,8 @@ namespace Apocaraider
             public List<Vector3> Points; public int PointsState;   // 0 not tried, -1 map not baked yet, 1 done
             public float NextPoints; public float[] DroppedUntil; public int PointsTries;
             public float LookYaw, NextLook; public bool Turning, PendingBack;
+            public bool NoHome, LastWasSearch;
+            public bool InSearch, SAtOrigin; public Vector3 SOrigin; public List<Vector3> SPts; public float[] SDropped; public int SLast = -1;
         }
 
         private sealed class Spot { public Transform T; public bool Coyotes; }
@@ -102,7 +108,7 @@ namespace Apocaraider
         private static void Resolve(Ctl c, float now)
         {
             var a = c.A;
-            if (a.Tag != "Scrapyard" && a.Tag != "Coyotes") { c.Excluded = true; c.Resolved = true; return; }
+            if (a.Tag != "Scrapyard" && (a.Tag != "Coyotes" || !Plugin.IdleCoyotes.Value)) { c.Excluded = true; c.Resolved = true; return; }
             Spot spot;
             if (_spawnOf.TryGetValue(a.Owner.GetInstanceID(), out spot))
             {
@@ -113,7 +119,7 @@ namespace Apocaraider
             }
             // restored from a save: the nearest free spawn point of its faction in the structure it stands in
             var root = Nav.StructureRootAt(a.T.position);
-            if (root == null) { c.NextResolve = now + 10f; return; }      // not in a known camp (yet): try again later
+            if (root == null) { c.NextResolve = now + 10f; c.NoHome = true; return; }      // not in a known camp (yet): try again later
             Spot best = null; float bd = 40f * 40f;
             foreach (var s in SpotsOf(root))
             {
@@ -122,7 +128,8 @@ namespace Apocaraider
                 if (d < bd) { bd = d; best = s; }
             }
             c.Resolved = true;
-            if (best == null || !Wanted(best)) { c.Excluded = true; return; }
+            if (best == null) { c.NoHome = true; return; }          // still searches like the rest, just has no home to go back to
+            if (!Wanted(best)) { c.Excluded = true; return; }
             SetHome(c, best);
         }
 
@@ -151,12 +158,27 @@ namespace Apocaraider
                     _ctl[id] = c;
                 }
                 if (c.Excluded) continue;
+                if (!c.Resolved && now >= c.NextResolve) { try { Resolve(c, now); } catch (Exception e) { Plugin.Log.LogError("Idle: " + e); c.Excluded = true; continue; } if (c.Excluded) continue; }
+                bool searching = a.State == Senses.State.Search && a.Target == null && a.T.parent == null;
                 bool idle = a.State == Senses.State.Idle && a.Target == null && a.Ghost == null && a.T.parent == null
                             && (a.DetectedVar == null || a.DetectedVar.Value == null);
+                if (searching)
+                {
+                    if (!c.InSearch && (c.Leg != Leg.None || c.Moving || c.Turning)) Stop(c, false);
+                    c.BusyAt = now; c.LastWasSearch = true; c.Tries = 0; c.PendingBack = false; c.AtHome = false;
+                    if (now >= c.NextThink)
+                    {
+                        c.NextThink = now + 0.2f;
+                        try { SearchThink(c, now); } catch (Exception e) { Plugin.Log.LogError("Idle search: " + e); Stop(c, false); c.InSearch = false; }
+                    }
+                    if (c.Moving) Drive(c, dt);
+                    continue;
+                }
+                if (c.InSearch) { c.InSearch = false; if (c.Moving) Stop(c, idle); c.WaitUntil = 0f; }   // the search is over
                 if (!idle)
                 {
                     if (c.Leg != Leg.None || c.Moving || c.Turning) Stop(c, false);   // the fight logic takes over: its own animation, not ours
-                    c.BusyAt = now; c.Tries = 0; c.WaitUntil = 0f; c.PendingBack = false; c.AtHome = false;
+                    c.BusyAt = now; c.LastWasSearch = false; c.Tries = 0; c.WaitUntil = 0f; c.PendingBack = false; c.AtHome = false;
                     continue;
                 }
                 if (now >= c.NextThink)
@@ -183,10 +205,10 @@ namespace Apocaraider
 
         private static void Think(Ctl c, float now)
         {
-            if (!c.Resolved) { if (now >= c.NextResolve) Resolve(c, now); if (!c.Resolved) return; }
             if (c.Excluded || !c.HasHome || c.Forgotten) return;
             Vector3 pos = c.A.T.position;
-            if (now - c.BusyAt < Mathf.Max(0f, Plugin.IdleReturnDelay.Value)) return;      // just lost its target: stays a moment
+            // after a search: home at once; after a fight that ended some other way: a moment where it is first
+            if (!c.LastWasSearch && now - c.BusyAt < Mathf.Max(0f, Plugin.IdleReturnDelay.Value)) return;
 
             if (c.Leg != Leg.None) { LegThink(c, now, pos); return; }
             if (now < c.WaitUntil) { LookAround(c, now); return; }
@@ -221,6 +243,42 @@ namespace Apocaraider
             StartLeg(c, Leg.ToPoint, c.Points[pick], now, 2.5f);
         }
 
+        private static void SearchThink(Ctl c, float now)
+        {
+            Vector3 pos = c.A.T.position;
+            if (!c.InSearch)
+            {
+                c.InSearch = true; c.SOrigin = pos; c.SAtOrigin = true; c.SLast = -1;
+                if (c.SPts == null) c.SPts = new List<Vector3>();
+                int r = Nav.SearchPoints(pos, c.SPts, 3, 4f, 12f);
+                c.SDropped = new float[c.SPts.Count];
+                c.WaitUntil = now + UnityEngine.Random.Range(1.5f, 3f);
+                Log(c, "searches: " + c.SPts.Count + " point(s) to walk to" + (r < 0 ? " (off a camp map)" : ""));
+                return;
+            }
+            if (c.Leg != Leg.None) { LegThink(c, now, pos); return; }
+            if (now < c.WaitUntil) return;
+            if (!c.SAtOrigin) { StartLeg(c, Leg.SearchBack, c.SOrigin, now, 2.5f); return; }
+            if (c.SPts.Count == 0) return;                                // nothing clear around: stands and looks, as before
+            int pick = -1;
+            for (int t = 0; t < 6 && pick < 0; t++)
+            {
+                int i = UnityEngine.Random.Range(0, c.SPts.Count);
+                if ((i != c.SLast || c.SPts.Count == 1) && now >= c.SDropped[i]) pick = i;
+            }
+            if (pick < 0) { c.WaitUntil = now + 2f; return; }
+            if (!Nav.BodyPathClear(c.SOrigin, c.SPts[pick])) { c.SDropped[pick] = now + 300f; c.WaitUntil = now + 1f; return; }
+            c.SLast = pick;
+            StartLeg(c, Leg.SearchOut, c.SPts[pick], now, 2.5f);
+        }
+
+        // for the brain: this NPC is walking its search round (the brain leaves the body's facing to it while it does)
+        internal static bool SearchWalking(GameObject owner)
+        {
+            Ctl c;
+            return owner != null && _ctl.TryGetValue(owner.GetInstanceID(), out c) && c.InSearch && c.Moving;
+        }
+
         private static void StartLeg(Ctl c, Leg leg, Vector3 goal, float now, float speed)
         {
             c.Leg = leg; c.Goal = goal; c.LegStart = now; c.ProgressAt = now; c.BestLeft = float.MaxValue; c.Speed = speed;
@@ -232,7 +290,7 @@ namespace Apocaraider
         private static void LegThink(Ctl c, float now, Vector3 pos)
         {
             float left = Flat(pos - c.Goal);
-            float arrive = c.Leg == Leg.Home ? 1.5f : 0.8f;
+            float arrive = c.Leg == Leg.Home ? 1.5f : c.Leg == Leg.SearchBack ? 1.2f : 0.8f;
             if (left <= arrive && Mathf.Abs(pos.y - c.Goal.y) < 2.5f) { Arrived(c, now); return; }
             Vector3 next; float pathLeft;
             if (Nav.On && Nav.Next(c.A.Owner, pos, c.Goal, out next, out pathLeft)) { c.Steer = next; left = pathLeft; }
@@ -247,6 +305,8 @@ namespace Apocaraider
         {
             var leg = c.Leg;
             Stop(c);
+            if (leg == Leg.SearchOut) { c.SAtOrigin = false; c.WaitUntil = now + UnityEngine.Random.Range(2f, 4f); return; }   // the brain looks around
+            if (leg == Leg.SearchBack) { c.SAtOrigin = true; c.WaitUntil = now + UnityEngine.Random.Range(1.5f, 3f); return; }
             if (leg == Leg.Home) { c.Tries = 0; c.AtHome = true; c.WaitUntil = now + UnityEngine.Random.Range(10f, 25f); Log(c, "is home"); }
             else if (leg == Leg.ToPoint) { c.WaitUntil = now + UnityEngine.Random.Range(4f, 10f); c.NextLook = now + 1f; c.AtHome = false; c.PendingBack = true; }
             else { c.AtHome = true; c.WaitUntil = now + UnityEngine.Random.Range(10f, 25f); }
@@ -256,6 +316,13 @@ namespace Apocaraider
         {
             var leg = c.Leg;
             Stop(c);
+            if (leg == Leg.SearchOut || leg == Leg.SearchBack)
+            {
+                if (leg == Leg.SearchOut && c.SLast >= 0 && c.SDropped != null && c.SLast < c.SDropped.Length) c.SDropped[c.SLast] = now + 300f;
+                if (leg == Leg.SearchBack) { c.SPts.Clear(); Log(c, "bumped on its search round, stands"); }   // can't get back to the start: no more rounds
+                c.SAtOrigin = leg == Leg.SearchBack; c.WaitUntil = now + 1f;
+                return;
+            }
             if (leg == Leg.Home)
             {
                 c.Tries++;
@@ -308,6 +375,7 @@ namespace Apocaraider
         {
             if (c.Rb == null) { Stop(c); return; }
             var t = c.A.T;
+            if (c.Anim != null && !c.Anim.IsInTransition(0) && !c.Anim.GetCurrentAnimatorStateInfo(0).IsName("run")) { c.Anim.Play("run", 0, 0f); c.Anim.speed = c.Speed / 5f; }
             Vector3 to = c.Steer - t.position; to.y = 0f;
             if (to.sqrMagnitude < 0.0001f) return;
             float want = Mathf.Atan2(to.x, to.z) * Mathf.Rad2Deg;
@@ -334,16 +402,44 @@ namespace Apocaraider
             if (Plugin.BrainLog.Value) Plugin.Log.LogInfo("Idle: " + (c.A.Owner != null ? c.A.Owner.name : "?") + " " + msg);
         }
 
-        // [Debug] ShowNavigation: home (green) and patrol points (lime) of managed NPCs near the camera
+        // [Debug] ShowNavigation: home (green; grey = forgotten), patrol points (lime), search points (violet) and a label above the head
         internal static void DrawDebug()
         {
             if (!Plugin.ShowNav.Value || _ctl.Count == 0) return;
             var cam = Camera.main; if (cam == null) return;
+            float now = Time.time;
+            Vector3 cp = cam.transform.position;
             foreach (var c in _ctl.Values)
             {
-                if (!c.HasHome || c.A.Owner == null || (c.Home - cam.transform.position).sqrMagnitude > 200f * 200f) continue;
-                Hud.Mark(c.Home + Vector3.up * 0.2f, c.Forgotten ? Color.gray : Color.green, 10f);
-                if (c.Points != null) foreach (var p in c.Points) Hud.Mark(p + Vector3.up * 0.2f, new Color(0.6f, 1f, 0.2f), 7f);
+                var a = c.A;
+                if (c.Excluded || a.Owner == null || (a.T.position - cp).sqrMagnitude > 200f * 200f) continue;
+                if (c.HasHome)
+                {
+                    Hud.Mark(c.Home + Vector3.up * 0.2f, c.Forgotten ? Color.gray : Color.green, 10f);
+                    if (c.Points != null) foreach (var p in c.Points) Hud.Mark(p + Vector3.up * 0.2f, new Color(0.6f, 1f, 0.2f), 7f);
+                }
+                if (c.InSearch && c.SPts != null) foreach (var p in c.SPts) Hud.Mark(p + Vector3.up * 0.2f, new Color(0.75f, 0.6f, 1f), 7f);
+                string s = null; Color col = new Color(0.6f, 1f, 0.6f);
+                if (c.InSearch)
+                {
+                    s = c.Leg == Leg.SearchOut ? "search round: out to point " + c.SLast : c.Leg == Leg.SearchBack ? "search round: back" : c.SPts == null || c.SPts.Count == 0 ? "search: no clear round, stands" : "search round: looks";
+                    col = new Color(0.75f, 0.6f, 1f);
+                }
+                else if (a.State == Senses.State.Idle)
+                {
+                    if (c.Leg == Leg.Home) { s = "RETURNING " + Flat(a.T.position - c.Home).ToString("0") + " m (try " + (c.Tries + 1) + "/" + Plugin.IdleReturnTries.Value + ")"; col = Color.yellow; }
+                    else if (c.Forgotten) { s = "IDLE - home forgotten"; col = Color.gray; }
+                    else if (!c.HasHome) s = "IDLE - no home";
+                    else if (c.Leg == Leg.ToPoint) s = "IDLE walk -> point " + c.PointIdx;
+                    else if (c.Leg == Leg.Back) s = "IDLE walk -> home";
+                    else if (c.PendingBack) s = "IDLE at point " + c.PointIdx + ", looks";
+                    else if (c.Tries > 0 && now < c.WaitUntil) { s = "WAITS to return (" + c.Tries + "/" + Plugin.IdleReturnTries.Value + " failed)"; col = new Color(1f, 0.7f, 0.2f); }
+                    else if (!c.LastWasSearch && now - c.BusyAt < Plugin.IdleReturnDelay.Value && Flat(a.T.position - c.Home) > 2.5f) { s = "IDLE - returns in " + (Plugin.IdleReturnDelay.Value - (now - c.BusyAt)).ToString("0") + " s"; col = new Color(1f, 0.9f, 0.4f); }
+                    else s = "IDLE at home" + (c.PointsState == 1 ? " (" + (c.Points != null ? c.Points.Count : 0) + " patrol pts)" : c.PointsState == -1 ? " (no map yet)" : "");
+                }
+                if (s == null) continue;
+                Vector3 top = a.Col != null ? new Vector3(a.Col.bounds.center.x, a.Col.bounds.max.y, a.Col.bounds.center.z) : a.T.position + Vector3.up * 2f;
+                Hud.Label(top + Vector3.up * (c.InSearch ? 0.65f : 0.35f), s, col);   // the senses' own label (SEARCH ...) sits at +0.35
             }
         }
     }

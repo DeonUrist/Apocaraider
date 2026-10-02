@@ -163,6 +163,7 @@ namespace Apocaraider
                 Vector3 to;
                 if (n.Mode == Mode.Search)
                 {
+                    if (Idle.SearchWalking(n.Owner)) continue;      // walking its search round ([Idle]): the round turns the body
                     if (now >= n.NextLookTurn)
                     {
                         n.NextLookTurn = now + UnityEngine.Random.Range(1f, 1.8f) * R;

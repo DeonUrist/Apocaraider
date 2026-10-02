@@ -1169,6 +1169,54 @@ namespace Apocaraider
             return CellOf(s, p, out x, out z) && !float.IsNaN(s.FloorY[z * s.W + x]);
         }
 
+        // Points for a search round around origin: the camp map's patrol points when origin is on a baked map, otherwise physics only:
+        // 12 bearings, the longest of 3 distances where a body sweep is clear, the ground under the end (and the middle) is walkable
+        // (normal >= WalkNormal, within 1.5 m of origin's height) - no cliffs, no rock; picked >= 60 deg apart. Returns the count, or
+        // -(count) - 1 when it had to go by physics (so the caller can tell; 0 points then = -1).
+        internal static int SearchPoints(Vector3 origin, List<Vector3> pts, int max, float minD, float maxD)
+        {
+            int r = PatrolPoints(origin, pts, max, minD, maxD);
+            if (r >= 0) return r;
+            pts.Clear();
+            RaycastHit g;
+            Vector3 o = origin;
+            if (Physics.Raycast(origin + Vector3.up * 1f, Vector3.down, out g, 3f, (1 << 0) | (1 << 14), QueryTriggerInteraction.Ignore)) o = g.point;
+            var cand = new List<KeyValuePair<float, Vector3>>();
+            float[] dists = { maxD, (maxD + minD) * 0.5f, minD };
+            for (int b = 0; b < 12; b++)
+            {
+                float ang = b * 30f;
+                Vector3 dir = Quaternion.Euler(0f, ang, 0f) * Vector3.forward;
+                foreach (float d in dists)
+                {
+                    Vector3 e = o + dir * d, m = o + dir * (d * 0.5f);
+                    Vector3 ge, gm;
+                    if (!Ground(e, o.y, out ge) || !Ground(m, o.y, out gm)) continue;
+                    if (!BodyPathClear(o, ge)) continue;
+                    cand.Add(new KeyValuePair<float, Vector3>(ang, ge)); break;
+                }
+            }
+            cand.Sort((a, c) => (c.Value - o).sqrMagnitude.CompareTo((a.Value - o).sqrMagnitude));
+            foreach (var c in cand)
+            {
+                bool far = true;
+                foreach (var p in pts) { if (Mathf.Abs(Mathf.DeltaAngle(Bearing(o, p), c.Key)) < 60f) { far = false; break; } }
+                if (!far) continue;
+                pts.Add(c.Value);
+                if (pts.Count >= max) break;
+            }
+            return -pts.Count - 1;
+        }
+
+        private static bool Ground(Vector3 p, float refY, out Vector3 hit)
+        {
+            hit = p; RaycastHit h;
+            if (!Physics.Raycast(new Vector3(p.x, refY + 2f, p.z), Vector3.down, out h, 4f, (1 << 0) | (1 << 14), QueryTriggerInteraction.Ignore)) return false;
+            if (h.normal.y < WalkNormal || Mathf.Abs(h.point.y - refY) > 1.5f) return false;
+            hit = h.point;
+            return true;
+        }
+
         // a body capsule swept from a to b (patrol legs are re-checked before walking: a car parked there since the bake)
         internal static bool BodyPathClear(Vector3 a, Vector3 b)
         {
