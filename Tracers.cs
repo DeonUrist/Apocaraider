@@ -443,7 +443,7 @@ namespace Apocaraider
             float before = Plugin.HitLog.Value || feedback ? HealthOf(go) : 0f;
             Replay(fsm, (go.layer == 10 || corpse) && gun.ActorHit != null ? gun.ActorHit : gun.GetLayer, falloff);   // a corpse bleeds like the living NPC did
             float headF = creature && col_isHead(go) && !IsPlayerObj(go) ? HeadFactor(go) : 1f;     // [Gunplay] HeadshotMultiplier instead of the head's own x2
-            Replay(fsm, gun.Hit, falloff * headF, Plugin.VehicleDamage.Value && isPart);
+            Replay(fsm, gun.Hit, falloff * headF, Plugin.VehicleDamage.Value && isPart, (creature || corpse) && (go.layer == 10 || corpse) && gun.ActorHit != null);
             float after = Plugin.HitLog.Value || feedback ? HealthOf(go) : 0f;
             if (feedback)
             {
@@ -511,7 +511,7 @@ namespace Apocaraider
             return part;
         }
 
-        private static void Replay(Fsm fsm, FsmStateAction[] actions, float falloff, bool skipBodypartDamage = false)
+        private static void Replay(Fsm fsm, FsmStateAction[] actions, float falloff, bool skipBodypartDamage = false, bool skipDust = false)
         {
             if (actions == null) return;
             foreach (var a in actions)
@@ -530,6 +530,7 @@ namespace Apocaraider
                     {
                         var prefab = co.gameObject != null ? co.gameObject.Value : null;
                         if (prefab == null) continue;
+                        if (skipDust && prefab.name == "RangedHit_Effect") continue;     // (1.5.5) a creature / corpse: its blood only, no ground dust
                         var sp = co.spawnPoint != null ? co.spawnPoint.Value : null;
                         Vector3 pos; Quaternion rot;
                         bool hasPos = co.position != null && !co.position.IsNone, hasRot = co.rotation != null && !co.rotation.IsNone;
