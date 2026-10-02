@@ -78,6 +78,8 @@ namespace Apocaraider
             public int AvoidSide; public float AvoidUntil;            // passing a friend: the side, kept a moment (no left-right dither)
             public int FriendBumps; public float FriendBumpsSince;
             public Vector3 MakeWayDir; public float MakeWayUntil;    // standing in a friend's way: a short step aside
+            public readonly List<Vector3> Trail = new List<Vector3>(); public readonly List<byte> TrailKind = new List<byte>();   // [Debug] NavTrace
+            public float NextTrail, NextTraceLog, NextTraceDump; public Vector3 TraceGoal; public string LegBlock = "";
         }
 
         private static readonly Dictionary<int, Npc> _npcs = new Dictionary<int, Npc>();
@@ -221,6 +223,11 @@ namespace Apocaraider
             n.ToGhost = kind == 2;
             if (n.Mode == Mode.Off || n.Mode == Mode.Search) SetMode(n, Mode.Chase, !Plugin.BrainLog.Value ? "" : (n.ToGhost ? "ghost" : "target") + " at " + d.ToString("0") + " m");
 
+            if (Tracing && now >= n.NextTrail && n.Trail.Count < 1200)
+            {
+                n.NextTrail = now + 0.5f; n.TraceGoal = tp;
+                n.Trail.Add(n.T.position); n.TrailKind.Add((byte)(n.Mode == Mode.BackUp || n.Mode == Mode.Rest ? 2 : n.OnNav ? 0 : 1));
+            }
             if (n.Mode == Mode.BackUp) { if (now < n.ModeUntil) return; SetMode(n, Mode.Chase, "backed up"); }
             if (n.Mode == Mode.Rest) { if (now < n.ModeUntil) return; SetMode(n, Mode.Chase, "rested"); }
 
@@ -273,12 +280,28 @@ namespace Apocaraider
             // inside a baked camp / building / cave the structure's own map says the way (out through the right exit, around its walls)
             Vector3 navNext = Vector3.zero; float pathLeft = 0f;
             bool hopLeg = false;
-            n.OnNav = now >= n.NavOffUntil && Nav.Next(n.Owner, n.T.position, tp, out navNext, out pathLeft);
+            bool asked = now >= n.NavOffUntil;
+            n.OnNav = asked && Nav.Next(n.Owner, n.T.position, tp, out navNext, out pathLeft);
+            string trace = null; bool vetoed = false;
+            if (Tracing && now >= n.NextTraceLog) trace = asked ? Nav.TraceInfo() : "";
             if (n.OnNav)
             {
                 hopLeg = Nav.HopAhead(n.T.position, navNext);         // the route climbs a low lip / kerb (a hop edge) right ahead
-                if (!NavLegClear(n, navNext, hopLeg)) n.OnNav = false;
+                if (!NavLegClear(n, navNext, hopLeg)) { n.OnNav = false; vetoed = true; }
                 else if (hopLeg) TryHop(n, now, true);
+            }
+            if (trace != null)
+            {
+                n.NextTraceLog = now + 1f;
+                Vector3 vel = n.Rb != null ? n.Rb.velocity : Vector3.zero; vel.y = 0f;
+                Vector3 fp = n.Col != null ? n.Col.bounds.min : n.T.position;
+                Plugin.Log.LogInfo("Trace: " + n.Owner.name + " " + n.Mode + " at " + n.T.position.x.ToString("0.0") + "," + n.T.position.z.ToString("0.0") + " feet y " + fp.y.ToString("0.0")
+                    + " speed " + vel.magnitude.ToString("0.0") + " goal " + d.ToString("0") + " m | "
+                    + (!asked ? "MAP OFF " + (n.NavOffUntil - now).ToString("0") + " s more"
+                       : n.OnNav ? "MAP " + trace + (hopLeg ? " HOP" : "") + " wp " + Vector3.Distance(new Vector3(navNext.x, 0f, navNext.z), new Vector3(n.T.position.x, 0f, n.T.position.z)).ToString("0.0") + " m away"
+                       : vetoed ? "MAP VETOED (" + n.LegBlock + ") " + trace
+                       : "NO MAP: " + (Nav.LastReason.Length > 0 ? Nav.LastReason : "outside every map") + " | " + trace)
+                    + (n.HasWaypoint ? " | corner " + Vector3.Distance(n.Waypoint, n.T.position).ToString("0.0") + " m" : "") + (n.Side != 0 ? " | side " + n.Side : ""));
             }
             if (Plugin.BrainLog.Value && !n.OnNav && Nav.LastReason != n.NavReason)
             {
@@ -302,6 +325,22 @@ namespace Apocaraider
                 else { goal = w; gd = wd; }
             }
             Steer(n, goal, gd, now, d3);
+            if (Tracing && n.HasHeading && now + 1f - n.NextTraceLog < 0.05f)      // right after a trace line: where the feelers actually point
+            {
+                float want = Mathf.Atan2(goal.x, goal.z) * Mathf.Rad2Deg;
+                float off = Mathf.DeltaAngle(want, n.Heading);
+                if (Mathf.Abs(off) > 30f) Plugin.Log.LogInfo("Trace: " + n.Owner.name + " feelers turn " + off.ToString("0") + " deg off the " + (n.OnNav ? "map waypoint" : n.HasWaypoint ? "corner" : "straight line"));
+            }
+        }
+
+        // [Debug] NavTrace (NavDump + VerboseLog): a line per moving NPC per second and a picture of its trail when a chase ends / it rests
+        private static bool Tracing { get { return Plugin.NavDump.Value && Plugin.BrainLog.Value; } }
+        private static void TraceDump(Npc n, string why)
+        {
+            if (!Tracing || n.Trail.Count < 2 || Time.time < n.NextTraceDump) return;
+            n.NextTraceDump = Time.time + 15f;
+            Plugin.Log.LogInfo("Trace: " + n.Owner.name + " picture (" + why + ")");
+            try { Nav.TraceDump(n.Owner.name, n.Trail, n.TrailKind, n.TraceGoal); } catch (Exception e) { Plugin.Log.LogError("Trace: " + e.Message); }
         }
 
         // ---------- feelers ----------
@@ -692,6 +731,12 @@ namespace Apocaraider
         {
             Mode was = n.Mode;
             n.Mode = m;
+            if (Tracing && m != was)
+            {
+                if ((m == Mode.Chase || m == Mode.Advance) && (was == Mode.Off || was == Mode.Search)) { n.Trail.Clear(); n.TrailKind.Clear(); n.NextTrail = 0f; n.NextTraceDump = 0f; }
+                else if ((m == Mode.Search || m == Mode.Off) && was != Mode.Hold) { n.NextTraceDump = 0f; TraceDump(n, m == Mode.Search ? "reached the goal" : "chase over"); }
+                else if (m == Mode.Rest) TraceDump(n, "rests");
+            }
             if (m == Mode.Chase || m == Mode.Advance) { n.HasHeading = false; if (was != Mode.Chase && was != Mode.Advance && was != Mode.BackUp) { n.BestDist = float.MaxValue; n.NoProgressSince = Time.time; n.Flipped = false; n.Side = 0; n.HasWaypoint = false; } }
             bool wasStill = was == Mode.Hold || was == Mode.Rest || was == Mode.Search, still = m == Mode.Hold || m == Mode.Rest || m == Mode.Search;
             if (m == Mode.Off) { if (wasStill) Move(n, true); }
@@ -895,7 +940,8 @@ namespace Apocaraider
             if (h.collider.transform.root == n.T) return true;
             if (Nav.IsFloor(h.collider, h.normal, h.point.y, b.min.y)) return true;
             if (hopLeg && h.point.y - b.min.y <= Nav.HopStep + 0.1f) return true;   // the lip the map hops over, not a wall
-            if (Plugin.BrainLog.Value) Plugin.Log.LogInfo("Brain: " + n.Owner.name + " map waypoint blocked by " + h.collider.name + ", steers without the map");
+            n.LegBlock = h.collider.name + " [" + LayerMask.LayerToName(h.collider.gameObject.layer) + "] " + (h.point.y - b.min.y).ToString("0.00") + " m above the feet, " + h.distance.ToString("0.00") + " m ahead" + (hopLeg ? ", hop leg" : "");
+            if (Plugin.BrainLog.Value) Plugin.Log.LogInfo("Brain: " + n.Owner.name + " map waypoint blocked by " + n.LegBlock + ", steers without the map");
             return false;
         }
 
@@ -915,7 +961,7 @@ namespace Apocaraider
             {
                 // stuck on a map route: this map is wrong here - steer without it for a while
                 n.NavOffUntil = now + 10f * R; n.OnNav = false;
-                if (Plugin.BrainLog.Value) Plugin.Log.LogInfo("Brain: " + n.Owner.name + " stuck on a map route, steers without the map for " + (10f * R).ToString("0") + " s");
+                if (Plugin.BrainLog.Value) Plugin.Log.LogInfo("Brain: " + n.Owner.name + " stuck on a map route at " + n.T.position.x.ToString("0.0") + "," + n.T.position.z.ToString("0.0") + ", steers without the map for " + (10f * R).ToString("0") + " s");
             }
             if (now - n.FirstStuck > StuckWindow * R) { n.FirstStuck = now; n.Stucks = 0; }
             n.Stucks++;

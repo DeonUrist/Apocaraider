@@ -18,7 +18,7 @@ namespace Apocaraider
     {
         public const string GUID = "com.denis.apocalypter.apocaraider";
         public const string NAME = "Apocaraider";
-        public const string VERSION = "1.4.3";
+        public const string VERSION = "1.4.4";
 
         internal static ManualLogSource Log;
         internal static string Dir;
@@ -112,7 +112,7 @@ namespace Apocaraider
 
             VerboseLog = Config.Bind("Debug", "VerboseLog", false, "Detailed logs for every part of the mod (hits, detection, movement, maps).");
             HitLog = NavLog = SensesLog = BrainLog = VerboseLog;
-            NavDump = Config.Bind("Debug", "NavDump", false, "Map pictures (BMP) of every camp map made, and of NPCs that find no route, in config/Apocaraider/NavDump (0.5-4 MB each; for troubleshooting).");
+            NavDump = Config.Bind("Debug", "NavDump", false, "Map pictures (BMP) of every camp map made, and of NPCs that find no route, in config/Apocaraider/NavDump (0.5-4 MB each; for troubleshooting). With VerboseLog also a per-second Trace line for every moving NPC and a trace picture of its trail when a chase ends or it rests (cyan = the map's route, white = walked on the map, orange = walked without the map, red = backing up / resting).");
             ShowNav = Config.Bind("Debug", "ShowNavigation", false, "Draw the detection ghosts, NPC states and the structure maps' waypoints in the world.");
             ShowGhosts = ShowNav;
 

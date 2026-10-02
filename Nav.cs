@@ -713,6 +713,7 @@ namespace Apocaraider
         internal static bool Next(GameObject owner, Vector3 pos, Vector3 goal, out Vector3 next, out float pathLeft)
         {
             next = goal; pathLeft = 0f; LastReason = "";
+            _tS = null; _tFrom = _tGoal = _tExit = _tPick = -1; _tD0 = float.NaN; _tRelaxed = false;
             if (!On) return false;
             // footprints overlap (4 m margins): of the structures containing the NPC take the one whose floor is nearest its feet
             Structure s = null; int from = -1; float bestDy = float.MaxValue;
@@ -726,12 +727,14 @@ namespace Apocaraider
                 if (dy < bestDy) { bestDy = dy; s = t; from = tf; }
             }
             if (s == null) { LastReason = ""; return false; }
+            _tS = s; _tFrom = from; _tDy = bestDy;
             if (from < 0) { LastReason = LogOn ? "no free map cell near it in " + s.Name : "-"; return false; }
             if (bestDy > 2.5f) { LastReason = LogOn ? "not on the floor of " + s.Name : "-"; return false; }   // on the roof of a cave, on a rock above a camp: not on this map
             int gx, gz;
             bool goalInside = CellOf(s, goal, out gx, out gz);
             int goalCell = goalInside ? NearestWalkable(s, gx, gz, 4) : -1;
             if (goalInside && (goalCell < 0 || Mathf.Abs(goal.y - s.FloorY[goalCell]) > 3f)) goalInside = false;   // in a wall / above the map: outside
+            _tGoal = goalInside ? goalCell : -1;
             if (goalInside && GridSight(s, from, goalCell)) { LastReason = LogOn ? "straight line to the goal on the " + s.Name + " map" : "-"; return false; }  // straight across the floor: the feelers do the rest
             if (!goalInside && IsEdge(s, from)) { LastReason = LogOn ? "at the edge of " + s.Name : "-"; return false; }             // already at the edge of the footprint: out we go
 
@@ -745,6 +748,7 @@ namespace Apocaraider
                 // outside a building - and the feelers take it from there.
                 bool relaxed;
                 int exit = ExitCell(owner, s, from, goal, goalInside, goalCell, out relaxed);
+                _tExit = exit; _tRelaxed = relaxed;
                 if (exit < 0 || exit == from) { LastReason = LogOn ? "no way out of this spot on the " + s.Name + " map" + (exit == from ? " (already at the best open spot)" : "") : "-"; return false; }
                 if (relaxed) return RelaxedNext(owner, s, from, exit, pos, goal, out next, out pathLeft);
                 f = FieldFor(s, CellCenter(s, exit % s.W, exit / s.W, s.FloorY[exit]), true, exit);
@@ -754,6 +758,7 @@ namespace Apocaraider
                 d0 += new Vector2(goal.x - ec.x, goal.z - ec.z).magnitude;
                 if (GridSight(s, from, exit))
                 {
+                    _tD0 = d0; _tPick = exit;
                     next = CellCenter(s, exit % s.W, exit / s.W, s.FloorY[exit]);
                     pathLeft = d0; Remember(owner, next, s); return true;
                 }
@@ -769,9 +774,85 @@ namespace Apocaraider
                 if (GridSight(s, from, cur)) pick = cur; else break;
             }
             if (pick == from) { int nb = Downhill(s, f, from); if (nb < 0) { LastReason = LogOn ? "no downhill cell on the " + s.Name + " map" : "-"; return false; } pick = nb; }
+            _tD0 = d0; _tPick = pick;
             next = CellCenter(s, pick % s.W, pick / s.W, s.FloorY[pick]);
             Remember(owner, next, s);
             return true;
+        }
+
+        // ---------- [Debug] NavTrace: what the last Next call saw (set by Next, read right after it by the brain's trace) ----------
+        private static Structure _tS; private static int _tFrom, _tGoal, _tExit, _tPick; private static float _tD0, _tDy; private static bool _tRelaxed;
+        internal static string TraceInfo()
+        {
+            var s = _tS;
+            if (s == null) return "no baked map here";
+            var sb = new System.Text.StringBuilder();
+            sb.Append(s.Name.Replace("(Clone)", ""));
+            if (_tFrom < 0) return sb.Append(" no cell").ToString();
+            int comp = s.Comp != null ? s.Comp[_tFrom] : -1;
+            sb.Append(" cell ").Append(_tFrom % s.W).Append(',').Append(_tFrom / s.W).Append(" dy ").Append(_tDy.ToString("0.0"));
+            if (comp >= 0) sb.Append(" area#").Append(comp).Append(" (").Append(s.CompSize[comp]).Append(CompReachesRing(s, comp) ? ", reaches ring)" : ", NO ring)");
+            sb.Append(_tGoal >= 0 ? " goal cell " + (_tGoal % s.W) + "," + (_tGoal / s.W) + (s.Comp != null && s.Comp[_tGoal] == comp ? " same area" : " area#" + (s.Comp != null ? s.Comp[_tGoal] : -1)) : " goal outside");
+            if (_tExit >= 0) sb.Append(" EXIT ").Append(_tExit % s.W).Append(',').Append(_tExit / s.W).Append(_tRelaxed ? " relaxed" : "");
+            if (!float.IsNaN(_tD0)) sb.Append(" path ").Append(_tD0.ToString("0.0")).Append(" m");
+            if (_tPick >= 0) sb.Append(" wp ").Append(_tPick % s.W).Append(',').Append(_tPick / s.W);
+            return sb.ToString();
+        }
+
+        private static readonly Dictionary<Structure, bool[]> _compRing = new Dictionary<Structure, bool[]>();
+        private static bool CompReachesRing(Structure s, int comp)
+        {
+            bool[] r;
+            if (!_compRing.TryGetValue(s, out r) || r.Length != s.CompSize.Length)
+            {
+                r = new bool[s.CompSize.Length];
+                for (int i = 0; i < s.W * s.H; i++) if (IsEdge(s, i) && s.Comp[i] >= 0 && s.Comp[i] < r.Length) r[s.Comp[i]] = true;
+                _compRing[s] = r;
+            }
+            return comp >= 0 && comp < r.Length && r[comp];
+        }
+
+        // the cell of a world point on the map the NPC was traced on ("x,z" or "-")
+        internal static string CellText(Vector3 p)
+        {
+            var s = _tS; int x, z;
+            if (s == null || s.Root == null || !CellOf(s, p, out x, out z)) return "-";
+            int i = z * s.W + x;
+            return x + "," + z + (float.IsNaN(s.FloorY[i]) ? (s.Why != null ? " (" + WhyName(s.Why[i]) + ")" : " (no floor)") : "");
+        }
+        private static string WhyName(byte w) { return w == 2 ? "too tight" : w == 3 ? "in rock" : w == 4 ? "why4" : "no floor"; }
+
+        // A trace picture: the map, the NPC's area (from where the trace started) tinted, the route the map plans from the start cell to the
+        // goal (cyan cells; to the exit when the goal is not reachable), and the NPC's real trail (white = on the map, orange = steering
+        // without the map, red = backing up / resting). File <structure>_<x>_<z>_trace_<npc>.bmp
+        internal static void TraceDump(string who, List<Vector3> trail, List<byte> kinds, Vector3 goal)
+        {
+            if (trail == null || trail.Count < 2) return;
+            Structure s = null; int from = -1;
+            foreach (var p in trail)
+            {
+                int c; s = BakedAt(p, out c);
+                if (s != null) { from = c; break; }
+            }
+            if (s == null) { Plugin.Log.LogInfo("Nav: trace of " + who + ": the trail is on no baked map"); return; }
+            int gx, gz; bool inside = CellOf(s, goal, out gx, out gz);
+            int gc = inside ? NearestWalkable(s, gx, gz, 4) : -1;
+            if (inside && gc < 0) inside = false;
+            Field f = Build(s, goal, inside, gc);
+            Field mine = Build(s, goal, true, from);
+            var route = new List<int>();
+            int cur = from;
+            if (!float.IsInfinity(f.Dist[from]))
+            {
+                route.Add(cur);
+                for (int k = 0; k < 4000; k++) { int nb = Downhill(s, f, cur); if (nb < 0) break; cur = nb; route.Add(cur); }
+            }
+            var tr = new List<int>(); var tk = new List<byte>();
+            for (int i = 0; i < trail.Count; i++) { int x, z; if (CellOf(s, trail[i], out x, out z)) { tr.Add(z * s.W + x); tk.Add(kinds[i]); } }
+            Dump(s, "trace_" + who.Replace("(Clone)", ""), from, inside ? gc : -1, route.Count > 0 ? route[route.Count - 1] : -1, mine.Dist, route, tr, tk);
+            Plugin.Log.LogInfo("Nav: trace of " + who + " on " + s.Name + ": start cell " + (from % s.W) + "," + (from / s.W) + ", goal " + (inside ? "cell " + (gc % s.W) + "," + (gc / s.W) : "outside")
+                + (route.Count > 0 ? ", map route " + route.Count + " cells" : ", NO map route from the start cell") + ", trail " + trail.Count + " points");
+            Return(f); Return(mine);
         }
 
         // ---------- the way out when the map can't reach the goal ----------
@@ -829,7 +910,6 @@ namespace Apocaraider
             }
             if (best < 0) best = bestAny;
             _exits[mkey] = new ExitMemo { Exit = best, Until = now + 2f, Relaxed = relaxed, S = s };
-            Return(mine);
             if (Plugin.NavLog.Value)
                 Plugin.Log.LogInfo("Nav: " + (owner != null ? owner.name : "?") + " has no map route to its goal on " + s.Name + " (goal " + (goalInside ? "inside, cell " + (goalCell % s.W) + "," + (goalCell / s.W) : "outside the footprint")
                     + " at " + goal.x.ToString("0") + "," + goal.z.ToString("0") + "; its area " + size + " cells, " + open + " under open sky, " + (edge ? "reaches" : "does NOT reach") + " the outer ring ("
@@ -850,7 +930,8 @@ namespace Apocaraider
         // greenish, under a roof bluish); a walkable cell next to a walkable one more than MaxStep higher or lower: yellow; no floor: black;
         // too tight for a body: red; inside rock: brown. On a "no route" dump: the NPC's reachable area is tinted, the NPC white, the goal
         // magenta, the chosen exit cyan.
-        private static void Dump(Structure s, string tag, int npc, int goalCell, int exit, float[] area)
+        private static void Dump(Structure s, string tag, int npc, int goalCell, int exit, float[] area) { Dump(s, tag, npc, goalCell, exit, area, null, null, null); }
+        private static void Dump(Structure s, string tag, int npc, int goalCell, int exit, float[] area, List<int> route, List<int> trail, List<byte> trailKind)
         {
             try
             {
@@ -894,6 +975,15 @@ namespace Apocaraider
                                 px[o] = b; px[o + 1] = g; px[o + 2] = r;
                             }
                     }
+                if (route != null) foreach (int i in route) Paint(px, row, sc, i % W, i / W, 0, 200, 255);
+                if (trail != null)
+                    for (int t = 0; t < trail.Count; t++)
+                    {
+                        byte k = trailKind[t];
+                        if (k == 0) Paint(px, row, sc, trail[t] % W, trail[t] / W, 255, 255, 255);
+                        else if (k == 1) Paint(px, row, sc, trail[t] % W, trail[t] / W, 255, 140, 0);
+                        else Paint(px, row, sc, trail[t] % W, trail[t] / W, 255, 0, 0);
+                    }
                 // marks a little bigger so they show
                 foreach (var m in new[] { npc, goalCell, exit })
                 {
@@ -919,6 +1009,11 @@ namespace Apocaraider
                 Plugin.Log.LogInfo("Nav: map picture " + file + " (cell " + s.Cell.ToString("0.00") + " m, origin " + s.Box.min.x.ToString("0.0") + "," + s.Box.min.z.ToString("0.0") + ", base y " + s.RefY.ToString("0.0") + ")");
             }
             catch (Exception e) { Plugin.Log.LogError("Nav: dump failed: " + e.Message); }
+        }
+
+        private static void Paint(byte[] px, int row, int sc, int x, int z, byte r, byte g, byte b)
+        {
+            for (int dy = 0; dy < sc; dy++) for (int dx = 0; dx < sc; dx++) { int o = (z * sc + dy) * row + (x * sc + dx) * 3; if (o >= 0 && o + 2 < px.Length) { px[o] = b; px[o + 1] = g; px[o + 2] = r; } }
         }
 
         // the relaxed route to an exit: a field seeded at the exit with no-floor cells crossable, cached like the others; the waypoint is the
