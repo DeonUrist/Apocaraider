@@ -173,7 +173,7 @@ namespace Apocaraider
                 a.State = State.Idle; a.Target = null; a.SeenFor = 0f; a.Pursue = null;
                 Log(a, "blown about by a tornado, forgets what it was doing");
             }
-            if (a.State == State.Search && now >= a.SearchUntil) { GiveUp(a, "nothing here"); }
+            if (a.State == State.Search && now >= a.SearchUntil) { SearchedNothing(a, "nothing here"); }
             if (a.State == State.Investigate && a.Ghost != null)
             {
                 Vector3 to = a.Ghost.Pos - a.T.position; to.y = 0f;
@@ -424,6 +424,38 @@ namespace Apocaraider
             a.State = State.Search; a.SearchUntil = now + Mathf.Max(0f, Plugin.SearchSeconds.Value);
             Log(a, "reached ghost #" + (a.Ghost != null ? a.Ghost.Id.ToString() : "?") + ", looks around for " + Plugin.SearchSeconds.Value.ToString("0") + " s");
             if (a.Ghost != null) RetireIfSearched(a.Ghost);
+        }
+
+        // (1.4.10) a search that found nothing: the NPC gives up and tells its friends (same faction, humans, within AllClearRange) who are on
+        // the way to the same spot - or searching it - "there's nothing": they give up too and head back (never those fighting something they see)
+        private static void SearchedNothing(Agent a, string why)
+        {
+            var g = a.Ghost;
+            Vector3 spot = g != null ? g.Pos : a.T.position;
+            GiveUp(a, why);
+            float range = Plugin.AllClearRange.Value;
+            if (!a.Human || g == null || range <= 0f) return;
+            int told = 0;
+            foreach (var kv in _agents)
+            {
+                var f = kv.Value;
+                if (f == a || f.Owner == null || !f.Human || f.Tag != a.Tag || f.T.parent != null) continue;
+                if (f.State != State.Investigate && f.State != State.Search) continue;
+                var fg = f.Ghost;
+                if (fg == null || (fg != g && (fg.Pos - spot).sqrMagnitude > 8f * 8f)) continue;
+                if ((f.T.position - a.T.position).sqrMagnitude > range * range) continue;
+                f.Done[fg.Id] = fg.Moved;           // been told about it: not taken again unless there is news (the ghost moves)
+                GiveUp(f, "told by " + Name(a.Owner) + " there's nothing at ghost #" + fg.Id);
+                told++;
+            }
+            if (told > 0 && Plugin.SensesLog.Value) Plugin.Log.LogInfo("Senses: " + Name(a.Owner) + " found nothing at ghost #" + g.Id + ", tells " + told + " friend(s) to go back");
+        }
+
+        // Idle: the search round is walked (or there was none and it looked around) - the search ends now, not when SearchSeconds run out
+        internal static void EndSearch(GameObject owner, string why)
+        {
+            var a = Get(owner);
+            if (a != null && a.State == State.Search) SearchedNothing(a, why);
         }
 
         private static void GiveUp(Agent a, string why)

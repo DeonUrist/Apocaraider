@@ -42,6 +42,7 @@ namespace Apocaraider
             public float LookYaw, NextLook; public bool Turning, PendingBack; public float LastHop = -10f;
             public bool NoHome, LastWasSearch, Fresh;
             public PlayMakerFSM Movement; public bool MovementLooked; public float NextAnimCheck;
+            public int SNext; public bool SLooked;      // (1.4.10) the round: next point to walk, looked around at the end
             public bool InSearch, SAtOrigin; public Vector3 SOrigin; public List<Vector3> SPts; public float[] SDropped; public int SLast = -1;
         }
 
@@ -262,7 +263,7 @@ namespace Apocaraider
             Vector3 pos = c.A.T.position;
             if (!c.InSearch)
             {
-                c.InSearch = true; c.SOrigin = pos; c.SAtOrigin = true; c.SLast = -1;
+                c.InSearch = true; c.SOrigin = pos; c.SAtOrigin = true; c.SLast = -1; c.SNext = 0; c.SLooked = false;
                 if (c.SPts == null) c.SPts = new List<Vector3>();
                 int r = Nav.SearchPoints(pos, c.SPts, 3, 4f, 12f);
                 c.SDropped = new float[c.SPts.Count];
@@ -273,17 +274,21 @@ namespace Apocaraider
             if (c.Leg != Leg.None) { LegThink(c, now, pos); return; }
             if (now < c.WaitUntil) return;
             if (!c.SAtOrigin) { StartLeg(c, Leg.SearchBack, c.SOrigin, now, 2.5f); return; }
-            if (c.SPts.Count == 0) return;                                // nothing clear around: stands and looks, as before
-            int pick = -1;
-            for (int t = 0; t < 6 && pick < 0; t++)
+            // (1.4.10) each point of the round once (out and back to the spot), then a short look around and the search is over: home.
+            // No point to walk (or none clear any more): it looks around a few seconds where it stands, then home.
+            while (c.SNext < c.SPts.Count)
             {
-                int i = UnityEngine.Random.Range(0, c.SPts.Count);
-                if ((i != c.SLast || c.SPts.Count == 1) && now >= c.SDropped[i]) pick = i;
+                int i = c.SNext++;
+                if (now < c.SDropped[i]) continue;
+                if (!Nav.BodyPathClear(c.SOrigin, c.SPts[i])) { c.SDropped[i] = now + 300f; continue; }
+                c.SLast = i;
+                StartLeg(c, Leg.SearchOut, c.SPts[i], now, 2.5f);
+                return;
             }
-            if (pick < 0) { c.WaitUntil = now + 2f; return; }
-            if (!Nav.BodyPathClear(c.SOrigin, c.SPts[pick])) { c.SDropped[pick] = now + 300f; c.WaitUntil = now + 1f; return; }
-            c.SLast = pick;
-            StartLeg(c, Leg.SearchOut, c.SPts[pick], now, 2.5f);
+            if (!c.SLooked) { c.SLooked = true; c.WaitUntil = now + (c.SPts.Count == 0 ? 6f : 2f); return; }
+            Log(c, c.SPts.Count == 0 ? "no round to walk, looked around - nothing here" : "walked its round - nothing here");
+            Senses.EndSearch(c.A.Owner, c.SPts.Count == 0 ? "looked around, nothing here" : "walked the round, nothing here");
+            c.WaitUntil = now + 1f;
         }
 
         // for the brain: this NPC is walking its search round (the brain leaves the body's facing to it while it does)
