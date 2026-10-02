@@ -68,7 +68,8 @@ namespace Apocaraider
             public bool ToGhost, OnNav, WasOnNav; public float LookYaw, NextLookTurn, NavOffUntil;                       // Senses: going to a ghost / looking around at it
             public float BestDist = float.MaxValue, NoProgressSince;
             public int Stucks; public float FirstStuck, LastHop = -10f;
-            public int NavStucks; public float NavStuckSince, LastStep = -10f;    // map-route walking: stucks in a row, the last step-over
+            public int NavStucks; public float NavStuckSince, LastStep = -10f;
+            public float CmdSpeed, BlkSince, BlkDriven, BlkLastThink; public Vector3 BlkPos;     // blocked check: driven vs covered distance    // map-route walking: stucks in a row, the last step-over
             public float LosLostAt = -1f; public bool Los; public float Dist;
             public float LastLog;
             public int LosLooks;                       // consecutive thinks with line of sight (Hold needs 2: no flapping on a fence bar)
@@ -281,6 +282,7 @@ namespace Apocaraider
                 }
             }
             // moving: Chase or Advance
+            if (Blocked(n, now)) return;
             // inside a baked camp / building / cave the structure's own map says the way (out through the right exit, around its walls)
             Vector3 navNext = Vector3.zero; float pathLeft = 0f;
             bool hopLeg = false;
@@ -342,9 +344,30 @@ namespace Apocaraider
         // speed while turning: 1 within 30 deg of the wanted heading, down to 0.1 at 120 deg and beyond (also used by Idle)
         internal static float TurnSpeedFactor(float offDeg)
         {
-            if (offDeg <= 30f) return 1f;
-            return Mathf.Lerp(1f, 0.1f, Mathf.Clamp01((offDeg - 30f) / 90f));
+            float a0 = Plugin.MoveFullSpeedAngle.Value, a1 = Mathf.Max(a0 + 1f, Plugin.MoveSlowestAngle.Value);
+            if (offDeg <= a0) return 1f;
+            return Mathf.Lerp(1f, Mathf.Clamp01(Plugin.MoveSlowestSpeed.Value), Mathf.Clamp01((offDeg - a0) / (a1 - a0)));
         }
+
+        // (1.4.7) Blocked: over BlockedSeconds the body covered less than BlockedRatio of the distance it was driven (running in place against
+        // something, grinding along a wall) -> the same answer as a stuck: hop, or a step back and another way (on a map route the blocked
+        // heading is skipped for BlockedMemory s; 3 times in 8 s -> full feelers for 3 s). Never keeps pushing.
+        private static bool Blocked(Npc n, float now)
+        {
+            float dt = now - n.BlkLastThink; n.BlkLastThink = now;
+            bool moving = n.Mode == Mode.Chase || n.Mode == Mode.Advance;
+            if (!moving || dt > 1f || Senses.Blown(n.Owner) || n.Rb == null) { BlkReset(n, now); return false; }
+            n.BlkDriven += n.CmdSpeed * dt;
+            if (now - n.BlkSince < Mathf.Max(0.2f, Plugin.BlockedSeconds.Value)) return false;
+            Vector3 mv = n.T.position - n.BlkPos; mv.y = 0f;
+            float driven = n.BlkDriven, covered = mv.magnitude;
+            BlkReset(n, now);
+            if (driven < 0.6f || covered >= driven * Plugin.BlockedRatio.Value) return false;
+            if (Plugin.BrainLog.Value) Plugin.Log.LogInfo("Brain: " + n.Owner.name + " blocked (covered " + covered.ToString("0.0") + " of " + driven.ToString("0.0") + " m)" + (n.OnNav ? " on its map route" : ""));
+            OnStuck(n);
+            return true;
+        }
+        private static void BlkReset(Npc n, float now) { n.BlkSince = now; n.BlkDriven = 0f; n.BlkPos = n.T.position; }
 
         // ---------- walking a map route (1.4.5) ----------
         // The map already knows the way around walls, so on a route the body walks it the way the idle return does: straight at the waypoint,
@@ -364,8 +387,10 @@ namespace Apocaraider
                 float lo = b.min.y + 0.6f + r, hi = Mathf.Max(lo, b.min.y + b.size.y * 0.85f - r);
                 Vector3 p1 = new Vector3(b.center.x, lo, b.center.z), p2 = new Vector3(b.center.x, hi, b.center.z);
                 Transform troot = n.Target.Value != null ? n.Target.Value.transform.root : null;
+                bool avoid = now < n.BlockedUntil;
                 for (int i = 0; i < NavFan.Length; i++)
                 {
+                    if (avoid && Mathf.Abs(Mathf.DeltaAngle(want + NavFan[i], n.BlockedYaw)) < 25f) continue;   // blocked that way a moment ago
                     Vector3 dir = Quaternion.Euler(0f, want + NavFan[i], 0f) * Vector3.forward;
                     RaycastHit h;
                     if (!Physics.CapsuleCast(p1, p2, r, dir, out h, 1.2f, NavFeelMask, QueryTriggerInteraction.Ignore)
@@ -1040,6 +1065,7 @@ namespace Apocaraider
                 // stuck on a map route: hop / step back and keep the route; 3 times within 8 s -> full feelers for 3 s, then the map again
                 if (now - n.NavStuckSince > 8f) { n.NavStuckSince = now; n.NavStucks = 0; }
                 n.NavStucks++;
+                n.BlockedYaw = n.T.eulerAngles.y; n.BlockedUntil = now + Mathf.Max(0f, Plugin.BlockedMemory.Value) * R;
                 if (Plugin.BrainLog.Value) LogAhead(n);
                 if (n.NavStucks < 3)
                 {
@@ -1247,6 +1273,7 @@ namespace Apocaraider
                     if (!n.HasHeading) speed = 0f;
                     else speed *= TurnSpeedFactor(Mathf.Abs(Mathf.DeltaAngle(n.T.eulerAngles.y, n.Heading)));
                 }
+                n.CmdSpeed = Mathf.Max(0f, speed);
                 Vector3 v = n.T.forward * speed;
                 v.y = n.Rb.velocity.y;
                 n.Rb.velocity = v;

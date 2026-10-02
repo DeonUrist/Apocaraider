@@ -18,7 +18,7 @@ namespace Apocaraider
     {
         public const string GUID = "com.denis.apocalypter.apocaraider";
         public const string NAME = "Apocaraider";
-        public const string VERSION = "1.4.6";
+        public const string VERSION = "1.4.7";
 
         internal static ManualLogSource Log;
         internal static string Dir;
@@ -48,6 +48,7 @@ namespace Apocaraider
         internal static ConfigEntry<string> ShoutBlocksButtons;
         internal static ConfigEntry<string> NpcShotRanges, HumanFactions, BlastPrefabs;
         internal static ConfigEntry<bool> NavEnabled, NavLog, ShowNav, NavDump, WheelPopOff, IdleEnabled, IdleCoyotes, FriendsPassThrough;
+        internal static ConfigEntry<float> MoveFullSpeedAngle, MoveSlowestAngle, MoveSlowestSpeed, BlockedRatio, BlockedSeconds, BlockedMemory;
         internal static ConfigEntry<float> IdleReturnDelay, IdleRetrySeconds, IdleWalkRadius; internal static ConfigEntry<int> IdleReturnTries;
         internal static ConfigEntry<float> NavBakeRange, NavCellSize, NavMargin, NavMaxStep, NavBakeBudgetMs, NavFieldSeconds;
 
@@ -290,6 +291,12 @@ namespace Apocaraider
             IdleReturnDelay = H("Idle", "ReturnDelay", 15f, new ConfigDescription("Seconds an NPC stays where it lost track of everything before it heads home.", new AcceptableValueRange<float>(0f, 300f)));
             IdleReturnTries = H("Idle", "ReturnTries", 10, new ConfigDescription("Failed attempts to get home before the NPC forgets its home.", new AcceptableValueRange<int>(1, 100)));
             IdleRetrySeconds = H("Idle", "RetrySeconds", 5f, new ConfigDescription("Pause between two attempts to get home, s.", new AcceptableValueRange<float>(0f, 60f)));
+            MoveFullSpeedAngle = Config.Bind("Movement", "FullSpeedAngle", 30f, new ConfigDescription("A moving NPC runs at full speed while its body faces within this many degrees of where it wants to go.", new AcceptableValueRange<float>(0f, 180f)));
+            MoveSlowestAngle = Config.Bind("Movement", "SlowestAngle", 120f, new ConfigDescription("At this many degrees off (and beyond) it moves at SlowestSpeed - a big turn is made almost on the spot instead of as an arc.", new AcceptableValueRange<float>(1f, 180f)));
+            MoveSlowestSpeed = Config.Bind("Movement", "SlowestSpeed", 0.1f, new ConfigDescription("Speed factor (0-1) at SlowestAngle; between the two angles it goes linearly.", new AcceptableValueRange<float>(0f, 1f)));
+            BlockedRatio = Config.Bind("Movement", "BlockedRatio", 0.33f, new ConfigDescription("A chasing NPC that covers less than this share of the distance it is driven (running in place, grinding along a wall) is blocked: it hops or steps back and picks another way.", new AcceptableValueRange<float>(0.05f, 0.9f)));
+            BlockedSeconds = Config.Bind("Movement", "BlockedSeconds", 0.5f, new ConfigDescription("Over how many seconds that share is measured.", new AcceptableValueRange<float>(0.2f, 3f)));
+            BlockedMemory = Config.Bind("Movement", "BlockedMemory", 1.5f, new ConfigDescription("For how many seconds the direction it was blocked in is not taken again (on a map route).", new AcceptableValueRange<float>(0f, 10f)));
             IdleWalkRadius = H("Idle", "WalkRadius", 200f, new ConfigDescription("Camp walks only for NPCs within this distance of the camera, m.", new AcceptableValueRange<float>(20f, 1000f)));
 
             SpawnKey = H("Debug", "SpawnKey", Key.None,
