@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using UnityEngine;
 
-namespace Apocaraiders
+namespace Apocaraider
 {
     // Hit feedback for the player's own bullets: damage numbers ([Hud] DamageNumbers 0 off / 1 a list top right / 2 floating at the hit
     // point; white = damage, red with "!" = headshot, light blue = % taken off a vehicle part) and a diagonal hit marker at the screen

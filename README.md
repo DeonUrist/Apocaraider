@@ -1,6 +1,7 @@
-# Apocaraiders
+# Apocaraider
 
-New raiders for Apocalypter, built on the game's own enemies, and better gunfights for everyone.
+Smarter raiders and real gunfights for Apocalypter: real bullets, headshots and car-part damage; raiders that see, hear, remember
+and search; pathing that knows camps, caves and buildings; and Gungirl, a female raider. The short player description is in NEXUS.md.
 
 ## Gungirl
 
@@ -102,18 +103,18 @@ off; `[Debug] ShowNav` shows the mapping state and each NPC's next map waypoint;
 
 ## Install
 
-Needs BepInEx 5. Copy the `Apocaraiders` folder into `BepInEx\plugins\`, so you have:
+Needs BepInEx 5. Copy the `Apocaraider` folder into `BepInEx\plugins\`, so you have:
 
 ```
-BepInEx\plugins\Apocaraiders\Apocaraiders.dll
-BepInEx\plugins\Apocaraiders\Models\Flexa_female.glb
-BepInEx\plugins\Apocaraiders\Models\flexa_female.png
-BepInEx\plugins\Apocaraiders\Sounds\Gungirl\*.wav / *.ogg
+BepInEx\plugins\Apocaraider\Apocaraider.dll
+BepInEx\plugins\Apocaraider\Models\Flexa_female.glb
+BepInEx\plugins\Apocaraider\Models\flexa_female.png
+BepInEx\plugins\Apocaraider\Sounds\Gungirl\*.wav / *.ogg
 ```
 
 ## Settings
 
-`BepInEx\config\com.denis.apocalypter.apocaraiders.cfg`, or in game in the Apocasetter Mods menu.
+`BepInEx\config\com.denis.apocalypter.apocaraider.cfg`, or in game in the Apocasetter Mods menu.
 
 - **[General]** EnableHudEffects (damage numbers and hit marker), EnableGunplay (real bullets, falloff, headshots, NPC aim pacing,
   vehicle damage), EnableNpcDetection (sight, hearing, ghosts, search), EnableNpcPathfinding (steering, structure maps, shooting
@@ -124,7 +125,7 @@ BepInEx\plugins\Apocaraiders\Sounds\Gungirl\*.wav / *.ogg
   AdjustHumanBossHP (40 %: Duke Ironjaw and Buzzgut).
 - **[Detection]** PlayerShoutKey + PlayerShoutKeyModifier (Alt+Q), SightCone, SightRange, DarkSightRange, MuffleSounds.
 - **[Pathfinding]** ScaleWithActors.
-- **[Debug]** VerboseLog (every log of the mod, and map pictures in `config\Apocaraiders\NavDump`), ShowNavigation (ghosts, NPC states
+- **[Debug]** VerboseLog (every log of the mod, and map pictures in `config\Apocaraider\NavDump`), ShowNavigation (ghosts, NPC states
   and map waypoints drawn in the world).
 
 Everything else (Gungirl looks and voice, tracer colours, weapon ranges, aim pacing, movement, hearing ranges, maps) is fixed in

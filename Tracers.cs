@@ -5,7 +5,7 @@ using HutongGames.PlayMaker.Actions;
 using Micosmo.SensorToolkit.PlayMaker;
 using UnityEngine;
 
-namespace Apocaraiders
+namespace Apocaraider
 {
     // Visible bullets for every gun-wielding human (raiders, Coyotes, traders' guards ...).
     //
@@ -1197,7 +1197,7 @@ namespace Apocaraiders
             _drawnEmpty = _shots.Count == 0;
             if (_drawGo == null)
             {
-                _drawGo = new GameObject("Apocaraiders.Tracers") { hideFlags = HideFlags.HideAndDontSave };
+                _drawGo = new GameObject("Apocaraider.Tracers") { hideFlags = HideFlags.HideAndDontSave };
                 UnityEngine.Object.DontDestroyOnLoad(_drawGo);
                 _mesh = new Mesh { name = "Tracers" };
                 _mesh.MarkDynamic();

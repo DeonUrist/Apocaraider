@@ -6,7 +6,7 @@ using HutongGames.PlayMaker.Actions;
 using UnityEngine;
 using UnityEngine.InputSystem;
 
-namespace Apocaraiders
+namespace Apocaraider
 {
     // Gungirl = a Flexa raider wearing the female body (Models/flexa_female.gltf + .png).
     //

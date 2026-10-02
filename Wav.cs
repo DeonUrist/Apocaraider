@@ -1,7 +1,7 @@
 using System;
 using System.IO;
 
-namespace Apocaraiders
+namespace Apocaraider
 {
     // WAV reader: PCM 8/16/24/32-bit, IEEE float 32/64, WAVE_FORMAT_EXTENSIBLE. Returns interleaved samples in -1..1.
     // No UnityEngine types, so it can be tested outside the game.

@@ -1,6 +1,6 @@
 using System.Collections.Generic;
 
-namespace Apocaraiders
+namespace Apocaraider
 {
     // The bind poses of the game's human body mesh "Bodyguard.001" (Flexa, Flexa_Dead, Scrud, Lugnut, ...), per bone name,
     // rows 0..2 of the 4x4 matrix (row 3 is 0 0 0 1). Read from sharedassets1.assets (UnityPy) on 2026-10-01.

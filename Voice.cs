@@ -7,7 +7,7 @@ using HutongGames.PlayMaker;
 using UnityEngine;
 using UnityEngine.Networking;
 
-namespace Apocaraiders
+namespace Apocaraider
 {
     // Gungirl's own voice. Flexa's voice clips (asset scan 2026-10-01):
     //   Sound  [attack]    ArrayGetRandom array    enemy_human_single_1..8  (shouts while attacking)

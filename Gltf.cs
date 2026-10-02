@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Text;
 
-namespace Apocaraiders
+namespace Apocaraider
 {
     // A skinned model read from a .gltf (+ .bin / data URI) or .glb file, already converted to Unity's mesh space:
     // vertices are put into the skeleton's rest pose (sum of weight * jointWorld * inverseBind), then mirrored

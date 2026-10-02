@@ -12,7 +12,7 @@ using Micosmo.SensorToolkit.PlayMaker;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 
-namespace Apocaraiders
+namespace Apocaraider
 {
     // How NPCs notice things ("the senses"). Replaces the game's SensorToolkit detection for every NPC that stands on its own.
     //
@@ -435,8 +435,8 @@ namespace Apocaraiders
                 }
             }
             var n = new Ghost { Id = _nextGhostId++, Pos = pos, Src = src, Born = now, Moved = now, Source = source, About = about ?? "" };
-            if (_ghostRoot == null) { var r = new GameObject("Apocaraiders.Ghosts") { hideFlags = HideFlags.HideAndDontSave }; UnityEngine.Object.DontDestroyOnLoad(r); _ghostRoot = r.transform; }
-            n.Obj = new GameObject("Apocaraiders.Ghost#" + n.Id) { hideFlags = HideFlags.HideAndDontSave };
+            if (_ghostRoot == null) { var r = new GameObject("Apocaraider.Ghosts") { hideFlags = HideFlags.HideAndDontSave }; UnityEngine.Object.DontDestroyOnLoad(r); _ghostRoot = r.transform; }
+            n.Obj = new GameObject("Apocaraider.Ghost#" + n.Id) { hideFlags = HideFlags.HideAndDontSave };
             n.Obj.transform.SetParent(_ghostRoot, false);
             n.Obj.transform.position = pos;
             _ghosts.Add(n);
@@ -676,7 +676,7 @@ namespace Apocaraiders
             var cam = Camera.main;
             if (cam == null) return null;
             if (_voiceSrc != null && _voiceSrc.transform.parent == cam.transform) return _voiceSrc;
-            var go = new GameObject("Apocaraiders.Voice");
+            var go = new GameObject("Apocaraider.Voice");
             go.transform.SetParent(cam.transform, false);
             _voiceSrc = go.AddComponent<AudioSource>();
             _voiceSrc.spatialBlend = 0f; _voiceSrc.playOnAwake = false; _voiceSrc.loop = false;
@@ -941,7 +941,7 @@ namespace Apocaraiders
                         if (f != null && f.FsmName == "Detection" && f.Fsm != null && f.Fsm.Initialized)
                         {
                             var v = f.FsmVariables.FindFsmGameObject("detectedObj");
-                            if (v != null && v.Value != null && v.Value.name.IndexOf("Apocaraiders.Ghost", StringComparison.Ordinal) < 0) target = v.Value.transform.root.gameObject;
+                            if (v != null && v.Value != null && v.Value.name.IndexOf("Apocaraider.Ghost", StringComparison.Ordinal) < 0) target = v.Value.transform.root.gameObject;
                             break;
                         }
                 if (target == null || (_playerCar != null && target == _playerCar)) { FindPlayer(); target = _player; }
@@ -1209,7 +1209,7 @@ namespace Apocaraiders
         }
 
         // ---------- persistence ----------
-        // A sidecar per save slot (BepInEx/config/Apocaraiders/Saves/<SaveGameN.es3>.senses.txt) written when the game saves, read
+        // A sidecar per save slot (BepInEx/config/Apocaraider/Saves/<SaveGameN.es3>.senses.txt) written when the game saves, read
         // after a load once the NPCs (found by their saved names) are back. NPC names are unique per world (the Health FSM numbers them).
         private static class Persist
         {
@@ -1252,7 +1252,7 @@ namespace Apocaraiders
                 string name = Path.GetFileName(slot ?? "");
                 if (string.IsNullOrEmpty(name) || !name.StartsWith("SaveGame", StringComparison.OrdinalIgnoreCase)) return false;
                 foreach (char c in name) if (!(char.IsLetterOrDigit(c) || c == '.')) return false;
-                path = Path.Combine(Path.Combine(Path.Combine(Paths.ConfigPath, "Apocaraiders"), "Saves"), name + ".senses.txt");
+                path = Path.Combine(Path.Combine(Path.Combine(Paths.ConfigPath, "Apocaraider"), "Saves"), name + ".senses.txt");
                 return true;
             }
 
@@ -1313,8 +1313,8 @@ namespace Apocaraiders
                         if (p[0] == "ghost" && p.Length >= 7)
                         {
                             var g = new Ghost { Id = int.Parse(p[1]), Pos = new Vector3(float.Parse(p[2], ci), float.Parse(p[3], ci), float.Parse(p[4], ci)), Src = (Src)int.Parse(p[5]), Born = now - float.Parse(p[6], ci), Moved = now, About = p.Length > 7 ? string.Join(" ", p, 7, p.Length - 7) : "" };
-                            if (_ghostRoot == null) { var r = new GameObject("Apocaraiders.Ghosts") { hideFlags = HideFlags.HideAndDontSave }; UnityEngine.Object.DontDestroyOnLoad(r); _ghostRoot = r.transform; }
-                            g.Obj = new GameObject("Apocaraiders.Ghost#" + g.Id) { hideFlags = HideFlags.HideAndDontSave };
+                            if (_ghostRoot == null) { var r = new GameObject("Apocaraider.Ghosts") { hideFlags = HideFlags.HideAndDontSave }; UnityEngine.Object.DontDestroyOnLoad(r); _ghostRoot = r.transform; }
+                            g.Obj = new GameObject("Apocaraider.Ghost#" + g.Id) { hideFlags = HideFlags.HideAndDontSave };
                             g.Obj.transform.SetParent(_ghostRoot, false); g.Obj.transform.position = g.Pos;
                             if (g.About.IndexOf("player", StringComparison.OrdinalIgnoreCase) >= 0) g.Subject = _player;
                             _ghosts.Add(g); ghostById[g.Id] = g;

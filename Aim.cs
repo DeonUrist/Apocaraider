@@ -4,7 +4,7 @@ using HutongGames.PlayMaker;
 using HutongGames.PlayMaker.Actions;
 using UnityEngine;
 
-namespace Apocaraiders
+namespace Apocaraider
 {
     // How NPC gunmen pace their shots with distance.
     //

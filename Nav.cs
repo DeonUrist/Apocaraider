@@ -4,7 +4,7 @@ using System.Diagnostics;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 
-namespace Apocaraiders
+namespace Apocaraider
 {
     // Structure navigation: NPCs know the camps, buildings and caves they are in.
     //
@@ -593,7 +593,7 @@ namespace Apocaraiders
 
         // ---------- [Debug] NavDump: the map as a picture ----------
         // (also: orange = a wall or spike between this cell and a walkable neighbour; purple = a small island, never used for routes)
-        // BepInEx/config/Apocaraiders/NavDump/<structure>_<x>_<z>_<tag>.bmp, 2 px per cell, north up. Walkable: grey by height (open sky
+        // BepInEx/config/Apocaraider/NavDump/<structure>_<x>_<z>_<tag>.bmp, 2 px per cell, north up. Walkable: grey by height (open sky
         // greenish, under a roof bluish); a walkable cell next to a walkable one more than MaxStep higher or lower: yellow; no floor: black;
         // too tight for a body: red; inside rock: brown. On a "no route" dump: the NPC's reachable area is tinted, the NPC white, the goal
         // magenta, the chosen exit cyan.
@@ -653,7 +653,7 @@ namespace Apocaraiders
                         for (int yy = 0; yy < sc; yy++) for (int xx = 0; xx < sc; xx++) { int o = (cz * sc + yy) * row + (cx * sc + xx) * 3; px[o] = b; px[o + 1] = g; px[o + 2] = r; }
                     }
                 }
-                string dir = System.IO.Path.Combine(System.IO.Path.Combine(BepInEx.Paths.ConfigPath, "Apocaraiders"), "NavDump");
+                string dir = System.IO.Path.Combine(System.IO.Path.Combine(BepInEx.Paths.ConfigPath, "Apocaraider"), "NavDump");
                 System.IO.Directory.CreateDirectory(dir);
                 string file = System.IO.Path.Combine(dir, s.Name.Replace("(Clone)", "") + "_" + Mathf.RoundToInt(s.Root.position.x) + "_" + Mathf.RoundToInt(s.Root.position.z) + "_" + tag + ".bmp");
                 using (var fs = new System.IO.FileStream(file, System.IO.FileMode.Create))

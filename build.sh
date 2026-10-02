@@ -1,7 +1,7 @@
 #!/bin/sh
-# Builds Apocaraiders.dll against the game's own libraries. Usage: ./build.sh [out.dll]
+# Builds Apocaraider.dll against the game's own libraries. Usage: ./build.sh [out.dll]
 M=${MANAGED:-/e/SteamLibrary/steamapps/common/Apocalypter/Apocalypter_Data/Managed}; B=${BEPCORE:-/e/SteamLibrary/steamapps/common/Apocalypter/BepInEx/core}
-mcs -nostdlib -noconfig -target:library -langversion:latest -optimize+ -out:${1:-Apocaraiders.dll} \
+mcs -nostdlib -noconfig -target:library -langversion:latest -optimize+ -out:${1:-Apocaraider.dll} \
   -r:$M/mscorlib.dll -r:$M/System.dll -r:$M/System.Core.dll -r:$M/netstandard.dll \
   -r:$B/BepInEx.dll -r:$B/0Harmony.dll \
   -r:$M/UnityEngine.dll -r:$M/UnityEngine.CoreModule.dll -r:$M/UnityEngine.PhysicsModule.dll \

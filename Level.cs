@@ -1,6 +1,6 @@
 using System;
 
-namespace Apocaraiders
+namespace Apocaraider
 {
     // Loudness matching for replacement voice clips. No UnityEngine types (testable outside the game).
     // Loudness = RMS over the "active" part of a clip: 1024-sample blocks whose RMS is above 5 % of the clip's peak,

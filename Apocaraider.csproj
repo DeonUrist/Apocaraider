@@ -2,8 +2,8 @@
 
   <PropertyGroup>
     <TargetFramework>net472</TargetFramework>
-    <AssemblyName>Apocaraiders</AssemblyName>
-    <RootNamespace>Apocaraiders</RootNamespace>
+    <AssemblyName>Apocaraider</AssemblyName>
+    <RootNamespace>Apocaraider</RootNamespace>
     <LangVersion>latest</LangVersion>
     <Nullable>disable</Nullable>
     <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
@@ -12,7 +12,7 @@
     <GameDir Condition="'$(GameDir)' == ''">E:\SteamLibrary\steamapps\common\Apocalypter</GameDir>
     <ManagedDir>$(GameDir)\Apocalypter_Data\Managed</ManagedDir>
     <BepInExCore>$(GameDir)\BepInEx\core</BepInExCore>
-    <PluginDir>$(GameDir)\BepInEx\plugins\Apocaraiders</PluginDir>
+    <PluginDir>$(GameDir)\BepInEx\plugins\Apocaraider</PluginDir>
   </PropertyGroup>
 
   <ItemGroup>

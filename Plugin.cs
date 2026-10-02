@@ -9,16 +9,16 @@ using UnityEngine;
 using UnityEngine.InputSystem;
 using UnityEngine.SceneManagement;
 
-namespace Apocaraiders
+namespace Apocaraider
 {
     // New raiders built on the game's own human enemies. Gungirl: a Flexa with a female body, voice and corpse.
     // Tracers: every gun-wielding human fires visible bullets / crossbow bolts with travel time, range falloff and vehicle hits.
     [BepInPlugin(GUID, NAME, VERSION)]
     public class Plugin : BaseUnityPlugin
     {
-        public const string GUID = "com.denis.apocalypter.apocaraiders";
-        public const string NAME = "Apocaraiders";
-        public const string VERSION = "0.14.0";
+        public const string GUID = "com.denis.apocalypter.apocaraider";
+        public const string NAME = "Apocaraider";
+        public const string VERSION = "1.0.0";
 
         internal static ManualLogSource Log;
         internal static string Dir;
@@ -59,7 +59,7 @@ namespace Apocaraiders
 
         private void Awake()
         {
-            _hidden = new ConfigFile(Path.Combine(Path.Combine(Paths.ConfigPath, "Apocaraiders"), "hidden-settings.not-saved"), false) { SaveOnConfigSet = false };
+            _hidden = new ConfigFile(Path.Combine(Path.Combine(Paths.ConfigPath, "Apocaraider"), "hidden-settings.not-saved"), false) { SaveOnConfigSet = false };
             Log = Logger;
             Dir = Path.GetDirectoryName(Info.Location);
 
@@ -105,7 +105,7 @@ namespace Apocaraiders
 
             ScaleWithActors = Config.Bind("Pathfinding", "ScaleWithActors", false, "With many NPCs around, each one thinks less often (saves CPU in big fights).");
 
-            VerboseLog = Config.Bind("Debug", "VerboseLog", false, "Detailed logs for every part of the mod (hits, detection, movement, maps) and map pictures in config/Apocaraiders/NavDump.");
+            VerboseLog = Config.Bind("Debug", "VerboseLog", false, "Detailed logs for every part of the mod (hits, detection, movement, maps) and map pictures in config/Apocaraider/NavDump.");
             HitLog = NavLog = NavDump = SensesLog = BrainLog = VerboseLog;
             ShowNav = Config.Bind("Debug", "ShowNavigation", false, "Draw the detection ghosts, NPC states and the structure maps' waypoints in the world.");
             ShowGhosts = ShowNav;
@@ -349,7 +349,7 @@ namespace Apocaraiders
         private static void EnsureRunner()
         {
             if (_runner != null) return;
-            _runner = new GameObject("Apocaraiders.Runner") { hideFlags = HideFlags.HideAndDontSave };
+            _runner = new GameObject("Apocaraider.Runner") { hideFlags = HideFlags.HideAndDontSave };
             UnityEngine.Object.DontDestroyOnLoad(_runner);
             _runner.AddComponent<Runner>();
         }

@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using UnityEngine;
 
-namespace Apocaraiders
+namespace Apocaraider
 {
     // [Gunplay] AdjustHumanBossHP: the human bosses' health in % of the game's own (Duke Ironjaw 1500, Buzzgut 600; asset read 2026-10-02).
     // Bosses carry the FSM "BossUI" (it shows the Health number). Every 3 s the live bosses are found and their Health capped at base x % -
