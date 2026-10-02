@@ -68,6 +68,7 @@ namespace Apocaraider
             public bool ToGhost, OnNav, WasOnNav; public float LookYaw, NextLookTurn, NavOffUntil;                       // Senses: going to a ghost / looking around at it
             public float BestDist = float.MaxValue, NoProgressSince;
             public int Stucks; public float FirstStuck, LastHop = -10f;
+            public int NavStucks; public float NavStuckSince, LastStep = -10f;    // map-route walking: stucks in a row, the last step-over
             public float LosLostAt = -1f; public bool Los; public float Dist;
             public float LastLog;
             public int LosLooks;                       // consecutive thinks with line of sight (Hold needs 2: no flapping on a fence bar)
@@ -309,7 +310,8 @@ namespace Apocaraider
                 if (n.NavReason.Length > 0) Plugin.Log.LogInfo("Brain: " + n.Owner.name + " no map route: " + n.NavReason + Nav.Probe(n.T.position));
             }
             if (n.OnNav != n.WasOnNav) { n.WasOnNav = n.OnNav; n.BestDist = float.MaxValue; n.NoProgressSince = now; }   // map path length and straight distance don't compare
-            if (!Progress(n, n.OnNav ? pathLeft : d, now)) return;
+            if (n.OnNav) NavProgress(n, pathLeft, now);         // may switch the map off for a moment (full feelers then)
+            else if (!Progress(n, d, now)) return;
             Vector3 goal = d3; float gd = d;
             if (n.OnNav)
             {
@@ -324,13 +326,77 @@ namespace Apocaraider
                 else if (DirectClear(n, tp, d)) { n.HasWaypoint = false; if (Plugin.BrainLog.Value) Plugin.Log.LogInfo("Brain: " + n.Owner.name + " has a clear line, drops the corner"); }
                 else { goal = w; gd = wd; }
             }
-            Steer(n, goal, gd, now, d3);
+            if (n.OnNav) NavSteer(n, goal, now);                // on a map route: straight at the waypoint, short front feelers, steps over low stuff
+            else Steer(n, goal, gd, now, d3);
             if (Tracing && n.HasHeading && now + 1f - n.NextTraceLog < 0.05f)      // right after a trace line: where the feelers actually point
             {
                 float want = Mathf.Atan2(goal.x, goal.z) * Mathf.Rad2Deg;
                 float off = Mathf.DeltaAngle(want, n.Heading);
                 if (Mathf.Abs(off) > 30f) Plugin.Log.LogInfo("Trace: " + n.Owner.name + " feelers turn " + off.ToString("0") + " deg off the " + (n.OnNav ? "map waypoint" : n.HasWaypoint ? "corner" : "straight line"));
             }
+        }
+
+        // ---------- walking a map route (1.4.5) ----------
+        // The map already knows the way around walls, so on a route the body walks it the way the idle return does: straight at the waypoint,
+        // the first free of 5 headings (0, +-30, +-60) by a short body sweep from above the knee (1.2 m; low clutter is stepped over, not
+        // steered around), no side commitment, no corner scouting, no left/right flips. Ankle-high things (a rock lip, debris, a kerb) ahead
+        // are stepped over with a small lift.
+        private static readonly float[] NavFan = { 0f, -30f, 30f, -60f, 60f };
+        private static readonly int NavFeelMask = PathMask & ~(1 << 9);      // walls, rock, props, cars - not loose items
+        private static void NavSteer(Npc n, Vector3 toWp, float now)
+        {
+            float want = Mathf.Atan2(toWp.x, toWp.z) * Mathf.Rad2Deg, chosen = want;
+            n.Side = 0; n.Flipped = false; n.HasWaypoint = false;
+            if (n.Col != null)
+            {
+                var b = n.Col.bounds;
+                float r = Mathf.Clamp(Mathf.Min(b.extents.x, b.extents.z), 0.15f, 0.35f);
+                float lo = b.min.y + 0.6f + r, hi = Mathf.Max(lo, b.min.y + b.size.y * 0.85f - r);
+                Vector3 p1 = new Vector3(b.center.x, lo, b.center.z), p2 = new Vector3(b.center.x, hi, b.center.z);
+                Transform troot = n.Target.Value != null ? n.Target.Value.transform.root : null;
+                for (int i = 0; i < NavFan.Length; i++)
+                {
+                    Vector3 dir = Quaternion.Euler(0f, want + NavFan[i], 0f) * Vector3.forward;
+                    RaycastHit h;
+                    if (!Physics.CapsuleCast(p1, p2, r, dir, out h, 1.2f, NavFeelMask, QueryTriggerInteraction.Ignore)
+                        || h.collider.transform.root == n.T || (troot != null && h.collider.transform.root == troot)
+                        || Nav.IsFloor(h.collider, h.normal, h.point.y, b.min.y))
+                    { chosen = want + NavFan[i]; break; }
+                }
+            }
+            n.Heading = chosen; n.HasHeading = true;
+            StepOver(n, now);
+        }
+
+        // something ankle-high right ahead (a lip, debris, a kerb) and nothing at the knee: a small lift over it (at most every 0.6 s)
+        private static void StepOver(Npc n, float now)
+        {
+            if (n.Rb == null || n.Col == null || now - n.LastStep < 0.6f || now - n.LastHop < 0.6f) return;
+            var b = n.Col.bounds;
+            Vector3 fwd = n.T.forward; fwd.y = 0f; if (fwd.sqrMagnitude < 0.01f) return; fwd.Normalize();
+            float reach = Mathf.Min(b.extents.x, b.extents.z) + 0.35f;
+            Vector3 low = new Vector3(b.center.x, b.min.y + 0.08f, b.center.z), knee = new Vector3(b.center.x, b.min.y + 0.55f, b.center.z);
+            RaycastHit h;
+            if (!Physics.Raycast(low, fwd, out h, reach, NavFeelMask, QueryTriggerInteraction.Ignore) || h.collider.transform.root == n.T) return;
+            if (h.normal.y >= Nav.WalkNormal) return;                           // ground rising gently: the body walks up it
+            if (Physics.Raycast(knee, fwd, reach + 0.25f, NavFeelMask, QueryTriggerInteraction.Ignore)) return;   // higher than a step: not this
+            n.LastStep = now;
+            Vector3 v = n.Rb.velocity;
+            if (v.y < 2.4f) n.Rb.AddForce(Vector3.up * (2.4f - Mathf.Max(0f, v.y)) + fwd * 0.6f, ForceMode.VelocityChange);
+            if (Plugin.BrainLog.Value) Plugin.Log.LogInfo("Brain: " + n.Owner.name + " steps over " + h.collider.name + " (" + (h.point.y - b.min.y).ToString("0.00") + " m)");
+        }
+
+        // progress on a map route (path length left): 2.5 s without getting nearer -> a hop; 5 s -> full feelers for 3 s, then the map again
+        private static void NavProgress(Npc n, float pathLeft, float now)
+        {
+            if (Senses.Blown(n.Owner) || pathLeft < n.BestDist - 0.5f) { n.BestDist = Mathf.Min(n.BestDist, pathLeft); n.NoProgressSince = now; return; }
+            float stall = now - n.NoProgressSince;
+            if (stall >= 5f * R)
+            {
+                n.NavOffUntil = now + 3f * R; n.OnNav = false; n.NoProgressSince = now;
+                if (Plugin.BrainLog.Value) Plugin.Log.LogInfo("Brain: " + n.Owner.name + " gets nowhere on its map route, full feelers for " + (3f * R).ToString("0") + " s");
+            }
+            else if (stall >= 2.5f * R) TryHop(n, now, true);
         }
 
         // [Debug] NavTrace (NavDump + VerboseLog): a line per moving NPC per second and a picture of its trail when a chase ends / it rests
@@ -940,6 +1006,8 @@ namespace Apocaraider
             if (h.collider.transform.root == n.T) return true;
             if (Nav.IsFloor(h.collider, h.normal, h.point.y, b.min.y)) return true;
             if (hopLeg && h.point.y - b.min.y <= Nav.HopStep + 0.1f) return true;   // the lip the map hops over, not a wall
+            if (h.point.y - b.min.y <= 0.6f && !Physics.Raycast(new Vector3(b.center.x, b.min.y + 0.65f, b.center.z), d.normalized, h.distance + r + 0.3f, NavGateMask, QueryTriggerInteraction.Ignore))
+                return true;                                                          // ankle-high clutter with nothing at the knee: stepped over
             n.LegBlock = h.collider.name + " [" + LayerMask.LayerToName(h.collider.gameObject.layer) + "] " + (h.point.y - b.min.y).ToString("0.00") + " m above the feet, " + h.distance.ToString("0.00") + " m ahead" + (hopLeg ? ", hop leg" : "");
             if (Plugin.BrainLog.Value) Plugin.Log.LogInfo("Brain: " + n.Owner.name + " map waypoint blocked by " + n.LegBlock + ", steers without the map");
             return false;
@@ -959,9 +1027,19 @@ namespace Apocaraider
             }
             if (n.OnNav)
             {
-                // stuck on a map route: this map is wrong here - steer without it for a while
-                n.NavOffUntil = now + 10f * R; n.OnNav = false;
-                if (Plugin.BrainLog.Value) Plugin.Log.LogInfo("Brain: " + n.Owner.name + " stuck on a map route at " + n.T.position.x.ToString("0.0") + "," + n.T.position.z.ToString("0.0") + ", steers without the map for " + (10f * R).ToString("0") + " s");
+                // stuck on a map route: hop / step back and keep the route; 3 times within 8 s -> full feelers for 3 s, then the map again
+                if (now - n.NavStuckSince > 8f) { n.NavStuckSince = now; n.NavStucks = 0; }
+                n.NavStucks++;
+                if (Plugin.BrainLog.Value) LogAhead(n);
+                if (n.NavStucks < 3)
+                {
+                    if (TryHop(n, now, true)) return;
+                    n.ModeUntil = now + 0.4f * R;
+                    SetMode(n, Mode.BackUp, Plugin.BrainLog.Value ? "stuck on a map route at " + n.T.position.x.ToString("0.0") + "," + n.T.position.z.ToString("0.0") + ", a step back, keeps the route" : "");
+                    return;
+                }
+                n.NavStucks = 0; n.NavOffUntil = now + 3f * R; n.OnNav = false;
+                if (Plugin.BrainLog.Value) Plugin.Log.LogInfo("Brain: " + n.Owner.name + " stuck 3x on a map route at " + n.T.position.x.ToString("0.0") + "," + n.T.position.z.ToString("0.0") + ", full feelers for " + (3f * R).ToString("0") + " s");
             }
             if (now - n.FirstStuck > StuckWindow * R) { n.FirstStuck = now; n.Stucks = 0; }
             n.Stucks++;
