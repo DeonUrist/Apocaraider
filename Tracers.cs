@@ -782,6 +782,7 @@ namespace Apocaraider
         private static float _wNextFind;
         private static PlayMakerFSM _wSwing;
         private static bool _wDone;
+        private static readonly Dictionary<int, string> _wPrev = new Dictionary<int, string>();   // Attack FSM id -> last seen state
         private static readonly Dictionary<int, float> _wDamage = new Dictionary<int, float>();   // Attack FSM id -> hit value; NaN = not melee
         private static readonly RaycastHit[] _wHits = new RaycastHit[24];
         private const int WheelSwingMask = (1 << 0) | (1 << 8) | (1 << 9) | (1 << 10) | (1 << 11) | (1 << 13) | (1 << 14) | (1 << 16);
@@ -798,16 +799,29 @@ namespace Apocaraider
                 _wParent = _wCam != null ? _wCam.Find("WeaponsArm/Parent") : null;
                 if (_wParent == null) return;
             }
+            // a swing: the Attack FSM in "fire", or (1.5.4) one that just left "on" for "hit" / "wait" - when the game's own cast meets
+            // something at once (the hub around a fitted tyre), on -> fire -> hit -> wait runs within ONE frame and "fire" is never seen here
             PlayMakerFSM active = null;
-            for (int i = 0; i < _wParent.childCount && active == null; i++)
+            bool fresh = false;
+            for (int i = 0; i < _wParent.childCount; i++)
             {
                 var w = _wParent.GetChild(i);
                 if (!w.gameObject.activeInHierarchy) continue;
                 foreach (var f in w.GetComponents<PlayMakerFSM>())
-                    if (f != null && f.FsmName == "Attack" && f.Fsm != null && f.Fsm.Initialized && f.ActiveStateName == "fire") { active = f; break; }
+                {
+                    if (f == null || f.FsmName != "Attack" || f.Fsm == null || !f.Fsm.Initialized) continue;
+                    string cur = f.ActiveStateName, prev;
+                    int fid = f.GetInstanceID();
+                    _wPrev.TryGetValue(fid, out prev);
+                    _wPrev[fid] = cur;
+                    if (active != null) break;
+                    if (cur == "fire") active = f;
+                    else if (prev == "on" && (cur == "hit" || cur == "wait")) { active = f; fresh = true; }
+                    break;
+                }
             }
             if (active == null) { _wSwing = null; _wDone = false; return; }
-            if (active != _wSwing) { _wSwing = active; _wDone = false; }
+            if (active != _wSwing || fresh) { _wSwing = active; _wDone = false; }
             if (_wDone) return;
             float dmg = SwingDamage(active);
             if (float.IsNaN(dmg)) return;
