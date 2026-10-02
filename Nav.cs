@@ -275,7 +275,7 @@ namespace Apocaraiders
                             int cx = x + dx, cz = z + dz;
                             if (cx < 0 || cz < 0 || cx >= s.W || cz >= s.H) continue;
                             int j = cz * s.W + cx;
-                            if (s.Comp[j] >= 0 || !Step(s, c, j)) continue;
+                            if (s.Comp[j] >= 0 || !Move(s, c, j)) continue;
                             s.Comp[j] = id; stack.Push(j);
                         }
                 }
@@ -448,6 +448,16 @@ namespace Apocaraiders
                 if (!Step(s, i, j)) return true;
             }
             return false;
+        }
+
+        // one step on the grid as a body takes it: a diagonal step also needs both cells beside it passable from here - no corner cutting
+        // (the route search, the straight-line check and the area grouping all use this, so they agree)
+        private static bool Move(Structure s, int a, int b)
+        {
+            if (!Step(s, a, b)) return false;
+            int ax = a % s.W, az = a / s.W, bx = b % s.W, bz = b / s.W;
+            if (ax == bx || az == bz) return true;
+            return Step(s, a, az * s.W + bx) && Step(s, a, bz * s.W + ax);
         }
 
         private static bool BigArea(Structure s, int i) { return s.Comp == null || (s.Comp[i] >= 0 && s.CompSize[s.Comp[i]] >= MinArea); }
@@ -727,7 +737,7 @@ namespace Apocaraiders
                 if (e2 > -dz) { err -= dz; x0 += sx; }
                 if (e2 < dx) { err += dx; z0 += sz; }
                 int i = z0 * s.W + x0;
-                if (!Step(s, prev, i)) return false;
+                if (!Move(s, prev, i)) return false;     // diagonal steps never cut a corner (a pinhole in a one-cell wall is no way through)
                 prev = i;
             }
         }
