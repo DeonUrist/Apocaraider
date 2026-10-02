@@ -199,7 +199,7 @@ namespace Apocaraider
             _player = null;
             _playerTracked = false;
             _pushes.Clear();
-            _popped.Clear(); _forceFree.Clear(); _meleeWheels.Clear(); _isMelee.Clear();
+            _popped.Clear(); _forceFree.Clear(); _meleeWheels.Clear(); _isMelee.Clear(); _corpseHitAt.Clear();
         }
 
         // ---------- the player's guns ----------
@@ -725,6 +725,100 @@ namespace Apocaraider
             _headR = Mathf.Max(0.03f, Plugin.PlayerHeadRadius.Value);
         }
 
+        // ---------- melee on corpses (1.6.1) ----------
+        // The player's melee weapons (hands, kick, old_knife, shiv, machete, pipe_wrench: an Attack FSM without Reload under WeaponsArm) pick
+        // the hit effect in their own "getLayer" state: GetLayer(hitObj) == 10 (Actor) -> "actorHitSound" (knife_hit + BloodHit_Effect),
+        // anything else -> Crash-02 + MeleeHit_Effect (brown dust). A corpse's limbs are on Default, so a corpse got dust like the guns did
+        // before 1.5.2. Postfix on GetLayer.OnEnter (DoGetLayer could be inlined): in that state, on a corpse, the stored layer becomes 10 -
+        // the FSM's own blood path runs. A blade (name in hidden [Tracers] StabWeapons) then stabs with Sounds/knifestab.wav instead of
+        // knife_hit: postfix on SetAudioClip.OnEnter in "actorHitSound" of the same FSM within the same moment.
+        private static readonly Dictionary<int, float> _corpseHitAt = new Dictionary<int, float>();   // Attack FSM id -> when it hit a corpse
+        private static AudioClip _stab; private static bool _stabTried;
+
+        internal static bool IsPlayerMelee(GameObject weapon)
+        {
+            if (weapon == null) return false;
+            bool melee;
+            if (_isMelee.TryGetValue(weapon.GetInstanceID(), out melee)) return melee;
+            // the player's weapons live under PlayerCameraHolder/PlayerCamera/WeaponsArm (Camera.main may be another camera)
+            melee = false;
+            for (var t = weapon.transform.parent; t != null; t = t.parent) if (t.name == "WeaponsArm") { melee = true; break; }
+            if (melee) foreach (var f in weapon.GetComponents<PlayMakerFSM>()) if (f != null && f.FsmName == "Reload") { melee = false; break; }
+            _isMelee[weapon.GetInstanceID()] = melee;
+            return melee;
+        }
+
+        public static void AfterGetLayer(GetLayer __instance)
+        {
+            try
+            {
+                if (!Plugin.TracersEnabled.Value) return;
+                var fsm = __instance.Fsm;
+                if (fsm == null || fsm.Name != "Attack" || __instance.State == null || __instance.State.Name != "getLayer") return;
+                if (__instance.storeResult == null || __instance.storeResult.IsNone || __instance.storeResult.Value == 10) return;
+                if (!IsPlayerMelee(fsm.GameObject)) return;
+                var hit = __instance.gameObject != null ? __instance.gameObject.Value : null;
+                if (hit == null || !IsCorpse(hit)) return;
+                __instance.storeResult.Value = 10;                       // the FSM goes on to actorHitSound: knife_hit + BloodHit_Effect
+                _corpseHitAt[fsm.GameObject.GetInstanceID()] = Time.time;
+                if (Plugin.HitLog.Value) Plugin.Log.LogInfo("Hit: " + fsm.GameObject.name + " (melee) -> corpse " + hit.transform.root.name + "/" + hit.name + ": blood" + (IsBlade(fsm.GameObject.name) ? ", stab sound" : ""));
+            }
+            catch (Exception e) { Plugin.Log.LogError("Tracers melee corpse: " + e); }
+        }
+
+        public static void AfterSetAudioClip(SetAudioClip __instance)
+        {
+            try
+            {
+                var fsm = __instance.Fsm;
+                if (fsm == null || fsm.Name != "Attack" || __instance.State == null || __instance.State.Name != "actorHitSound" || fsm.GameObject == null) return;
+                float at;
+                int id = fsm.GameObject.GetInstanceID();
+                if (!_corpseHitAt.TryGetValue(id, out at)) return;
+                _corpseHitAt.Remove(id);
+                if (Time.time - at > 0.25f || !IsBlade(fsm.GameObject.name)) return;
+                var clip = StabClip();
+                if (clip == null) return;
+                var go = fsm.GetOwnerDefaultTarget(__instance.gameObject);
+                var src = go != null ? go.GetComponent<AudioSource>() : null;
+                if (src != null) src.clip = clip;                        // the hit state's AudioPlay plays it (pitch 0.5-1.5, volume 0.5 as vanilla)
+            }
+            catch (Exception e) { Plugin.Log.LogError("Tracers stab sound: " + e); }
+        }
+
+        private static bool IsBlade(string weapon)
+        {
+            string list = Plugin.StabWeapons.Value ?? "";
+            foreach (var part in list.Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries))
+            {
+                string k = part.Trim();
+                if (k.Length > 0 && weapon.IndexOf(k, StringComparison.OrdinalIgnoreCase) >= 0) return true;
+            }
+            return false;
+        }
+
+        // Sounds/knifestab.wav next to the DLL (hidden [Tracers] StabSound), loaded once
+        private static AudioClip StabClip()
+        {
+            if (_stab != null || _stabTried) return _stab;
+            _stabTried = true;
+            string rel = Plugin.StabSound.Value ?? "";
+            if (rel.Length == 0) return null;
+            string path = System.IO.Path.IsPathRooted(rel) ? rel : System.IO.Path.Combine(Plugin.Dir, rel);
+            try
+            {
+                if (!System.IO.File.Exists(path)) { Plugin.Log.LogWarning("Tracers: no stab sound at " + path + " - corpses get the game's knife sound"); return null; }
+                int ch, rate;
+                float[] smp = Wav.Read(System.IO.File.ReadAllBytes(path), out ch, out rate);
+                _stab = AudioClip.Create("knifestab", Math.Max(1, smp.Length / ch), ch, rate, false);
+                _stab.SetData(smp, 0);
+                _stab.hideFlags = HideFlags.DontUnloadUnusedAsset;
+                Plugin.Verbose("Tracers: stab sound loaded (" + System.IO.Path.GetFileName(path) + ", " + (smp.Length / ch / (float)rate).ToString("0.00") + " s)");
+            }
+            catch (Exception e) { Plugin.Log.LogWarning("Tracers: stab sound " + path + " not loaded: " + e.Message); _stab = null; }
+            return _stab;
+        }
+
         // ---------- melee on wheels ----------
         // The player's melee weapons (an "Attack" FSM without a Reload FSM, under the camera) hit with SetFsmFloat(hitObj / Bodypart.Damage) +
         // SendEvent Damage; a vehicle part's Bodypart FSM takes that straight off its Condition. Postfix on SetFsmFloat.OnEnter (DoSetFsmFloat could be inlined): when the
@@ -741,16 +835,7 @@ namespace Apocaraider
                 var fsm = __instance.Fsm;
                 if (fsm == null || fsm.Name != "Attack" || fsm.GameObject == null) return;
                 var weapon = fsm.GameObject;
-                bool melee;
-                if (!_isMelee.TryGetValue(weapon.GetInstanceID(), out melee))
-                {
-                    // the player's weapons live under PlayerCameraHolder/PlayerCamera/WeaponsArm (Camera.main may be another camera)
-                    melee = false;
-                    for (var t = weapon.transform.parent; t != null; t = t.parent) if (t.name == "WeaponsArm") { melee = true; break; }
-                    if (melee) foreach (var f in weapon.GetComponents<PlayMakerFSM>()) if (f != null && f.FsmName == "Reload") { melee = false; break; }
-                    _isMelee[weapon.GetInstanceID()] = melee;
-                }
-                if (!melee) return;
+                if (!IsPlayerMelee(weapon)) return;
                 var target = fsm.GetOwnerDefaultTarget(__instance.gameObject);
                 if (target == null) return;
                 var part = OwningPart(target.transform);

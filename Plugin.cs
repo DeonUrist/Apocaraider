@@ -18,7 +18,7 @@ namespace Apocaraider
     {
         public const string GUID = "com.denis.apocalypter.apocaraider";
         public const string NAME = "Apocaraider";
-        public const string VERSION = "1.6.0";
+        public const string VERSION = "1.6.1";
 
         internal static ManualLogSource Log;
         internal static string Dir;
@@ -48,7 +48,7 @@ namespace Apocaraider
         internal static ConfigEntry<string> NpcShotRanges, HumanFactions, BlastPrefabs;
         internal static ConfigEntry<bool> NavEnabled, NavLog, ShowNav, NavDump, WheelPopOff, IdleEnabled, IdleCoyotes, FriendsPassThrough;
         internal static ConfigEntry<float> MoveFullSpeedAngle, MoveSlowestAngle, MoveSlowestSpeed, BlockedRatio, BlockedSeconds, BlockedMemory;
-        internal static ConfigEntry<float> IdleReturnDelay, IdleRetrySeconds, IdleWalkRadius; internal static ConfigEntry<int> IdleReturnTries; internal static ConfigEntry<bool> IdleGhostWalk;
+        internal static ConfigEntry<float> IdleReturnDelay, IdleRetrySeconds, IdleWalkRadius; internal static ConfigEntry<int> IdleReturnTries; internal static ConfigEntry<bool> IdleGhostWalk; internal static ConfigEntry<string> StabWeapons, StabSound;
         internal static ConfigEntry<float> NavBakeRange, NavCellSize, NavMargin, NavMaxStep, NavBakeBudgetMs, NavFieldSeconds;
 
         private static GameObject _runner;
@@ -176,6 +176,8 @@ namespace Apocaraider
                 new AcceptableValueRange<float>(0.05f, 0.4f)));
             ImpactEffects = H("Tracers", "ImpactEffects", true,
                 "NPC bullets that hit the world show the same impact (sparks, sound) your own hits do; the game showed nothing for their misses.");
+            StabWeapons = H("Tracers", "StabWeapons", "knife,shiv,machete", "(1.6.1) Melee weapons (name contains one of these) that stab a corpse with StabSound instead of the game's knife hit. Every melee hit on a corpse shows blood.");
+            StabSound = H("Tracers", "StabSound", "Sounds/knifestab.wav", "(1.6.1) The stab sound for blades on corpses (WAV, relative to the plugin folder). Missing file: the game's knife hit.");
             MetalSparks = H("Tracers", "MetalSparks", true,
                 "Extra sparks, smoke and a bullet mark on anything that is part of a car - attached parts, the body and frame, loose parts - except wheels (any bullet), using the game's MetalImpact effect.");
             MetalSparksScale = H("Tracers", "MetalSparksScale", 0.25f, new ConfigDescription("Size of the metal sparks effect (1 = the prefab's own, demo-scene size).", new AcceptableValueRange<float>(0.05f, 4f)));
@@ -334,6 +336,15 @@ namespace Apocaraider
                     postfix: new HarmonyMethod(typeof(Tracers), nameof(Tracers.AfterSetFsmFloat)));
             }
             catch (Exception e) { Log.LogError("Harmony patch failed, no tracers: " + e); }
+            try
+            {
+                var h = new Harmony(GUID + ".corpses");
+                h.Patch(AccessTools.Method(typeof(HutongGames.PlayMaker.Actions.GetLayer), "OnEnter"),
+                    postfix: new HarmonyMethod(typeof(Tracers), nameof(Tracers.AfterGetLayer)));
+                h.Patch(AccessTools.Method(typeof(HutongGames.PlayMaker.Actions.SetAudioClip), "OnEnter"),
+                    postfix: new HarmonyMethod(typeof(Tracers), nameof(Tracers.AfterSetAudioClip)));
+            }
+            catch (Exception e) { Log.LogError("Harmony patch failed, melee hits on corpses stay dust: " + e); }
             try
             {
                 var h = new Harmony(GUID + ".brain");

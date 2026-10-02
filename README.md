@@ -38,6 +38,9 @@ visible bolts. Tracers look the same by day and by night.
   misses). Any part of a car except its wheels throws extra sparks.
 - Headshots on raiders work as in the game (their head capsule doubles the damage); the mod's bullets see the same
   bodies the game's own shots do.
+- Corpses bleed: bullets and melee hits on a dead body show blood, not the ground's brown dust (the game picks the effect by
+  layer, and a corpse's limbs are not on the creature layer). Blades (knife, shiv, machete) stab a corpse with their own sound
+  (`Sounds/knifestab.wav`; hidden `[Tracers] StabWeapons` / `StabSound`).
 
 ## Hit feedback
 
