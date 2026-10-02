@@ -23,7 +23,8 @@ visible bolts. Tracers look the same by day and by night.
 - NPC bullets see you as a realistic body (feet to neck, shoulder width) plus a head: the game's own player collider is a slim
   0.4 m capsule that made many visible hits miss. A headshot does 1.2x damage by default (the game had no headshots on you).
   One bullet hits one thing, then it's gone.
-- A bullet that hits a vehicle part damages it (20 damage = 1 % of the part's condition by default, `VehicleDamagePer1`; the game's own rule,
+- A bullet that hits a vehicle part damages it (20 damage = 1 % of the part's condition by default, `VehicleDamagePer1`; wheels
+  take `WheelDamageMultiplier` (5) times as much, so shooting the wheels stops a car, and a wheel shot to 0 jumps off it (`WheelPopOff`); the game's own rule,
   which took a rifle round's full 23 off a part's condition, is replaced), and a bolted-on metal plate
   can be knocked off (20 % per hit by default).
 - A hit on its target does exactly what the game's own hit does (blood/sparks, damage, armor, hit sounds), and a bullet
@@ -34,9 +35,9 @@ visible bolts. Tracers look the same by day and by night.
 
 ## Hit feedback
 
-Your hits show as damage numbers (`[Hud] DamageNumbers`: 0 off, 1 a red list in the top right corner, 2 floating up from
-the hit point; a `!` marks a headshot) and a red diagonal hit marker flashes at the crosshair (`[Hud] HitMarker`, yellow
-for a headshot). Both can be turned off.
+Your hits show as damage numbers (`[Hud] DamageNumbers`: 0 off, 1 a list in the top right corner, 2 floating up from
+the hit point; white = damage, red with a `!` = headshot, light blue = % of condition taken off a vehicle part) and a diagonal
+hit marker flashes at the crosshair (`[Hud] HitMarker`, white, red for a headshot). Both can be turned off.
 
 ## NPC aim
 
@@ -80,7 +81,9 @@ shout about you). A shout is not a ghost of its own: it passes on what the shout
 NPC walking to its spot keeps going until it gets there; only when GhostTimeout (60 s) passes with no news about that spot does it
 search from where it got. If it lost you from sight it first goes to where it last saw you and, finding nothing, follows to where you really
 are one to three times (PursuitMin/Max). At the spot it looks around for 30 s and, seeing nothing, loses interest and idles where it stands. Being
-shot tells it where that came from. The same rules run between NPC factions. Ghosts and alert states are saved with the game and
+shot tells it where that came from. The same rules run between NPC factions. A faction at peace with you (the Coyotes towns) ignores everything about you - your
+shots, shouts, engine, thrown items, and raiders shooting or shouting at you - and only reacts to its own fights; the moment the
+game turns it against you (you hit one of them) its NPCs see and hunt you like raiders. Ghosts and alert states are saved with the game and
 restored after a load. You can shout too (Alt+Q, `[Senses] ShoutModifier` + `ShoutKey`; Alt keeps Q from kicking): you yell like a raider and NPCs hostile to you within
 25 m come to check. With Apocapatrol installed, a raider bailing out of a car keeps its crew's knowledge (it fights if it sees you,
 otherwise heads for where you were) and an exploding car is heard like a gunshot. `[Senses] Enabled = false` gives the game's own sensors back; `[Debug] ShowGhosts` draws every ghost and

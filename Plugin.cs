@@ -18,7 +18,7 @@ namespace Apocaraiders
     {
         public const string GUID = "com.denis.apocalypter.apocaraiders";
         public const string NAME = "Apocaraiders";
-        public const string VERSION = "0.13.7";
+        public const string VERSION = "0.13.8";
 
         internal static ManualLogSource Log;
         internal static string Dir;
@@ -34,7 +34,7 @@ namespace Apocaraiders
         internal static ConfigEntry<float> AimTimeScale, FacingTolerance, AimBaseDistance, AimDelayPer5m, SpreadPer5m, EngagePercent, EngagePatience, HoldRecheckMin, HoldRecheckMax;
         internal static ConfigEntry<float> BulletSpeed, BoltSpeed, TracerWidth, TracerLength, BoltWidth, BoltLength, TracerGlow;
         internal static ConfigEntry<Color> TracerColor, BoltColor;
-        internal static ConfigEntry<float> PistolRange, SmgRange, RifleRange, SniperRange, ShotgunRange, CrossbowRange, ShotgunPelletSpread, FullDamageUntil, NpcShotgunDamage, VehicleDamagePer1, MetalSparksScale, MetalSheetPopChance, NpcHitRadius, PlayerBodyRadius, PlayerHeadRadius, HeadshotMultiplier;
+        internal static ConfigEntry<float> PistolRange, SmgRange, RifleRange, SniperRange, ShotgunRange, CrossbowRange, ShotgunPelletSpread, FullDamageUntil, NpcShotgunDamage, VehicleDamagePer1, WheelDamageMultiplier, MetalSparksScale, MetalSheetPopChance, NpcHitRadius, PlayerBodyRadius, PlayerHeadRadius, HeadshotMultiplier;
         internal static ConfigEntry<int> ShotgunPellets, MaxTracers;
         internal static ConfigEntry<string> MetalSheetNames;
         internal static ConfigEntry<bool> BrainEnabled, DropCheck, BrainLog, AimPose, ShooterPathing, ScaleWithActors;
@@ -46,7 +46,7 @@ namespace Apocaraiders
         internal static ConfigEntry<Key> ShoutKey, ShoutModifier;
         internal static ConfigEntry<string> ShoutBlocksButtons;
         internal static ConfigEntry<string> NpcShotRanges, HumanFactions, BlastPrefabs;
-        internal static ConfigEntry<bool> NavEnabled, NavLog, ShowNav, NavDump;
+        internal static ConfigEntry<bool> NavEnabled, NavLog, ShowNav, NavDump, WheelPopOff;
         internal static ConfigEntry<float> NavBakeRange, NavCellSize, NavMargin, NavMaxStep, NavBakeBudgetMs, NavFieldSeconds;
 
         private static GameObject _runner;
@@ -130,6 +130,9 @@ namespace Apocaraiders
             VehicleDamage = Config.Bind("Tracers", "VehicleDamage", true, "A bullet that hits a vehicle part damages it by the VehicleDamagePer1 rule. Off = the game's own rule (your bullet's full damage comes straight off the part's condition: an akms round -23 %; NPC bullets never damage parts).");
             VehicleDamagePer1 = Config.Bind("Tracers", "VehicleDamagePer1", 20f, new ConfigDescription(
                 "Bullet damage that takes 1 % off a vehicle part's condition (20 = a -23 rifle round costs 1.15 %, a shotgun pellet about 0.4 %).", new AcceptableValueRange<float>(1f, 1000f)));
+            WheelDamageMultiplier = Config.Bind("Tracers", "WheelDamageMultiplier", 5f, new ConfigDescription(
+                "Wheels (and tyres) lose this many times more condition per bullet than other vehicle parts, so shooting the wheels is the way to stop a car.", new AcceptableValueRange<float>(0f, 100f)));
+            WheelPopOff = Config.Bind("Tracers", "WheelPopOff", true, "A wheel your bullets (or anyone's) bring to 0 condition jumps off its car.");
             MetalSheetPopChance = Config.Bind("Tracers", "MetalSheetPopChance", 20f, new ConfigDescription("% chance that a bullet hitting a bolted-on metal plate knocks it off.", new AcceptableValueRange<float>(0f, 100f)));
             MetalSheetNames = Config.Bind("Tracers", "MetalSheetNames", "metal_plate", "Which attached parts count as metal sheets (comma-separated name starts).");
             MaxTracers = Config.Bind("Tracers", "MaxTracers", 300, new ConfigDescription("Most bullets in flight at once; shots above this hit instantly (vanilla style) instead.", new AcceptableValueRange<int>(16, 2000)));
@@ -253,10 +256,10 @@ namespace Apocaraiders
             SpawnKey = Config.Bind("Debug", "SpawnKey", Key.F9,
                 "Spawns a Gungirl 6 m in front of you (a real raider: she fights and is saved). None = off.");
             DamageNumbers = Config.Bind("Hud", "DamageNumbers", 2, new ConfigDescription(
-                "Damage your bullets do, shown as: 0 = nothing, 1 = a red list in the top right corner, 2 = numbers floating up from the hit point. A '!' marks a headshot.",
+                "Damage your bullets do, shown as: 0 = nothing, 1 = a list in the top right corner, 2 = numbers floating up from the hit point. White = damage, red with '!' = headshot, light blue = % of condition taken off a vehicle part.",
                 new AcceptableValueRange<int>(0, 2)));
             DamageFontSize = Config.Bind("Hud", "DamageFontSize", 14, new ConfigDescription("Font size of the damage numbers, px.", new AcceptableValueRange<int>(8, 40)));
-            HitMarker = Config.Bind("Hud", "HitMarker", true, "A red diagonal cross flashes at the screen centre when your bullet hits a creature (yellow for a headshot).");
+            HitMarker = Config.Bind("Hud", "HitMarker", true, "A white diagonal cross flashes at the screen centre when your bullet hits a creature (red for a headshot).");
             HitMarkerSize = Config.Bind("Hud", "HitMarkerSize", 22, new ConfigDescription("Hit marker size, px.", new AcceptableValueRange<int>(6, 100)));
             HitLog = Config.Bind("Debug", "HitLog", false, "Log every bullet hit on a creature: who, what, distance, damage, and its Health before and after.");
             VerboseLog = Config.Bind("Debug", "VerboseLog", false, "Log every Gungirl that is dressed (spawn, corpse, after a load).");

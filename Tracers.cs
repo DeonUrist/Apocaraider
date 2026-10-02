@@ -76,6 +76,7 @@ namespace Apocaraiders
         private static readonly List<KeyValuePair<Rigidbody, Vector3>> _pushes = new List<KeyValuePair<Rigidbody, Vector3>>();
         private static readonly List<KeyValuePair<GameObject, Vector3>> _popped = new List<KeyValuePair<GameObject, Vector3>>();
         private static int _poppedFrame;
+        private static readonly HashSet<GameObject> _forceFree = new HashSet<GameObject>();   // popped wheels: freed by hand if CheckTag doesn't
 
         // ---------- the hook ----------
         // Harmony prefix on Micosmo.SensorToolkit.PlayMaker.SensorGetDetectionRayHit.OnEnter. false = vanilla skipped.
@@ -192,7 +193,7 @@ namespace Apocaraiders
             _player = null;
             _playerTracked = false;
             _pushes.Clear();
-            _popped.Clear();
+            _popped.Clear(); _forceFree.Clear();
         }
 
         // ---------- the player's guns ----------
@@ -685,8 +686,19 @@ namespace Apocaraiders
                 {
                     var go = _popped[i].Key;
                     var rb = go != null ? go.GetComponent<Rigidbody>() : null;
-                    if (rb != null) { rb.AddForce(_popped[i].Value, ForceMode.VelocityChange); _popped.RemoveAt(i); }
-                    else if (go == null || Time.frameCount > _poppedFrame + 30) _popped.RemoveAt(i);
+                    if (rb != null && go.transform.parent == null) { rb.AddForce(_popped[i].Value, ForceMode.VelocityChange); _popped.RemoveAt(i); }
+                    else if (go == null) _popped.RemoveAt(i);
+                    else if (Time.frameCount > _poppedFrame + 30 && !_forceFree.Contains(go)) _popped.RemoveAt(i);
+                    else if (Time.frameCount > _poppedFrame + 30)
+                    {
+                        _forceFree.Remove(go);
+                        // the part's CheckTag didn't free it: do it the way it would
+                        go.transform.SetParent(null, true);
+                        if (rb == null) rb = go.AddComponent<Rigidbody>();
+                        rb.isKinematic = false;
+                        rb.AddForce(_popped[i].Value, ForceMode.VelocityChange);
+                        _popped.RemoveAt(i);
+                    }
                 }
             }
             Draw();
@@ -1009,15 +1021,49 @@ namespace Apocaraiders
 
             if (!Plugin.VehicleDamage.Value) return;
             float pct = Mathf.Abs(damage) / Mathf.Max(1f, Plugin.VehicleDamagePer1.Value);   // [Tracers] VehicleDamagePer1 bullet damage = 1 % condition
+            bool wheel = IsWheel(col.transform, part);
+            if (wheel) pct *= Mathf.Max(0f, Plugin.WheelDamageMultiplier.Value);
             if (pct <= 0f) return;
+            if (s.Gun != null) Hud.PartHit(part.gameObject, point, pct);
+            bool broke = false;
             foreach (var f in part.GetComponentsInChildren<PlayMakerFSM>(true))
             {
                 if (f.FsmName != "Condition" && f.FsmName != "Repair") continue;
                 if (f.Fsm == null || !f.Fsm.Initialized) continue;
                 if (OwningPart(f.transform) != part) continue;     // not a nested part's FSM
                 var v = f.FsmVariables.GetFsmFloat("Condition");
-                if (v != null) v.Value = Mathf.Max(0f, v.Value - pct);
+                if (v == null) continue;
+                float before = v.Value;
+                v.Value = Mathf.Max(0f, v.Value - pct);
+                if (before > 0f && v.Value <= 0f) broke = true;
             }
+            if (wheel && broke && Plugin.WheelPopOff.Value) PopOff(part, s.Dir);
+        }
+
+        // A wheel shot to 0 jumps off the car: the wrench's de_Attach recipe (layer Item + tag vehPartRemoved -> the part's CheckTag FSM
+        // unparents it and adds a Rigidbody a frame or two later), then a kick up and along the bullet. Works with Apocapatrol's crews too
+        // (they switch the de_Attach FSMs off, but this doesn't go through them). If CheckTag never frees it, it is freed by hand.
+        private static void PopOff(Transform part, Vector3 dir)
+        {
+            part.gameObject.layer = 9;
+            try { part.tag = "vehPartRemoved"; } catch (Exception e) { Plugin.Verbose("Tracers: wheel tag: " + e.Message); }
+            Vector3 d = dir; d.y = 0f; d = d.sqrMagnitude > 0.001f ? d.normalized : Vector3.zero;
+            _popped.Add(new KeyValuePair<GameObject, Vector3>(part.gameObject, d * 2.5f + Vector3.up * 4f));
+            _forceFree.Add(part.gameObject);
+            _poppedFrame = Time.frameCount + 2;
+            Plugin.Verbose("Tracers: " + part.name + " shot off its car (condition 0)");
+        }
+
+        // a wheel / tyre part: the hit collider or any object up to (and including) its part is named like one
+        private static bool IsWheel(Transform t, Transform part)
+        {
+            for (; t != null; t = t.parent)
+            {
+                string n = t.name;
+                if (n.IndexOf("wheel", StringComparison.OrdinalIgnoreCase) >= 0 || n.IndexOf("tire", StringComparison.OrdinalIgnoreCase) >= 0 || n.IndexOf("tyre", StringComparison.OrdinalIgnoreCase) >= 0) return true;
+                if (t == part) break;
+            }
+            return false;
         }
 
         private static Transform OwningPart(Transform t)

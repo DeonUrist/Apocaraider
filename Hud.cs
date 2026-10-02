@@ -4,14 +4,15 @@ using UnityEngine;
 
 namespace Apocaraiders
 {
-    // Hit feedback for the player's own bullets: damage numbers ([Hud] DamageNumbers 0 off / 1 a red list top right / 2 floating
-    // at the hit point) and a diagonal red hit marker at the screen centre ([Hud] HitMarker). Drawn with IMGUI from the runner's
+    // Hit feedback for the player's own bullets: damage numbers ([Hud] DamageNumbers 0 off / 1 a list top right / 2 floating at the hit
+    // point; white = damage, red with "!" = headshot, light blue = % taken off a vehicle part) and a diagonal hit marker at the screen
+    // centre ([Hud] HitMarker; white, red on a headshot). Drawn with IMGUI from the runner's
     // OnGUI; nothing is drawn (and OnGUI returns at once) while there is nothing to show.
     internal static class Hud
     {
-        private struct Pending { public GameObject Target; public Vector3 Point; public float Damage; public bool Head; public float Time; }
-        private struct Floater { public Vector3 Point; public string Text; public bool Head; public float Born; }
-        private struct Line { public string Text; public float Born; }
+        private struct Pending { public GameObject Target; public Vector3 Point; public float Damage; public bool Head, Part; public float Time; }
+        private struct Floater { public Vector3 Point; public string Text; public bool Head, Part; public float Born; }
+        private struct Line { public string Text; public bool Head, Part; public float Born; }
 
         private static readonly List<Pending> _pending = new List<Pending>();     // this frame's hits, merged per target (pellets -> one number)
         private static readonly List<Floater> _floaters = new List<Floater>();
@@ -43,6 +44,27 @@ namespace Apocaraiders
             _pending.Add(new Pending { Target = target, Point = point, Damage = damage, Head = head, Time = now });
         }
 
+        // a player bullet took pct % off a vehicle part's condition: a light blue number ("-1.2%")
+        public static void PartHit(GameObject part, Vector3 point, float pct)
+        {
+            if (part == null || Plugin.DamageNumbers.Value == 0) return;
+            float now = Time.unscaledTime;
+            for (int i = 0; i < _pending.Count; i++)
+            {
+                var p = _pending[i];
+                if (p.Part && p.Target == part && now - p.Time < 0.05f) { p.Damage += pct; p.Point = point; _pending[i] = p; return; }
+            }
+            _pending.Add(new Pending { Target = part, Point = point, Damage = pct, Part = true, Time = now });
+        }
+
+        // colours: white = damage, red with "!" = headshot, light blue = vehicle part condition
+        private static Color ColorOf(bool head, bool part, float a)
+        {
+            if (part) return new Color(0.55f, 0.85f, 1f, a);
+            if (head) return new Color(1f, 0.2f, 0.15f, a);
+            return new Color(1f, 1f, 1f, a);
+        }
+
         // end of the frame's simulation: turn the merged hits into numbers / marker
         public static void Flush()
         {
@@ -52,17 +74,17 @@ namespace Apocaraiders
             foreach (var p in _pending)
             {
                 float dmg = Mathf.Abs(p.Damage);
-                string text = (dmg >= 10f ? dmg.ToString("0") : dmg.ToString("0.#")) + (p.Head ? "!" : "");
-                if (mode == 2) _floaters.Add(new Floater { Point = p.Point, Text = text, Head = p.Head, Born = now });
+                string text = p.Part ? (dmg >= 10f ? dmg.ToString("0") : dmg.ToString("0.#")) + "%" : (dmg >= 10f ? dmg.ToString("0") : dmg.ToString("0.#")) + (p.Head ? "!" : "");
+                if (mode == 2) _floaters.Add(new Floater { Point = p.Point, Text = text, Head = p.Head, Part = p.Part, Born = now });
                 else if (mode == 1)
                 {
                     string name = p.Target != null ? p.Target.transform.root.name : "?";
                     int cut = name.IndexOf('(');
                     if (cut > 0) name = name.Substring(0, cut);
-                    _lines.Add(new Line { Text = "-" + text + "  " + name, Born = now });
+                    _lines.Add(new Line { Text = "-" + text + "  " + name, Head = p.Head, Part = p.Part, Born = now });
                     while (_lines.Count > MaxLines) _lines.RemoveAt(0);
                 }
-                if (Plugin.HitMarker.Value)
+                if (Plugin.HitMarker.Value && !p.Part)
                 {
                     _markerUntil = now + MarkerLife;
                     if (p.Head) _markerHeadUntil = now + MarkerLife;
@@ -129,7 +151,7 @@ namespace Apocaraiders
                     Vector3 sp = cam.WorldToScreenPoint(f.Point + Vector3.up * (0.3f + age * 0.8f));
                     if (sp.z <= 0f) continue;
                     float a = age < FloatLife * 0.6f ? 1f : 1f - (age - FloatLife * 0.6f) / (FloatLife * 0.4f);
-                    var c = f.Head ? new Color(1f, 0.85f, 0.2f, a) : new Color(1f, 0.25f, 0.2f, a);
+                    var c = ColorOf(f.Head, f.Part, a);
                     DrawText(new Rect(sp.x - 60f, Screen.height - sp.y - 14f, 120f, 28f), f.Text, _floatStyle, c);
                 }
             }
@@ -144,7 +166,7 @@ namespace Apocaraiders
                     float age = now - l.Born;
                     if (age > LineLife) { _lines.RemoveAt(i); continue; }
                     float a = age < LineLife * 0.7f ? 1f : 1f - (age - LineLife * 0.7f) / (LineLife * 0.3f);
-                    DrawText(new Rect(Screen.width - 320f, y, 300f, _lineStyle.fontSize + 6f), l.Text, _lineStyle, new Color(1f, 0.25f, 0.2f, a));
+                    DrawText(new Rect(Screen.width - 320f, y, 300f, _lineStyle.fontSize + 6f), l.Text, _lineStyle, ColorOf(l.Head, l.Part, a));
                     y += _lineStyle.fontSize + 4f;
                 }
             }
@@ -154,7 +176,7 @@ namespace Apocaraiders
                 // a diagonal cross: four bars at 45 degrees around the centre, with a gap in the middle
                 float size = Mathf.Max(6f, Plugin.HitMarkerSize.Value), gap = size * 0.35f, thick = Mathf.Max(1f, size * 0.12f);
                 float a = Mathf.Clamp01((_markerUntil - now) / MarkerLife * 2f);
-                Color c = now < _markerHeadUntil ? new Color(1f, 0.85f, 0.2f, a) : new Color(1f, 0.15f, 0.15f, a);
+                Color c = now < _markerHeadUntil ? new Color(1f, 0.2f, 0.15f, a) : new Color(1f, 1f, 1f, a);
                 Vector2 centre = new Vector2(Screen.width * 0.5f, Screen.height * 0.5f);
                 var old = GUI.color; GUI.color = c;
                 for (int k = 0; k < 4; k++)

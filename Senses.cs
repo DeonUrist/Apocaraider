@@ -61,6 +61,7 @@ namespace Apocaraiders
             public GameObject Owner; public Transform T; public Collider Col; public Transform Head;
             public PlayMakerFSM Detection, Attack; public FsmGameObject DetectedVar;
             public string Tag; public HashSet<string> Hostile; public bool Human;
+            public HashSet<string> BaseHostile; public PlayMakerFSM PlayerIsEnemy;   // the prefab's own enemies, and its faction-relation FSM (Coyotes)
             public State State; public GameObject Target; public Ghost Ghost; public Src GhostPrio;
             public float SeenFor, UnseenFor, SearchUntil, NextLook, Stagger, LastLog, InvestigateUntil, InvestigateSince; public Vector3 LastSeen;
             public GameObject Pursue; public int Pursuits;     // the target it lost from sight, and how many more times it will go to where that target really is
@@ -104,7 +105,11 @@ namespace Apocaraiders
                 {
                     var a = kv.Value;
                     if (a.Owner == null) { if (a.Ghost != null) { a.Ghost.Holders.Remove(a); } _dead.Add(kv.Key); }
-                    else if (!on && a.SensorsOff) Sensors(a, true);
+                    else
+                    {
+                        if (!on && a.SensorsOff) Sensors(a, true);
+                        if (a.PlayerIsEnemy != null) Relation(a, true);
+                    }
                 }
                 foreach (var k in _dead) _agents.Remove(k);
                 if (_handover.Count > 0) { _dead.Clear(); foreach (var kv in _handover) if (now - kv.Value.Value > 30f) _dead.Add(kv.Key); foreach (var k in _dead) _handover.Remove(k); }
@@ -455,6 +460,10 @@ namespace Apocaraiders
             if (radius <= 0f || !On) return;
             float now = Time.time;
             Transform sroot = source != null ? source.transform.root : null;
+            // An event about the player (the player's shots, shouts, engine, thrown items; an NPC shooting or shouting at the player) means
+            // nothing to an NPC whose faction is at peace with the player (Coyotes towns): it only alerts NPCs hostile to the player. Hits
+            // still count (being shot makes the game turn the faction hostile anyway) and so do fights between NPCs.
+            bool aboutPlayer = src != Src.Hit && PlayerRelated(source, subject);
             Ghost shared = at == null ? GetOrMake(src, pos, source, about, 0f, 1f, now) : null;
             if (shared != null) shared.Subject = subject;
             int told = 0;
@@ -466,6 +475,7 @@ namespace Apocaraiders
                 float d2 = (a.T.position - pos).sqrMagnitude;
                 if (d2 > r2) continue;
                 if (filter != null && !filter(a)) continue;
+                if (aboutPlayer && !a.Hostile.Contains("Player")) continue;
                 if (Plugin.MuffleSounds.Value && !Clear(pos + Vector3.up, Eye(a), a.T))
                 {
                     float m = radius * Mathf.Clamp01(Plugin.MuffleFactor.Value / 100f);
@@ -477,6 +487,32 @@ namespace Apocaraiders
             }
             if (shared != null && shared.Holders.Count == 0) { int i = _ghosts.IndexOf(shared); if (i >= 0) KillGhost(i); }
             if (Plugin.SensesLog.Value && told > 0) Plugin.Log.LogInfo("Senses: " + src + " (" + about + ") within " + radius.ToString("0") + " m alerts " + told + (shared != null ? " -> ghost #" + shared.Id : ""));
+        }
+
+        private static bool IsPlayer(GameObject go)
+        {
+            if (go == null || _player == null) return false;
+            return go == _player || go.transform.IsChildOf(_player.transform);
+        }
+
+        // the event is about the player: the player made it, it is about the player, or an NPC made it while fighting / hunting the player
+        private static bool PlayerRelated(GameObject source, GameObject subject)
+        {
+            FindPlayer();
+            if (_player == null) return false;
+            if (IsPlayer(subject) || IsPlayer(source)) return true;
+            if (_playerCar != null && source != null && source.transform.root == _playerCar.transform.root) return true;
+            if (source == null) return false;
+            var sa = Get(source.transform.root.gameObject);
+            if (sa != null)
+            {
+                if (sa.State == State.Combat && IsPlayer(sa.Target)) return true;
+                if (sa.Ghost != null && IsPlayer(sa.Ghost.Subject)) return true;
+                return false;
+            }
+            // not one of ours (a raider seated in an Apocapatrol car): its own Detection target
+            var t = Aim.TargetOf(source.transform.root.gameObject);
+            return IsPlayer(t);
         }
 
         // Tracers: a gun fired (the player's or an NPC's), once per shot (pellets of one blast merge through the 1 s source window)
@@ -986,7 +1022,10 @@ namespace Apocaraiders
             var a = new Agent { Owner = owner, T = owner.transform, Col = owner.GetComponent<Collider>(), Detection = det, Attack = att };
             a.DetectedVar = det.FsmVariables.FindFsmGameObject("detectedObj");
             a.Tag = owner.tag;
-            a.Hostile = HostileTags(owner);
+            a.BaseHostile = HostileTags(owner);
+            a.Hostile = new HashSet<string>(a.BaseHostile);
+            foreach (var f in owner.GetComponents<PlayMakerFSM>()) if (f != null && f.FsmName == "PlayerIsEnemy") { a.PlayerIsEnemy = f; break; }
+            Relation(a, false);
             a.Human = IsHuman(a.Tag);
             foreach (var t in owner.GetComponentsInChildren<Transform>(true))
             {
@@ -1006,6 +1045,21 @@ namespace Apocaraiders
             a.NextLook = Time.time + a.Stagger;
             if (Plugin.SensesLog.Value) Plugin.Log.LogInfo("Senses: " + owner.name + " (" + a.Tag + (a.Human ? ", human" : "") + ") hunts " + string.Join("/", new List<string>(a.Hostile).ToArray()) + (a.Head != null ? ", eyes at the head" : ""));
             return a;
+        }
+
+        // The game turns a faction against the player at run time: hitting a Coyote sends HitFriendly -> CheckFriendly -> FactionCoyotesEnemy,
+        // and every Coyote's PlayerIsEnemy FSM goes to state PlayerEnemy (and back to PlayerFriendly when the game makes peace). Our copy of the
+        // NPC's enemies follows that state (checked every second and when the NPC registers); the game's own sensors are off, so their
+        // tag lists can't be relied on.
+        private static void Relation(Agent a, bool log)
+        {
+            bool hostile;
+            var f = a.PlayerIsEnemy;
+            if (f != null && f.Fsm != null && f.Fsm.Initialized) hostile = f.ActiveStateName == "PlayerEnemy";
+            else hostile = a.BaseHostile.Contains("Player");
+            if (hostile == a.Hostile.Contains("Player")) return;
+            if (hostile) a.Hostile.Add("Player"); else a.Hostile.Remove("Player");
+            if (log) Log(a, hostile ? "turns hostile to the player" : "makes peace with the player");
         }
 
         private static void Sensors(Agent a, bool on)
