@@ -20,6 +20,7 @@ they just see, hear, move and shoot like they mean it.
 * A raider who spots you shouts and his friends nearby join in.
 * Peaceful factions (the Coyote towns) ignore your shooting - until you attack one of them. Then the whole faction hunts you.
 * Shout yourself (Alt+Q) to lure raiders to you.
+* Sandstorms blind and deafen: inside one, raiders see 80 % as far and hear gunfire, shouts and engines half as far.
 
 ## Moving around
 

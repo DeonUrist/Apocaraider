@@ -87,7 +87,7 @@ shots, shouts, engine, thrown items, and raiders shooting or shouting at you - a
 game turns it against you (you hit one of them) its NPCs see and hunt you like raiders. Ghosts and alert states are saved with the game and
 restored after a load. You can shout too (Alt+Q, `[Senses] ShoutModifier` + `ShoutKey`; Alt keeps Q from kicking): you yell like a raider and NPCs hostile to you within
 25 m come to check. With Apocapatrol installed, a raider bailing out of a car keeps its crew's knowledge (it fights if it sees you,
-otherwise heads for where you were) and an exploding car is heard like a gunshot. `[Senses] Enabled = false` gives the game's own sensors back; `[Debug] ShowGhosts` draws every ghost and
+otherwise heads for where you were) and an exploding car is heard like a gunshot. In a sandstorm (within 2500 m of a storm's centre - the distance at which the game puts the sand around you) NPCs see only 80 % as far and gunfire, explosions, shouts and engines carry only half as far; it counts when either side is in the storm (the looker or what it looks at, the sound or the listener) and never twice. `[Senses] Enabled = false` gives the game's own sensors back; `[Debug] ShowGhosts` draws every ghost and
 alert NPC's state in the world.
 
 ## Structure maps

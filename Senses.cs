@@ -66,6 +66,7 @@ namespace Apocaraider
             public float SeenFor, UnseenFor, SearchUntil, NextLook, Stagger, LastLog, InvestigateUntil, InvestigateSince; public Vector3 LastSeen;
             public GameObject Pursue; public int Pursuits;     // the target it lost from sight, and how many more times it will go to where that target really is
             public Behaviour[] Sensors; public bool SensorsOff;
+            public bool InStorm;          // inside a sandstorm (refreshed once a second)
             public readonly HashSet<int> Heard = new HashSet<int>();   // ghosts it already got from a friend's shout, and enemy shouters (instance ids, negated) it already went to: a shout never re-sends them
         }
 
@@ -80,6 +81,7 @@ namespace Apocaraider
         private static readonly Dictionary<int, string> _prefabOf = new Dictionary<int, string>();
         private static float _nextMaint, _nextEngine, _nextLightLog, _lightCache, _lightAt = -10f;
         private static GameObject _player, _playerHead, _playerCar; private static Transform _flashlight; private static float _nextPlayerFind;
+        private static bool _playerInStorm;
         private static PlayMakerFSM _inCarFsm, _grabFsm; private static FsmGameObject _inCarVar, _grabItemVar; private static string _grabState;
         private static Rigidbody _thrown; private static float _thrownRest, _thrownSince;
         private static Transform _ghostRoot;
@@ -92,6 +94,7 @@ namespace Apocaraider
             foreach (var g in _ghosts) if (g.Obj != null) UnityEngine.Object.Destroy(g.Obj);
             _ghosts.Clear(); _agents.Clear(); _ignored.Clear(); _hpOf.Clear(); _prefabOf.Clear(); _presentTags.Clear(); Nwh.Clear();
             _player = null; _playerHead = null; _playerCar = null; _flashlight = null; _inCarFsm = null; _grabFsm = null; _thrown = null;
+            Storm.Reset();
             Persist.ResetForScene();
         }
 
@@ -104,6 +107,8 @@ namespace Apocaraider
             {
                 _nextMaint = now + 1f;
                 _dead.Clear(); _presentTags.Clear();
+                if (_player != null) Storm.Refresh(); else Storm.Reset();      // menu / loading: no storms, no lookups
+                _playerInStorm = _player != null && Storm.In(_player.transform.position);
                 foreach (var kv in _agents)
                 {
                     var a = kv.Value;
@@ -114,6 +119,7 @@ namespace Apocaraider
                         else if (on && !a.SensorsOff) Sensors(a, false);        // switched back on: the game's sensors go quiet again
                         if (a.PlayerIsEnemy != null) Relation(a, true);
                         _presentTags.Add(a.Tag);
+                        a.InStorm = Storm.Any && Storm.In(a.T.position);
                     }
                 }
                 foreach (var k in _dead) _agents.Remove(k);
@@ -169,7 +175,7 @@ namespace Apocaraider
             bool currentVisible = false;
             if (a.Hostile.Contains("Player") && _player != null && (_player.transform.position - a.T.position).sqrMagnitude <= d2max)
             {
-                if (Visible(a, eye, _player, true)) { best = _player; bestD = (_player.transform.position - a.T.position).sqrMagnitude; if (a.Target == _player) currentVisible = true; }
+                if (Visible(a, eye, _player, true, _playerInStorm)) { best = _player; bestD = (_player.transform.position - a.T.position).sqrMagnitude; if (a.Target == _player) currentVisible = true; }
             }
             if (!currentVisible && HostileNpcAround(a))
             {
@@ -180,7 +186,7 @@ namespace Apocaraider
                     if (b == a || !a.Hostile.Contains(b.Tag) || b.Owner == null) continue;
                     float d2 = (b.T.position - ap).sqrMagnitude;
                     if (d2 > d2max || (d2 >= bestD && b.Owner != a.Target)) continue;
-                    if (!Visible(a, eye, b.Owner, false)) continue;
+                    if (!Visible(a, eye, b.Owner, false, b.InStorm)) continue;
                     if (b.Owner == a.Target) { best = b.Owner; currentVisible = true; break; }
                     if (d2 < bestD) { best = b.Owner; bestD = d2; }
                 }
@@ -203,18 +209,27 @@ namespace Apocaraider
             }
         }
 
+        private static bool InStormOf(GameObject go)
+        {
+            if (go == null || !Storm.Any) return false;
+            if (go == _player) return _playerInStorm;
+            var b = Get(go.transform.root.gameObject);
+            return b != null ? b.InStorm : Storm.In(go.transform.position);
+        }
+
         private static bool HostileNpcAround(Agent a)
         {
             foreach (var t in a.Hostile) if (t != "Player" && _presentTags.Contains(t)) return true;
             return false;
         }
 
-        private static bool Visible(Agent a, Vector3 eye, GameObject target, bool isPlayer)
+        private static bool Visible(Agent a, Vector3 eye, GameObject target, bool isPlayer, bool targetInStorm)
         {
             Vector3 tp = target.transform.position;
             Vector3 flat = tp - a.T.position; flat.y = 0f;
             float d = flat.magnitude;
             float range = isPlayer && FlashlightOn() ? Plugin.SightRange.Value : SightRange();
+            if (a.InStorm || targetInStorm) range *= Storm.SightFactor;     // sand in the air between them
             if (d > range) return false;
             if (Vector3.Angle(a.T.forward, flat) > Mathf.Clamp(Plugin.SightCone.Value, 10f, 360f) * 0.5f) return false;
             Transform troot = target.transform.root;
@@ -485,12 +500,18 @@ namespace Apocaraider
             if (shared != null) shared.Subject = subject;
             int told = 0;
             float r2 = radius * radius;
+            // a sandstorm swallows gunfire, explosions, shouts and engines: the range shrinks once (never twice) when the sound starts in a
+            // storm or the listener stands in one. No storm loaded: nothing is tested.
+            bool stormy = (src == Src.Gunshot || src == Src.Shout || src == Src.Engine) && Storm.Any;
+            bool srcStorm = stormy && Storm.In(pos);
+            float hf = Storm.HearingFactor, rs2 = r2 * hf * hf;
             foreach (var kv in _agents)
             {
                 var a = kv.Value;
                 if (a.Owner == null || a.T.parent != null || (sroot != null && a.T == sroot)) continue;
                 float d2 = (a.T.position - pos).sqrMagnitude;
                 if (d2 > r2) continue;
+                if (stormy && (srcStorm || a.InStorm) && d2 > rs2) continue;
                 if (filter != null && !filter(a)) continue;
                 if (aboutPlayer && !a.Hostile.Contains("Player")) continue;
                 if (Plugin.MuffleSounds.Value && !Clear(pos + Vector3.up, Eye(a), a.T))
@@ -755,33 +776,44 @@ namespace Apocaraider
         {
             if (_voice == null || _voice.Length == 0 || _voice[0] == null)
             {
+                // Flexa's own shouts, read from the Flexa prefab asset (Gungirl's voice swap only ever edits spawned instances, so the
+                // prefab always carries the game's original clips); else from a live vanilla Flexa. Gungirls are skipped, and nothing is
+                // collected by clip name: the mod's Gungirl voice files carry the same names (enemy_human_single_N).
                 _voice = null;
-                // a male raider's own Sound FSM array (not a Gungirl, whose array carries her voice)
-                foreach (var kv in _agents)
+                GameObject prefab = null;
+                if (Time.unscaledTime >= _nextFlexaScan)
                 {
-                    var a = kv.Value;
-                    if (a.Owner == null || !a.Human || a.Owner.name.StartsWith(Gungirl.Name)) continue;
-                    foreach (var f in a.Owner.GetComponents<PlayMakerFSM>())
-                    {
-                        if (f == null || f.FsmName != "Sound") continue;
-                        var arr = f.FsmVariables.FindFsmArray("soundArray");
-                        if (arr == null || arr.Values == null) continue;
-                        var list = new List<AudioClip>();
-                        foreach (var v in arr.Values) { var c = v as AudioClip; if (c != null) list.Add(c); }
-                        if (list.Count > 0) { _voice = list.ToArray(); break; }
-                    }
-                    if (_voice != null) break;
+                    _nextFlexaScan = Time.unscaledTime + 30f;       // a full asset scan: at most every 30 s until Flexa's clips are found
+                    foreach (var go in Resources.FindObjectsOfTypeAll<GameObject>())
+                        if (go != null && go.name == "Flexa" && !go.scene.IsValid() && go.transform.parent == null) { prefab = go; break; }
                 }
+                if (prefab != null) _voice = FlexaClips(prefab);
                 if (_voice == null)
-                {
-                    var list = new List<AudioClip>();
-                    foreach (var c in Resources.FindObjectsOfTypeAll<AudioClip>())
-                        if (c != null && c.name.StartsWith("enemy_human_single_")) list.Add(c);
-                    if (list.Count > 0) _voice = list.ToArray();
-                }
-                if (_voice == null) return null;
+                    foreach (var kv in _agents)
+                    {
+                        var o = kv.Value.Owner;
+                        if (o == null || !(o.name == "Flexa" || o.name.StartsWith("Flexa(", StringComparison.Ordinal))) continue;
+                        _voice = FlexaClips(o);
+                        if (_voice != null) break;
+                    }
+                if (_voice == null) return null;      // no Flexa anywhere yet: a silent shout, tried again next time
             }
             return _voice[UnityEngine.Random.Range(0, _voice.Length)];
+        }
+
+        private static float _nextFlexaScan;
+        private static AudioClip[] FlexaClips(GameObject flexa)
+        {
+            foreach (var f in flexa.GetComponents<PlayMakerFSM>())
+            {
+                if (f == null || f.FsmName != "Sound") continue;
+                var arr = f.FsmVariables.FindFsmArray("soundArray");
+                if (arr == null || arr.Values == null) continue;
+                var list = new List<AudioClip>();
+                foreach (var v in arr.Values) { var c = v as AudioClip; if (c != null) list.Add(c); }
+                if (list.Count > 0) return list.ToArray();
+            }
+            return null;
         }
 
         // Tracers: a bullet hit a creature - it knows where that came from
@@ -1021,7 +1053,7 @@ namespace Apocaraider
             if (!_handover.TryGetValue(id, out h)) return;
             _handover.Remove(id);
             if (h.Key == null || Time.time - h.Value > 30f) return;
-            if (Visible(a, Eye(a), h.Key, h.Key == _player)) { Engage(a, h.Key); Log(a, "bailed out and sees " + Name(h.Key)); return; }
+            if (Visible(a, Eye(a), h.Key, h.Key == _player, InStormOf(h.Key))) { Engage(a, h.Key); Log(a, "bailed out and sees " + Name(h.Key)); return; }
             float now = Time.time;
             a.LastSeen = h.Key.transform.position;
             var g = GetOrMake(Src.Vision, a.LastSeen, h.Key, "crew knew where " + Name(h.Key) + " was", 6f, 2f, now);
