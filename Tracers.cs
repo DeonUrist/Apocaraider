@@ -761,6 +761,104 @@ namespace Apocaraider
             catch (Exception e) { Plugin.Log.LogError("Tracers melee: " + e); }
         }
 
+        // ---------- melee on FITTED wheels (1.5.1) ----------
+        // A fitted wheel's collider is a trigger (its CheckTag FSM, state vehPart: ColliderSetIsTrigger true) and the melee weapons' own
+        // SphereCast2 (PlayerCamera, r 0.02, 1.8 m) ignores triggers: knives cut loose wheels but passed through fitted ones, so the hook
+        // above never ran for them. While a melee Attack FSM is in "fire" (the swing) the cast is repeated with triggers; a fitted wheel
+        // met before anything solid gets the weapon's hit value x WheelDamageMultiplier on its Bodypart (+ the Damage event), the blue hit
+        // number, and the WheelPopOff check - once per swing. (Apocapatrol has a plain version that steps aside when it sees this type.)
+        private static Transform _wParent, _wCam;
+        private static float _wNextFind;
+        private static PlayMakerFSM _wSwing;
+        private static bool _wDone;
+        private static readonly Dictionary<int, float> _wDamage = new Dictionary<int, float>();   // Attack FSM id -> hit value; NaN = not melee
+        private static readonly RaycastHit[] _wHits = new RaycastHit[24];
+        private const int WheelSwingMask = (1 << 0) | (1 << 8) | (1 << 9) | (1 << 10) | (1 << 11) | (1 << 13) | (1 << 14) | (1 << 16);
+
+        private static void SwingAtFittedWheels()
+        {
+            if (_wParent == null)
+            {
+                if (Time.unscaledTime < _wNextFind) return;
+                _wNextFind = Time.unscaledTime + 2f;
+                var holder = GameObject.Find("PlayerCameraHolder");
+                if (holder == null) return;
+                _wCam = holder.transform.Find("PlayerCamera");
+                _wParent = _wCam != null ? _wCam.Find("WeaponsArm/Parent") : null;
+                if (_wParent == null) return;
+            }
+            PlayMakerFSM active = null;
+            for (int i = 0; i < _wParent.childCount && active == null; i++)
+            {
+                var w = _wParent.GetChild(i);
+                if (!w.gameObject.activeInHierarchy) continue;
+                foreach (var f in w.GetComponents<PlayMakerFSM>())
+                    if (f != null && f.FsmName == "Attack" && f.Fsm != null && f.Fsm.Initialized && f.ActiveStateName == "fire") { active = f; break; }
+            }
+            if (active == null) { _wSwing = null; _wDone = false; return; }
+            if (active != _wSwing) { _wSwing = active; _wDone = false; }
+            if (_wDone) return;
+            float dmg = SwingDamage(active);
+            if (float.IsNaN(dmg)) return;
+
+            int n = Physics.SphereCastNonAlloc(_wCam.position, 0.02f, _wCam.forward, _wHits, 1.8f, WheelSwingMask, QueryTriggerInteraction.Collide);
+            if (n <= 0) return;
+            Array.Sort(_wHits, 0, n, Comparer<RaycastHit>.Create((a, b) => a.distance.CompareTo(b.distance)));
+            Transform wheel = null; Vector3 at = Vector3.zero;
+            for (int i = 0; i < n; i++)
+            {
+                var col = _wHits[i].collider;
+                if (col == null) continue;
+                var root = col.transform.root;
+                if (root == _wCam.root || root.name == "Player") continue;   // the player's own body / arms
+                var part = OwningPart(col.transform);
+                if (part != null && part.parent != null && part.parent.name.StartsWith("hinge_wheel", StringComparison.Ordinal)) { wheel = part; at = _wHits[i].point; break; }
+                if (!col.isTrigger) return;          // something solid first: the game's own cast handles that
+            }
+            if (wheel == null) return;
+            _wDone = true;
+            float mult = Mathf.Max(0f, Plugin.WheelDamageMultiplier.Value);
+            float before = PartCondition(wheel);
+            foreach (var f in wheel.GetComponents<PlayMakerFSM>())
+            {
+                if (f == null || f.FsmName != "Bodypart") continue;
+                var v = f.FsmVariables.FindFsmFloat("Damage");
+                if (v == null) break;
+                v.Value = dmg * mult;
+                f.SendEvent("Damage");
+                Hud.PartHit(wheel.gameObject, at == Vector3.zero ? wheel.position : at, Mathf.Abs(v.Value));
+                if (Plugin.HitLog.Value) Plugin.Log.LogInfo("Hit: " + active.gameObject.name + " (melee, fitted wheel) -> " + wheel.name + ", condition " + before.ToString("0.0") + " " + v.Value.ToString("0.0") + " (x" + mult.ToString("0.#") + ")");
+                break;
+            }
+            if (Plugin.WheelPopOff.Value && before > 0f) _meleeWheels.Add(new MeleeWheel { Part = wheel, Before = before, Dir = _wCam.forward, Frame = Time.frameCount });
+        }
+
+        // the weapon's "hit" state value (SetFsmFloat Bodypart.Damage, old_knife -12); a weapon with a Reload FSM is a gun
+        private static float SwingDamage(PlayMakerFSM attack)
+        {
+            float d;
+            if (_wDamage.TryGetValue(attack.GetInstanceID(), out d)) return d;
+            d = float.NaN;
+            bool gun = false;
+            foreach (var x in attack.GetComponents<PlayMakerFSM>()) if (x != null && x.FsmName == "Reload") { gun = true; break; }
+            if (!gun)
+                foreach (var st in attack.Fsm.States)
+                {
+                    if (st.Name != "hit") continue;
+                    var acts = st.Actions;
+                    if (acts == null || acts.Length == 0) { st.LoadActions(); acts = st.Actions; }
+                    if (acts != null)
+                        foreach (var a in acts)
+                        {
+                            var sf = a as SetFsmFloat;
+                            if (sf != null && sf.fsmName != null && sf.fsmName.Value == "Bodypart" && sf.variableName != null && sf.variableName.Value == "Damage" && sf.setValue != null) { d = sf.setValue.Value; break; }
+                        }
+                    break;
+                }
+            _wDamage[attack.GetInstanceID()] = d;
+            return d;
+        }
+
         private static float PartCondition(Transform part)
         {
             foreach (var f in part.GetComponentsInChildren<PlayMakerFSM>(true))
@@ -790,6 +888,7 @@ namespace Apocaraider
         {
             float dt = Time.deltaTime;
             Snapshot();
+            try { SwingAtFittedWheels(); } catch (Exception e) { Plugin.Log.LogError("Tracers melee (fitted wheels): " + e); _wParent = null; }
             if (_meleeWheels.Count > 0) { try { CheckMeleeWheels(); } catch (Exception e) { Plugin.Log.LogError("Tracers melee: " + e); _meleeWheels.Clear(); } }
             if (dt <= 0f) { if (!_drawnPaused) { Draw(); _drawnPaused = true; } return; }   // paused: the mesh is drawn once and left as it is
             _drawnPaused = false;

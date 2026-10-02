@@ -26,7 +26,8 @@ visible bolts. Tracers look the same by day and by night.
   One bullet hits one thing, then it's gone (car parts it goes through aside, see below).
 - A bullet that hits a vehicle part damages it (20 damage = 1 % of the part's condition by default, `VehicleDamagePer1`; wheels
   take `WheelDamageMultiplier` (5) times as much - from your melee weapons too - so shooting or slashing the wheels stops a car, and a wheel shot to 0 jumps off it (`WheelPopOff`); the game's own rule,
-  which took a rifle round's full 23 off a part's condition, is replaced).
+  which took a rifle round's full 23 off a part's condition, is replaced). Melee weapons reach the wheels of a car too - in the
+  game itself a knife only cuts a loose wheel and passes through one fitted to a car.
 - Bullets can go through car parts, by gun type (pistol / SMG / rifle / sniper / shotgun pellet / crossbow bolt, % per bullet):
   glass windshield 80/85/95/100/60/70, grid windshield and wire plate 50/50/55/60/40/30, doors, hoods and trunks
   30/35/70/90/10/20, bolted-on metal plates 0/5/20/50/0/0; engines, radiators, bumpers, wheels and frames stop every bullet.
