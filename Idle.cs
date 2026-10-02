@@ -41,6 +41,7 @@ namespace Apocaraider
             public float NextPoints; public float[] DroppedUntil; public int PointsTries;
             public float LookYaw, NextLook; public bool Turning, PendingBack; public float LastHop = -10f;
             public bool NoHome, LastWasSearch, Fresh;
+            public PlayMakerFSM Movement; public bool MovementLooked; public float NextAnimCheck;
             public bool InSearch, SAtOrigin; public Vector3 SOrigin; public List<Vector3> SPts; public float[] SDropped; public int SLast = -1;
         }
 
@@ -198,6 +199,7 @@ namespace Apocaraider
                     c.NextThink = now + 0.2f;
                     try { Think(c, now); } catch (Exception e) { Plugin.Log.LogError("Idle: " + e); Stop(c); c.Excluded = true; }
                 }
+                if (!c.Moving && !c.Turning && now >= c.NextAnimCheck) { c.NextAnimCheck = now + 0.5f; RunInPlace(c); }
                 if (c.Moving) Drive(c, dt);
                 else if (c.Turning)
                 {
@@ -385,6 +387,28 @@ namespace Apocaraider
             c.NextLook = now + UnityEngine.Random.Range(1.5f, 3f);
             c.LookYaw = c.A.T.eulerAngles.y + UnityEngine.Random.Range(-70f, 70f);
             c.Turning = true;
+        }
+
+        // (1.4.9) An idle NPC that nobody moves (waiting to go back, standing at home) must not play the run: the game's Movement FSM left in
+        // its Run state (the run animation, a forward push every frame) or our own run animation left on -> back to the game's Idle.
+        private static void RunInPlace(Ctl c)
+        {
+            try
+            {
+                if (!c.MovementLooked)
+                {
+                    c.MovementLooked = true;
+                    foreach (var f in c.A.Owner.GetComponents<PlayMakerFSM>()) if (f.FsmName == "Movement") { c.Movement = f; break; }
+                }
+                bool fsmRun = c.Movement != null && c.Movement.Fsm != null && c.Movement.Fsm.ActiveStateName == "Run";
+                bool animRun = c.Anim != null && c.Anim.isActiveAndEnabled && c.Anim.GetCurrentAnimatorStateInfo(0).IsName("run") && !c.Anim.IsInTransition(0);
+                if (!fsmRun && !animRun) return;
+                if (fsmRun) c.Movement.SendEvent("Animal_Idle");
+                if (c.Anim != null) { c.Anim.speed = 1f; c.Anim.Play("idle", 0, 0f); }
+                if (c.Rb != null) { var v = c.Rb.velocity; c.Rb.velocity = new Vector3(0f, v.y, 0f); }
+                Log(c, "was running in place (" + (fsmRun ? "game's Movement in Run" : "run animation left on") + "), now stands");
+            }
+            catch (Exception e) { Plugin.Log.LogError("Idle anim: " + e.Message); c.NextAnimCheck = Time.time + 30f; }
         }
 
         // ---------- the body ----------

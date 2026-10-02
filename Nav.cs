@@ -371,15 +371,13 @@ namespace Apocaraider
                         Vector3 b = CellCenter(s, cx, cz, yb);
                         if (dy <= Mathf.Max(0.1f, Plugin.NavMaxStep.Value)
                             && LowWayClear(a, b, Mathf.Max(ya, yb))                                                                      // a low rock lip / kerb
-                            && !Physics.Linecast(a + Vector3.up * 0.5f, b + Vector3.up * 0.5f, BakeMask, QueryTriggerInteraction.Ignore)
-                            && !Physics.Linecast(a + Vector3.up * 1.2f, b + Vector3.up * 1.2f, BakeMask, QueryTriggerInteraction.Ignore))
+                            && BodySweep(a, b, Mathf.Max(ya, yb), 0.3f))                                                                 // the whole body, knee to shoulders
                         { bits |= (byte)(1 << k); continue; }
                         // not walkable: a hop edge? (straight neighbours only) a step / lip up to HopStep with the body's way clear above it
                         if (k > 1 || dy > HopStep) continue;
                         float top = Mathf.Max(ya, yb);
                         Vector3 a2 = new Vector3(a.x, top, a.z), b2 = new Vector3(b.x, top, b.z);
-                        if (Physics.Linecast(a2 + Vector3.up * 0.6f, b2 + Vector3.up * 0.6f, BakeMask, QueryTriggerInteraction.Ignore)) continue;
-                        if (Physics.Linecast(a2 + Vector3.up * 1.2f, b2 + Vector3.up * 1.2f, BakeMask, QueryTriggerInteraction.Ignore)) continue;
+                        if (!BodySweep(a2, b2, top, 0.6f)) continue;
                         bits |= (byte)(1 << (k + 4));
                     }
                     s.Edges[i] = bits;
@@ -1384,6 +1382,20 @@ namespace Apocaraider
             // the top of the very thing the line hit (a thin rail the probe misses lands on the ground behind it: still a wall),
             // facing up, no higher than a step
             return top.collider == h.collider && top.point.y - topFloor <= step && top.normal.y >= 0.5f;
+        }
+
+        // (1.4.9) The way between two neighbouring cells for the whole body: the NPC's own capsule (r 0.28, up to the shoulders at 1.5 m)
+        // swept from one cell centre to the other, from lo above the higher floor (0.3: what LowWayClear / a step leaves; 0.6 over a hop).
+        // The old test was two thin lines (0.5 and 1.2 m) between the centres: a diagonal spike or a pipe at chest height passing between
+        // them, or between two cell centres, was invisible to the map while the body ran into it.
+        private static bool BodySweep(Vector3 a, Vector3 b, float top, float lo)
+        {
+            Vector3 d = new Vector3(b.x - a.x, 0f, b.z - a.z);
+            float len = d.magnitude;
+            if (len < 1e-4f) return true;
+            Vector3 p1 = new Vector3(a.x, top + lo + Radius, a.z), p2 = new Vector3(a.x, top + HeadTop - Radius, a.z);
+            if (p2.y < p1.y) p2 = p1;
+            return !Physics.CapsuleCast(p1, p2, Radius, d / len, len, BakeMask, QueryTriggerInteraction.Ignore);
         }
 
         // a body capsule swept from a to b (patrol legs are re-checked before walking: a car parked there since the bake)

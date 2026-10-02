@@ -840,7 +840,7 @@ namespace Apocaraider
             }
             if (m == Mode.Chase || m == Mode.Advance) { n.HasHeading = false; if (was != Mode.Chase && was != Mode.Advance && was != Mode.BackUp) { n.BestDist = float.MaxValue; n.NoProgressSince = Time.time; n.Flipped = false; n.Side = 0; n.HasWaypoint = false; } }
             bool wasStill = was == Mode.Hold || was == Mode.Rest || was == Mode.Search, still = m == Mode.Hold || m == Mode.Rest || m == Mode.Search;
-            if (m == Mode.Off) { if (wasStill) Move(n, true); }
+            if (m == Mode.Off) { if (wasStill) Move(n, n.Target != null && n.Target.Value != null); }   // (1.4.9) back to the game's run only with a target left - no target: idle, not a run on the spot
             else if (still && !wasStill) Move(n, false);
             else if (!still && wasStill) Move(n, true);
             if (still) n.OnNav = false;
@@ -1362,9 +1362,8 @@ namespace Apocaraider
                 {
                     var n = NpcOf(__instance.Fsm, "Unstuck");
                     if (n == null) return true;
-                    // (1.4.8) the game's Unstuck calls "moved < 0.2 m in 0.3 s" stuck - a deliberate turn on the spot (or the moment after a step
-                    // back) looks just like that. While the brain moves the NPC its own Blocked() (driven vs covered distance) judges instead.
-                    if (n.Mode != Mode.Chase && n.Mode != Mode.Advance) OnStuck(n);
+                    // the game's Unstuck ("moved < 0.2 m in 0.3 s" -> a random spin + a hop) is cancelled while the brain has the NPC; being stuck
+                    // is judged by Blocked() (driven vs covered distance), which tells a deliberate turn on the spot from a real block
                     __instance.Finish();
                     return false;
                 }
