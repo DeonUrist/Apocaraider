@@ -34,6 +34,7 @@ namespace Apocaraider
             public int Walkable, NoFloor, Tight, Solid, ScanLimit; public float BakeMs; public int BakeFrames;
             public byte[] Why;                      // per cell: 0 walkable, 1 no floor, 2 too tight, 3 inside rock
             public bool[] Open;                     // walkable cell with open sky above (not under a cave roof / building)
+            public bool[] Near;                     // (1.4.11) walkable cell next to a body-height obstacle (too tight / rock): routes avoid it, walked centre to centre
             public int EdgeCells, EdgeWalkable;     // the outer ring of the footprint
             public Dictionary<int, int> FloorHits;  // collider id -> walkable cells it is the floor of (during the bake)
             public float NextDump;
@@ -73,6 +74,10 @@ namespace Apocaraider
         // solid for baking: everything the feelers see, minus cars (8) and loose items (9) - those move
         private static readonly int BakeMask = ~((1 << 1) | (1 << 2) | (1 << 4) | (1 << 5) | (1 << 6) | (1 << 7) | (1 << 8) | (1 << 9) | (1 << 10) | (1 << 12) | (1 << 13) | (1 << 15) | (1 << 17) | (1 << 19) | (1 << 22));
         private const float Radius = 0.28f, Ankle = 0.2f, HeadTop = 1.5f;   // a human NPC: capsule r 0.28, 1.5 m tall
+        // (1.4.11) clearance: from knee height (0.3 m) up the map tests a body 7 cm fatter than the real one - an NPC is never exactly on a
+        // cell centre, and a spike passing 3 cm from the centre stopped the body 15 cm off it. Gaps under ~0.7 m at body height close.
+        private const float BodyR = 0.35f, BodyLo = 0.3f;
+        private const float NearCost = 1f;       // entering a cell next to an obstacle costs like 1 m more: routes keep to open ground
         private const int MinArea = 30;          // connected areas smaller than this (7.5 m2) are noise next to props: never start or end a route there
         internal const float HopStep = 0.5f;     // a floor step / lip up to this high is crossed with a hop (the brain's hop clears ~0.5 m)
         private const float HopCost = 2f;        // a hop edge costs like 2 m more walking: the map prefers a flat way when there is one
@@ -393,6 +398,21 @@ namespace Apocaraider
         {
             int n = s.W * s.H;
             {
+                // (1.4.11) cells next to a body-height obstacle (8 neighbours too tight / inside rock)
+                s.Near = new bool[n];
+                for (int i = 0; i < n; i++)
+                {
+                    if (float.IsNaN(s.FloorY[i])) continue;
+                    int x = i % s.W, z = i / s.W;
+                    for (int dz = -1; dz <= 1 && !s.Near[i]; dz++)
+                        for (int dx = -1; dx <= 1; dx++)
+                        {
+                            int cx = x + dx, cz = z + dz;
+                            if (cx < 0 || cz < 0 || cx >= s.W || cz >= s.H) continue;
+                            byte w = s.Why[cz * s.W + cx];
+                            if (w == 2 || w == 3) { s.Near[i] = true; break; }
+                        }
+                }
                 s.Baked = true; _baking = null;
                 _msPerCell = Mathf.Clamp(_msPerCell + (s.BakeMs / Math.Max(1, n) - _msPerCell) * 0.5f, 0.005f, 0.2f);   // learned for the next estimates
                 int floorCols = 0;
@@ -538,7 +558,8 @@ namespace Apocaraider
 
         private static bool BodyFits(Vector3 f)
         {
-            return !Physics.CheckCapsule(f + Vector3.up * (Ankle + Radius), f + Vector3.up * (HeadTop - Radius), Radius, BakeMask, QueryTriggerInteraction.Ignore);
+            return !Physics.CheckCapsule(f + Vector3.up * (Ankle + Radius), f + Vector3.up * (HeadTop - Radius), Radius, BakeMask, QueryTriggerInteraction.Ignore)
+                && !Physics.CheckCapsule(f + Vector3.up * (BodyLo + BodyR), f + Vector3.up * Mathf.Max(BodyLo + BodyR, HeadTop - BodyR), BodyR, BakeMask, QueryTriggerInteraction.Ignore);
         }
 
         // for the log: why the map has nothing walkable where an NPC stands
@@ -762,14 +783,17 @@ namespace Apocaraider
                 }
             }
             pathLeft = d0;
-            // descend the field up to 16 cells, keep the farthest cell still in grid sight
+            // descend the field up to 16 cells, keep the farthest cell still in grid sight - but next to an obstacle (careful mode, 1.4.11)
+            // the waypoint is no farther than the first such cell, so the body walks that stretch centre to centre instead of cutting across
             int cur = from, pick = from;
+            bool careful = s.Near != null && s.Near[from];
             for (int k = 0; k < 16; k++)
             {
                 int nb = Downhill(s, f, cur);
                 if (nb < 0) break;
                 cur = nb;
                 if (GridSight(s, from, cur)) pick = cur; else break;
+                if (careful || (s.Near != null && s.Near[cur])) break;
             }
             if (pick == from) { int nb = Downhill(s, f, from); if (nb < 0) { LastReason = LogOn ? "no downhill cell on the " + s.Name + " map" : "-"; return false; } pick = nb; }
             _tD0 = d0; _tPick = pick;
@@ -1146,6 +1170,7 @@ namespace Apocaraider
                         if (dx != 0 && dz != 0 && (!Step(s, i0, z * s.W + cx) || !Step(s, i0, cz * s.W + x))) continue;
                         float nd = d + (dx != 0 && dz != 0 ? c2 : c1);
                         if (dx == 0 || dz == 0) { if (EdgeKind(s, i0, j) == 2) nd += HopCost; }
+                        if (s.Near != null && s.Near[j]) nd += NearCost;
                         if (nd < dist[j]) { dist[j] = nd; heap.Push(j, nd); }
                     }
             }
@@ -1393,9 +1418,9 @@ namespace Apocaraider
             Vector3 d = new Vector3(b.x - a.x, 0f, b.z - a.z);
             float len = d.magnitude;
             if (len < 1e-4f) return true;
-            Vector3 p1 = new Vector3(a.x, top + lo + Radius, a.z), p2 = new Vector3(a.x, top + HeadTop - Radius, a.z);
+            Vector3 p1 = new Vector3(a.x, top + lo + BodyR, a.z), p2 = new Vector3(a.x, top + HeadTop - BodyR, a.z);
             if (p2.y < p1.y) p2 = p1;
-            return !Physics.CapsuleCast(p1, p2, Radius, d / len, len, BakeMask, QueryTriggerInteraction.Ignore);
+            return !Physics.CapsuleCast(p1, p2, BodyR, d / len, len, BakeMask, QueryTriggerInteraction.Ignore);   // with the clearance margin
         }
 
         // a body capsule swept from a to b (patrol legs are re-checked before walking: a car parked there since the bake)
