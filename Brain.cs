@@ -70,6 +70,10 @@ namespace Apocaraider
             public int Stucks; public float FirstStuck, LastHop = -10f;
             public float LosLostAt = -1f; public bool Los; public float Dist;
             public float LastLog;
+            public int LosLooks;                       // consecutive thinks with line of sight (Hold needs 2: no flapping on a fence bar)
+            public float CrouchRolledAt = -10f; public bool CrouchRoll;   // the kneel roll of this hold episode (kept 5 s across short Chase gaps)
+            public float FaceTargetUntil;              // Aim wants a burst: face the target instead of the steered heading for a moment
+            public float TickScale = 1f;               // thinks less often far from the camera
         }
 
         private static readonly Dictionary<int, Npc> _npcs = new Dictionary<int, Npc>();
@@ -80,6 +84,7 @@ namespace Apocaraider
         // layers (TagManager): 0 Default, 6 Player, 8 Car, 9 Item, 10 Actor, 11 Door, 14 Ground, 16 SeeTrough, 18 PhysicsLock
         private static readonly int Mask = (1 << 0) | (1 << 8) | (1 << 11) | (1 << 16);   // the game's bumper-ray layers (buildings, cars, doors, fences)
         private static readonly int GroundMask = (1 << 0) | (1 << 8) | (1 << 11) | (1 << 14) | (1 << 16);   // + Ground: for the drop check
+        private static readonly int LosMask = GroundMask;          // line of sight for the shooting decision: a hill crest hides the target too
         // pathing feelers: everything solid except creatures, the player, weapons and the non-world layers; Ground counts only where it is
         // steep (a rock, a prop placed on that layer), gentle terrain ahead is not an obstacle
         private static readonly int PathMask = ~((1 << 1) | (1 << 2) | (1 << 4) | (1 << 5) | (1 << 6) | (1 << 7) | (1 << 10) | (1 << 12) | (1 << 13) | (1 << 15) | (1 << 17) | (1 << 19) | (1 << 22));
@@ -104,10 +109,18 @@ namespace Apocaraider
                 _nextCount = now + 1f;
                 _dead.Clear();
                 int n = 0;
+                var cam = Camera.main; Vector3 camPos = cam != null ? cam.transform.position : Vector3.zero;
                 foreach (var kv in _npcs)
                 {
-                    if (kv.Value.Owner == null) _dead.Add(kv.Key);
-                    else if (kv.Value.Mode != Mode.Off) n++;
+                    var np = kv.Value;
+                    if (np.Owner == null) _dead.Add(kv.Key);
+                    else if (np.Mode != Mode.Off) n++;
+                    if (np.Owner != null && cam != null)
+                    {
+                        // out of the player's sight the finer steering is wasted: think half / a quarter as often
+                        float cd = (np.T.position - camPos).sqrMagnitude;
+                        np.TickScale = cd > 80f * 80f ? 4f : cd > 40f * 40f ? 2f : 1f;
+                    }
                 }
                 foreach (var k in _dead) _npcs.Remove(k);
                 _active = n;
@@ -133,9 +146,14 @@ namespace Apocaraider
                 }
                 if (now >= n.NextTick)
                 {
-                    n.NextTick = now + _interval + n.Stagger;
+                    n.NextTick = now + _interval * n.TickScale;
                     try { Think(n, now); }
-                    catch (Exception e) { Plugin.Log.LogError("Brain: " + e); n.Mode = Mode.Off; continue; }
+                    catch (Exception e)
+                    {
+                        Plugin.Log.LogError("Brain: " + e);
+                        try { SetMode(n, Mode.Off, "error"); } catch (Exception) { n.Mode = Mode.Off; try { Unfreeze(n); Crouch(n, false); } catch (Exception) { } }
+                        continue;
+                    }
                 }
                 if (n.Mode == Mode.Off || n.Mode == Mode.BackUp) continue;
                 if (n.Frozen && state != "trigger" && state != "run") Unfreeze(n);      // the burst (or a melee swing, a hide run): let the animation play
@@ -152,7 +170,7 @@ namespace Apocaraider
                     }
                     to = Quaternion.Euler(0f, n.LookYaw, 0f) * Vector3.forward;
                 }
-                else if (n.Mode == Mode.Hold || n.Mode == Mode.Rest || state == "attack_ranged")
+                else if (n.Mode == Mode.Hold || n.Mode == Mode.Rest || state == "attack_ranged" || now < n.FaceTargetUntil)
                     to = target.transform.position - n.T.position;
                 else if (n.HasHeading) to = Quaternion.Euler(0f, n.Heading, 0f) * Vector3.forward;
                 else to = target.transform.position - n.T.position;
@@ -186,7 +204,7 @@ namespace Apocaraider
             int kind = Senses.KindOf(n.Owner);           // 0 vanilla / seen target, 1 seen target, 2 going to a ghost, 3 searching at it
             if (kind == 3) { if (n.Mode != Mode.Search) { n.NextLookTurn = 0f; SetMode(n, Mode.Search, "looks around"); } return; }
             n.ToGhost = kind == 2;
-            if (n.Mode == Mode.Off || n.Mode == Mode.Search) SetMode(n, Mode.Chase, (n.ToGhost ? "ghost" : "target") + " at " + d.ToString("0") + " m");
+            if (n.Mode == Mode.Off || n.Mode == Mode.Search) SetMode(n, Mode.Chase, !Plugin.BrainLog.Value ? "" : (n.ToGhost ? "ghost" : "target") + " at " + d.ToString("0") + " m");
 
             if (n.Mode == Mode.BackUp) { if (now < n.ModeUntil) return; SetMode(n, Mode.Chase, "backed up"); }
             if (n.Mode == Mode.Rest) { if (now < n.ModeUntil) return; SetMode(n, Mode.Chase, "rested"); }
@@ -200,15 +218,15 @@ namespace Apocaraider
             else if (n.Ranged)
             {
                 bool los = LineOfSight(n, target, tp);
-                if (los) { n.Los = true; n.LosLostAt = -1f; }
-                else { if (n.Los) { n.Los = false; n.LosLostAt = now; } }
+                if (los) { n.Los = true; n.LosLostAt = -1f; n.LosLooks++; }
+                else { if (n.Los) { n.Los = false; n.LosLostAt = now; } n.LosLooks = 0; }
                 float reach = Tracers.RangeOf(n.Kind);
                 float engage = reach * Mathf.Clamp(Plugin.EngagePercent.Value, 1f, 100f) / 100f;
                 bool good = los && d <= engage;
                 if (n.Mode == Mode.Hold)
                 {
                     bool lost = (!los && now - n.LosLostAt > 0.3f * R) || d > engage * 1.1f;
-                    if (lost) { SetMode(n, Mode.Chase, (los ? "target at " + d.ToString("0") + " m" : "no line of sight")); }
+                    if (lost) { SetMode(n, Mode.Chase, !Plugin.BrainLog.Value ? "" : los ? "target at " + d.ToString("0") + " m" : "no line of sight"); }
                     else if (now >= n.NextRecheck)
                     {
                         n.NextRecheck = now + UnityEngine.Random.Range(Mathf.Max(0.1f, Plugin.HoldRecheckMin.Value), Mathf.Max(0.1f, Plugin.HoldRecheckMax.Value)) * R;
@@ -225,14 +243,14 @@ namespace Apocaraider
                 {
                     if (now >= n.ModeUntil || !los || d < 3f)
                     {
-                        if (good) { SetMode(n, Mode.Hold, "at " + d.ToString("0") + " m" + (now >= n.ModeUntil ? "" : ", enough")); return; }
-                        SetMode(n, Mode.Chase, los ? "target at " + d.ToString("0") + " m" : "no line of sight");
+                        if (good) { SetMode(n, Mode.Hold, !Plugin.BrainLog.Value ? "" : "at " + d.ToString("0") + " m" + (now >= n.ModeUntil ? "" : ", enough")); return; }
+                        SetMode(n, Mode.Chase, !Plugin.BrainLog.Value ? "" : los ? "target at " + d.ToString("0") + " m" : "no line of sight");
                     }
                 }
-                else if (n.Mode == Mode.Chase && good)
+                else if (n.Mode == Mode.Chase && good && n.LosLooks >= 2)        // two thinks in a row: a fence bar flickering across the line doesn't stop and start the hold
                 {
                     n.NextRecheck = now + UnityEngine.Random.Range(Mathf.Max(0.1f, Plugin.HoldRecheckMin.Value), Mathf.Max(0.1f, Plugin.HoldRecheckMax.Value)) * R;
-                    SetMode(n, Mode.Hold, "line of sight at " + d.ToString("0") + " m (engages within " + engage.ToString("0") + ")");
+                    SetMode(n, Mode.Hold, !Plugin.BrainLog.Value ? "" : "line of sight at " + d.ToString("0") + " m (engages within " + engage.ToString("0") + ")");
                     return;
                 }
             }
@@ -277,6 +295,7 @@ namespace Apocaraider
         private static readonly float[] _free = new float[32];
         private static readonly Vector3[] _normals = new Vector3[32];
         private static readonly Collider[] _touch = new Collider[16];
+        private static readonly Vector3[] _touchAway = new Vector3[16];   // per touching collider: the horizontal direction from it to the body (unit), or zero
 
         private static void Steer(Npc n, Vector3 toTarget, float dist, float now, Vector3 toReal)
         {
@@ -323,9 +342,12 @@ namespace Apocaraider
                 touching = Physics.OverlapCapsuleNonAlloc(p1, p2, radius, _touch, mask, QueryTriggerInteraction.Ignore);
                 for (int k = 0; k < touching; k++)
                 {
-                    var c = _touch[k];
+                    var c = _touch[k]; _touchAway[k] = Vector3.zero;
                     if (c == null || c.transform.root == n.T || (troot != null && c.transform.root == troot)) { _touch[k] = null; continue; }
-                    if (Nav.IsFloorCollider(c) && c.ClosestPoint(origin).y <= feetY + 0.3f) { _touch[k] = null; continue; }      // the ground under the feet (terrain, a cave floor)
+                    Vector3 away; float awayY;
+                    if (!TouchDir(n, c, origin, out away, out awayY)) { _touch[k] = null; continue; }
+                    if (Nav.IsFloorCollider(c) && awayY <= feetY + 0.3f) { _touch[k] = null; continue; }      // the ground under the feet (terrain, a cave floor)
+                    _touchAway[k] = away;
                 }
             }
             for (int i = 0; i < count; i++)
@@ -335,11 +357,10 @@ namespace Apocaraider
                 float free = len; Vector3 normal = Vector3.zero;
                 for (int k = 0; k < touching; k++)
                 {
-                    var c = _touch[k];
-                    if (c == null) continue;
-                    Vector3 cp = c.ClosestPoint(origin); Vector3 away = origin - cp; away.y = 0f;
+                    if (_touch[k] == null) continue;
+                    Vector3 away = _touchAway[k];
                     if (away.sqrMagnitude < 0.0001f) continue;
-                    if (Vector3.Angle(dir, -away) < 70f) { free = 0f; normal = away.normalized; }
+                    if (Vector3.Angle(dir, -away) < 70f) { free = 0f; normal = away; }
                 }
                 if (free <= 0f) { _free[i] = 0f; _normals[i] = normal; _blocks[i] = 1f; continue; }
                 bool hitSomething = adv ? Physics.CapsuleCast(p1, p2, radius, dir, out hit, len, mask, QueryTriggerInteraction.Ignore)
@@ -356,10 +377,10 @@ namespace Apocaraider
                 { float fl0 = 0f, fr0 = 0f; for (int i = 0; i < count; i++) { if (_angles[i] < 0f) fl0 += _free[i]; else if (_angles[i] > 0f) fr0 += _free[i]; } n.FreeLeft = fl0; n.FreeRight = fr0; }
                 if (straightBlocked && !n.HasWaypoint && !n.OnNav && now >= n.NextScout)
                 {
-                    n.NextScout = now + 0.5f * R;
-                    if (Scout(n, origin, p1, p2, radius, mask, toReal, troot, now)) n.Side = 0;
+                    if (Scout(n, origin, p1, p2, radius, mask, toReal, troot, now)) { n.Side = 0; n.Flipped = false; n.NextScout = now + 0.5f * R; }
+                    else n.NextScout = now + 2.5f * R;        // nothing found: boxed in - don't burn 80 casts twice a second on it
                 }
-                if (n.HasWaypoint) { n.Side = 0; }
+                if (n.HasWaypoint) { n.Side = 0; n.Flipped = false; }
                 else if (n.Side == 0)
                 {
                     if (straightBlocked)
@@ -481,7 +502,7 @@ namespace Apocaraider
                     free = hit.distance;
                 // walk the free stretch from near to far: the first point with a clear line to the target is the corner
                 float reach = free - radius - 0.3f;
-                for (float along = 1.5f; along <= reach; along += 1.5f)
+                for (float along = 1.5f; along <= reach; along += 2.5f)
                 {
                     Vector3 end = origin + dir * along;
                     Vector3 toT = targetChest - (end + chestOff);
@@ -548,7 +569,7 @@ namespace Apocaraider
             Vector3 eye = n.Col != null ? n.Col.bounds.center + Vector3.up * n.Col.bounds.extents.y * 0.6f : n.T.position + Vector3.up * 1.5f;
             Vector3 chest = tp + Vector3.up * 1f;
             RaycastHit hit;
-            if (!Physics.Linecast(eye, chest, out hit, Mask, QueryTriggerInteraction.Ignore)) return true;
+            if (!Physics.Linecast(eye, chest, out hit, LosMask, QueryTriggerInteraction.Ignore)) return true;
             return hit.collider.transform.root == target.transform.root;
         }
 
@@ -562,10 +583,16 @@ namespace Apocaraider
             if (m == Mode.Off) { if (wasStill) Move(n, true); }
             else if (still && !wasStill) Move(n, false);
             else if (!still && wasStill) Move(n, true);
+            if (still) n.OnNav = false;
             if (m == Mode.Hold)
             {
                 Aim(n);
-                if (was != Mode.Hold && n.Ranged && Plugin.CrouchChance.Value > 0f && UnityEngine.Random.Range(0f, 100f) < Plugin.CrouchChance.Value) Crouch(n, true);
+                if (was != Mode.Hold && n.Ranged && Plugin.CrouchChance.Value > 0f)
+                {
+                    float t = Time.time;
+                    if (t - n.CrouchRolledAt > 5f) { n.CrouchRoll = UnityEngine.Random.Range(0f, 100f) < Plugin.CrouchChance.Value; n.CrouchRolledAt = t; }
+                    if (n.CrouchRoll) Crouch(n, true);
+                }
             }
             else { Unfreeze(n); Crouch(n, false); }
             if (Plugin.BrainLog.Value && (m != was))
@@ -759,13 +786,13 @@ namespace Apocaraider
         private static void OnStuck(Npc n)
         {
             float now = Time.time;
+            if (n.Mode == Mode.Hold || n.Mode == Mode.Rest || n.Mode == Mode.Search || n.Mode == Mode.BackUp || n.Mode == Mode.Off) return;   // standing still: the Unstuck FSM's "not moving" is no stuck
             if (n.OnNav)
             {
                 // stuck on a map route: this map is wrong here - steer without it for a while
                 n.NavOffUntil = now + 10f * R; n.OnNav = false;
                 if (Plugin.BrainLog.Value) Plugin.Log.LogInfo("Brain: " + n.Owner.name + " stuck on a map route, steers without the map for " + (10f * R).ToString("0") + " s");
             }
-            if (n.Mode == Mode.Hold || n.Mode == Mode.Rest || n.Mode == Mode.Search || n.Mode == Mode.BackUp || n.Mode == Mode.Off) return;
             if (now - n.FirstStuck > StuckWindow * R) { n.FirstStuck = now; n.Stucks = 0; }
             n.Stucks++;
             var target = n.Target != null ? n.Target.Value : null;
@@ -795,7 +822,7 @@ namespace Apocaraider
             if (Plugin.BrainLog.Value) LogAhead(n);
             if (TryHop(n, now)) return;
             n.ModeUntil = now + Mathf.Max(0.1f, Plugin.StuckBackupSeconds.Value) * R;
-            SetMode(n, Mode.BackUp, "stuck " + n.Stucks + "x, backs up");
+            SetMode(n, Mode.BackUp, Plugin.BrainLog.Value ? "stuck " + n.Stucks + "x, backs up" : "");
         }
 
         // Stuck on something low (a rock lip, a kerb, a pipe on the floor) with nothing above it: the game's own Unstuck would hop here (we
@@ -809,11 +836,47 @@ namespace Apocaraider
             float reach = Mathf.Min(b.extents.x, b.extents.z) + 0.45f;
             RaycastHit h;
             if (!Physics.Raycast(low, fwd, out h, reach, PathMask, QueryTriggerInteraction.Ignore) || h.collider.transform.root == n.T) return false;
+            if (h.normal.y >= Nav.WalkNormal || Nav.IsFloor(h.collider, h.normal, h.point.y, b.min.y)) return false;   // a slope the body walks up is no edge
             if (Physics.Raycast(knee, fwd, reach + 0.2f, PathMask, QueryTriggerInteraction.Ignore)) return false;      // something higher: not a hop
             n.LastHop = now;
             n.Rb.AddForce(Vector3.up * 3.2f + fwd * 1.5f, ForceMode.VelocityChange);
             if (Plugin.BrainLog.Value) Plugin.Log.LogInfo("Brain: " + n.Owner.name + " hops over a low edge (" + h.collider.name + ")");
             return true;
+        }
+
+        // The horizontal direction from a touching collider to the body. Collider.ClosestPoint only works for convex shapes: for a
+        // non-convex MeshCollider (cave rock, building walls) and terrain it returns the query point itself, so those use ComputePenetration
+        // against the NPC's own (convex) collider instead.
+        private static bool TouchDir(Npc n, Collider c, Vector3 origin, out Vector3 away, out float contactY)
+        {
+            away = Vector3.zero; contactY = origin.y;
+            var mc = c as MeshCollider;
+            bool convex = mc != null ? mc.convex : (c is BoxCollider || c is SphereCollider || c is CapsuleCollider);   // terrain (and anything else) -> penetration
+            if (convex)
+            {
+                Vector3 cp = c.ClosestPoint(origin);
+                contactY = cp.y;
+                away = origin - cp; away.y = 0f;
+                if (away.sqrMagnitude < 0.0001f) return false;
+                away.Normalize();
+                return true;
+            }
+            if (n.Col == null) return false;
+            Vector3 dir; float dist;
+            if (!Physics.ComputePenetration(n.Col, n.T.position, n.T.rotation, c, c.transform.position, c.transform.rotation, out dir, out dist)) return false;
+            contactY = origin.y - 0.5f;             // a wall pressed against the body: never counted as the floor under the feet
+            if (Mathf.Abs(dir.y) > 0.8f) { contactY = dir.y > 0f ? n.Col.bounds.min.y : origin.y; }   // pushed up = it is under the feet
+            away = dir; away.y = 0f;
+            if (away.sqrMagnitude < 0.0001f) return false;
+            away.Normalize();
+            return true;
+        }
+
+        // Aim decided to fire but the body is turned away (steering around something): face the target for a moment
+        internal static void FaceTarget(GameObject owner, float seconds)
+        {
+            var n = Get(owner);
+            if (n != null) n.FaceTargetUntil = Time.time + seconds;
         }
 
         // ---------- NPC registry ----------

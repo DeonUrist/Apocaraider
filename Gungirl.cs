@@ -31,7 +31,8 @@ namespace Apocaraider
         private static bool _texTried;
         private static readonly Dictionary<string, Mesh> _meshes = new Dictionary<string, Mesh>();   // per bone layout
         private static readonly HashSet<Mesh> _ours = new HashSet<Mesh>();
-        private static readonly Dictionary<int, Material> _mats = new Dictionary<int, Material>();
+        private static readonly Dictionary<string, Material> _mats = new Dictionary<string, Material>();   // by material name: per-instance copies share one
+        private static readonly HashSet<int> _dressed = new HashSet<int>();     // root ids already dressed (a skinned prop never re-enters Apply)
         private static GameObject _prefab;
         private static float _nextScan, _burstUntil;
 
@@ -80,7 +81,8 @@ namespace Apocaraider
                 GameObject go = store != null && !store.IsNone ? store.Value : null;
                 if (go == null) return;
                 var prefabVar = __instance.gameObject;
-                string pn = prefabVar != null && prefabVar.Value != null ? prefabVar.Value.name : go.name;
+                if (prefabVar == null || prefabVar.Value == null) return;
+                string pn = Senses.PrefabOf(prefabVar.Value);      // cached per prefab asset: no name string per spawn
 
                 if (IsFlexaCorpse(pn))
                 {
@@ -106,6 +108,7 @@ namespace Apocaraider
         {
             _burstUntil = Time.unscaledTime + 20f;     // scan quickly while a save is being restored
             _nextScan = 0f;
+            _dressed.Clear();
         }
 
         public static void Tick()
@@ -122,6 +125,7 @@ namespace Apocaraider
 
             float t = Time.unscaledTime;
             if (t < _nextScan) return;
+            if (Nav.Player() == null) { _nextScan = t + 1f; return; }   // menu / loading: nobody to dress yet
             _nextScan = t + (t < _burstUntil ? 0.5f : 5f);     // a safety net for loads without a scene change; FindObjectsOfType is not free
             try { Scan(); }
             catch (Exception e) { Plugin.Log.LogError("Scan: " + e); _nextScan = t + 10f; }
@@ -134,13 +138,15 @@ namespace Apocaraider
             {
                 var m = smr.sharedMesh;
                 if (m == null || _ours.Contains(m)) continue;
+                var bones = smr.bones;
+                if (bones == null || bones.Length < 10) continue;     // props, not bodies (Apply ignores them too)
                 Transform root = null; bool old = false;
                 for (var p = smr.transform; p != null; p = p.parent)
                 {
                     if (IsGungirlName(p.name) || IsGungirlCorpse(p.name)) { root = p; old = false; }
                     else if ((IsFlexa(p.name) || IsFlexaCorpse(p.name)) && IsOldMarked(p)) { root = p; old = true; }
                 }
-                if (root == null) continue;
+                if (root == null || _dressed.Contains(root.gameObject.GetInstanceID())) continue;
                 if (old) { Rename(root.gameObject); Plugin.Verbose("Gungirl: " + root.name + " converted from the old scale mark"); }
                 Apply(root.gameObject, "restored");
             }
@@ -162,7 +168,7 @@ namespace Apocaraider
                 swapped++;
             }
             int hidden = HideParts(root);
-            if (swapped > 0) { Voice.Apply(root); Label(root); }
+            if (swapped > 0) { Voice.Apply(root); Label(root); _dressed.Add(root.GetInstanceID()); }
             if (swapped > 0) Plugin.Verbose("Gungirl: " + root.name + " (" + why + ") body swapped, " + hidden + " part(s) hidden");
             return swapped > 0;
         }
@@ -323,12 +329,15 @@ namespace Apocaraider
         {
             if (orig == null) return null;
             Material m;
-            if (_mats.TryGetValue(orig.GetInstanceID(), out m) && m != null) return m;
-            m = new Material(orig) { name = orig.name + " (Gungirl)" };
+            string key = orig.name;
+            int cut = key.IndexOf(" (Instance)", StringComparison.Ordinal);
+            if (cut > 0) key = key.Substring(0, cut);
+            if (_mats.TryGetValue(key, out m) && m != null) return m;
+            m = new Material(orig) { name = key + " (Gungirl)" };
             var tex = Texture();
             if (tex != null) m.mainTexture = tex;
             m.hideFlags = HideFlags.DontUnloadUnusedAsset;
-            _mats[orig.GetInstanceID()] = m;
+            _mats[key] = m;
             return m;
         }
 

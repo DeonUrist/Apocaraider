@@ -41,7 +41,25 @@ namespace Apocaraider
             public readonly Dictionary<long, Field> Fields = new Dictionary<long, Field>();
         }
 
-        internal sealed class Field { public float[] Dist; public float Made; public bool GoalInside; }
+        internal sealed class Field { public float[] Dist; public float Made; public bool GoalInside; public int GoalCell; }
+        // distance arrays are big (W*H floats); fields that expire give theirs back here, Build takes one from here when it fits
+        private static readonly Dictionary<int, Stack<float[]>> _pool = new Dictionary<int, Stack<float[]>>();
+        private static float[] Rent(int n)
+        {
+            Stack<float[]> st;
+            if (_pool.TryGetValue(n, out st) && st.Count > 0) return st.Pop();
+            return new float[n];
+        }
+        private static void Return(Field f)
+        {
+            if (f == null || f.Dist == null) return;
+            Stack<float[]> st;
+            if (!_pool.TryGetValue(f.Dist.Length, out st)) _pool[f.Dist.Length] = st = new Stack<float[]>();
+            if (st.Count < 8) st.Push(f.Dist);
+            f.Dist = null;
+        }
+        private static readonly List<long> _expired = new List<long>();
+        internal static bool LogOn { get { return Plugin.BrainLog != null && Plugin.BrainLog.Value; } }
 
         private static readonly List<Structure> _structures = new List<Structure>();
         private static readonly HashSet<int> _known = new HashSet<int>();
@@ -57,16 +75,17 @@ namespace Apocaraider
 
         internal static bool On { get { return Plugin.NavEnabled != null && Plugin.NavEnabled.Value; } }
 
-        public static void OnSceneLoaded() { _structures.Clear(); _known.Clear(); _baking = null; _nextScan = 0f; _debug.Clear(); _floorCols.Clear(); _exits.Clear(); _relaxedFields.Clear(); }
+        public static void OnSceneLoaded() { _structures.Clear(); _known.Clear(); _baking = null; _nextScan = 0f; _debug.Clear(); _floorCols.Clear(); _exits.Clear(); _relaxedFields.Clear(); _pool.Clear(); _player = null; }
 
         // ---------- discovery + baking (per frame) ----------
         public static void Tick()
         {
             if (!On) return;
             float now = Time.unscaledTime;
-            if (now >= _nextScan) { _nextScan = now + 10f; Discover(); }
             var player = Player();
             if (player == null) return;
+            // structures spawned at run time arrive through Spawned() (the CreateObject hook); the full scene walk is a fallback once a minute
+            if (now >= _nextScan) { _nextScan = now + 60f; Discover(); }
             if (_baking == null && now >= _nextPick)
             {
                 _nextPick = now + 1f;
@@ -87,7 +106,7 @@ namespace Apocaraider
         }
 
         private static Transform _player; private static float _nextPlayer;
-        private static Transform Player()
+        internal static Transform Player()
         {
             if (_player == null && Time.unscaledTime >= _nextPlayer) { _nextPlayer = Time.unscaledTime + 2f; var g = GameObject.Find("Player"); _player = g != null ? g.transform : null; }
             return _player;
@@ -95,9 +114,18 @@ namespace Apocaraider
 
         // structures are found by name (Camp_N / Building_N / Cave_N, any "(Clone)" suffix) among the scene roots and their children
         private static readonly List<GameObject> _roots = new List<GameObject>();
+        // a structure instantiated at run time (MapMagic tiles spawn Camp_N / Cave_N prefabs with CreateObject): take it without a scene walk
+        internal static void Spawned(GameObject go)
+        {
+            if (go == null || !On || !IsStructure(go.name)) return;
+            Scan(go.transform, 0);
+        }
+
         private static void Discover()
         {
             int added = 0;
+            int gone = _structures.RemoveAll(s => s.Root == null);      // despawned camps: drop their grids and cached routes
+            if (gone > 0 && Plugin.NavLog.Value) Plugin.Log.LogInfo("Nav: " + gone + " structure(s) gone");
             for (int i = 0; i < SceneManager.sceneCount; i++)
             {
                 var sc = SceneManager.GetSceneAt(i);
@@ -382,6 +410,11 @@ namespace Apocaraider
         private static readonly List<int> _cand = new List<int>();
         private static int NearestReachable(Structure s, Vector3 pos, int x, int z, int r)
         {
+            if (x >= 0 && z >= 0 && x < s.W && z < s.H)
+            {
+                int own = z * s.W + x;
+                if (!float.IsNaN(s.FloorY[own]) && BigArea(s, own)) return own;      // the usual case: standing on a mapped cell
+            }
             _cand.Clear();
             for (int dz = -r; dz <= r; dz++)
                 for (int dx = -r; dx <= r; dx++)
@@ -474,19 +507,26 @@ namespace Apocaraider
         {
             next = goal; pathLeft = 0f; LastReason = "";
             if (!On) return false;
-            Structure s = null;
-            foreach (var t in _structures) if (t.Baked && t.FloorY != null && t.Root != null && Inside(t, pos)) { s = t; break; }
+            // footprints overlap (4 m margins): of the structures containing the NPC take the one whose floor is nearest its feet
+            Structure s = null; int from = -1; float bestDy = float.MaxValue;
+            foreach (var t in _structures)
+            {
+                if (!t.Baked || t.FloorY == null || t.Root == null || !Inside(t, pos)) continue;
+                int tx, tz; CellOf(t, pos, out tx, out tz);
+                int tf = NearestReachable(t, pos, tx, tz, 6);
+                if (tf < 0) { if (s == null) { s = t; } continue; }
+                float dy = Mathf.Abs(pos.y - t.FloorY[tf]);
+                if (dy < bestDy) { bestDy = dy; s = t; from = tf; }
+            }
             if (s == null) { LastReason = ""; return false; }
-            int x, z; CellOf(s, pos, out x, out z);
-            int from = NearestReachable(s, pos, x, z, 6);
-            if (from < 0) { LastReason = "no free map cell near it in " + s.Name; return false; }
-            if (Mathf.Abs(pos.y - s.FloorY[from]) > 2.5f) { LastReason = "not on the floor of " + s.Name; return false; }   // on the roof of a cave, on a rock above a camp: not on this map
+            if (from < 0) { LastReason = LogOn ? "no free map cell near it in " + s.Name : "-"; return false; }
+            if (bestDy > 2.5f) { LastReason = LogOn ? "not on the floor of " + s.Name : "-"; return false; }   // on the roof of a cave, on a rock above a camp: not on this map
             int gx, gz;
             bool goalInside = CellOf(s, goal, out gx, out gz);
             int goalCell = goalInside ? NearestWalkable(s, gx, gz, 4) : -1;
             if (goalInside && (goalCell < 0 || Mathf.Abs(goal.y - s.FloorY[goalCell]) > 3f)) goalInside = false;   // in a wall / above the map: outside
-            if (goalInside && GridSight(s, from, goalCell)) { LastReason = "straight line to the goal on the " + s.Name + " map"; return false; }  // straight across the floor: the feelers do the rest
-            if (!goalInside && IsEdge(s, from)) { LastReason = "at the edge of " + s.Name; return false; }             // already at the edge of the footprint: out we go
+            if (goalInside && GridSight(s, from, goalCell)) { LastReason = LogOn ? "straight line to the goal on the " + s.Name + " map" : "-"; return false; }  // straight across the floor: the feelers do the rest
+            if (!goalInside && IsEdge(s, from)) { LastReason = LogOn ? "at the edge of " + s.Name : "-"; return false; }             // already at the edge of the footprint: out we go
 
             var f = FieldFor(s, goal, goalInside, goalCell);
             float d0 = f.Dist[from];
@@ -498,11 +538,11 @@ namespace Apocaraider
                 // outside a building - and the feelers take it from there.
                 bool relaxed;
                 int exit = ExitCell(owner, s, from, goal, goalInside, goalCell, out relaxed);
-                if (exit < 0 || exit == from) { LastReason = "no way out of this spot on the " + s.Name + " map" + (exit == from ? " (already at the best open spot)" : ""); return false; }
+                if (exit < 0 || exit == from) { LastReason = LogOn ? "no way out of this spot on the " + s.Name + " map" + (exit == from ? " (already at the best open spot)" : "") : "-"; return false; }
                 if (relaxed) return RelaxedNext(owner, s, from, exit, pos, goal, out next, out pathLeft);
                 f = FieldFor(s, CellCenter(s, exit % s.W, exit / s.W, s.FloorY[exit]), true, exit);
                 d0 = f.Dist[from];
-                if (float.IsInfinity(d0)) { LastReason = "no way to the exit on the " + s.Name + " map"; return false; }
+                if (float.IsInfinity(d0)) { LastReason = LogOn ? "no way to the exit on the " + s.Name + " map" : "-"; return false; }
                 Vector3 ec = CellCenter(s, exit % s.W, exit / s.W, 0f);
                 d0 += new Vector2(goal.x - ec.x, goal.z - ec.z).magnitude;
                 if (GridSight(s, from, exit))
@@ -521,23 +561,26 @@ namespace Apocaraider
                 cur = nb;
                 if (GridSight(s, from, cur)) pick = cur; else break;
             }
-            if (pick == from) { int nb = Downhill(s, f, from); if (nb < 0) { LastReason = "no downhill cell on the " + s.Name + " map"; return false; } pick = nb; }
+            if (pick == from) { int nb = Downhill(s, f, from); if (nb < 0) { LastReason = LogOn ? "no downhill cell on the " + s.Name + " map" : "-"; return false; } pick = nb; }
             next = CellCenter(s, pick % s.W, pick / s.W, s.FloorY[pick]);
             Remember(owner, next, s);
             return true;
         }
 
         // ---------- the way out when the map can't reach the goal ----------
-        private sealed class ExitMemo { public int Exit; public float Until; public int GoalKey; public bool Relaxed; }
-        private static readonly Dictionary<int, ExitMemo> _exits = new Dictionary<int, ExitMemo>();
+        // The answer depends on the area the NPC is in and the goal, not on the NPC: one memo per (structure, area, goal bucket), 2 s
+        private sealed class ExitMemo { public int Exit; public float Until; public bool Relaxed; public Structure S; }
+        private static readonly Dictionary<long, ExitMemo> _exits = new Dictionary<long, ExitMemo>();
         private static int ExitCell(GameObject owner, Structure s, int from, Vector3 goal, bool goalInside, int goalCell, out bool exitRelaxed)
         {
             exitRelaxed = false;
-            int oid = owner != null ? owner.GetInstanceID() : 0;
             int gkey = Mathf.FloorToInt(goal.x / 4f) * 73856093 ^ Mathf.FloorToInt(goal.z / 4f) * 19349663;
+            int comp = s.Comp != null ? s.Comp[from] : from;
+            long mkey = ((long)s.Root.GetInstanceID() << 40) ^ ((long)(comp & 0xFFFFF) << 20) ^ (long)(gkey & 0xFFFFF);
             ExitMemo m;
             float now = Time.time;
-            if (_exits.TryGetValue(oid, out m) && now < m.Until && m.GoalKey == gkey && m.Exit >= 0 && m.Exit < s.W * s.H && !float.IsNaN(s.FloorY[m.Exit])) { exitRelaxed = m.Relaxed; return m.Exit; }
+            if (_exits.TryGetValue(mkey, out m) && m.S == s && now < m.Until && m.Exit >= 0 && m.Exit < s.W * s.H && !float.IsNaN(s.FloorY[m.Exit])) { exitRelaxed = m.Relaxed; return m.Exit; }
+            if (_exits.Count > 64) _exits.Clear();
             // distances from the NPC over its part of the map
             var mine = Build(s, goal, true, from);
             int n = s.W * s.H, best = -1, bestAny = -1, size = 0, open = 0; bool edge = false;
@@ -575,9 +618,11 @@ namespace Apocaraider
                     if (cost < rb) { rb = cost; ri = i; }
                 }
                 if (ri >= 0) { best = ri; relaxed = true; }
+                Return(rel);
             }
             if (best < 0) best = bestAny;
-            _exits[oid] = new ExitMemo { Exit = best, Until = now + 2f, GoalKey = gkey, Relaxed = relaxed };
+            _exits[mkey] = new ExitMemo { Exit = best, Until = now + 2f, Relaxed = relaxed, S = s };
+            Return(mine);
             if (Plugin.NavLog.Value)
                 Plugin.Log.LogInfo("Nav: " + (owner != null ? owner.name : "?") + " has no map route to its goal on " + s.Name + " (goal " + (goalInside ? "inside, cell " + (goalCell % s.W) + "," + (goalCell / s.W) : "outside the footprint")
                     + " at " + goal.x.ToString("0") + "," + goal.z.ToString("0") + "; its area " + size + " cells, " + open + " under open sky, " + (edge ? "reaches" : "does NOT reach") + " the outer ring ("
@@ -587,6 +632,7 @@ namespace Apocaraider
                 s.NextDump = now + 20f;
                 Dump(s, "noroute_" + (owner != null ? owner.name.Replace("(Clone)", "") : "npc"), from, goalInside ? goalCell : -1, best, mine.Dist);
             }
+            Return(mine);
             exitRelaxed = relaxed;
             return best;
         }
@@ -678,13 +724,14 @@ namespace Apocaraider
             Field f;
             if (!_relaxedFields.TryGetValue(key, out f) || Time.time - f.Made > 5f)
             {
-                if (_relaxedFields.Count > 32) _relaxedFields.Clear();
+                if (f != null) Return(f);
+                if (_relaxedFields.Count > 32) { foreach (var kv in _relaxedFields) Return(kv.Value); _relaxedFields.Clear(); }
                 _relax = true;
                 try { f = Build(s, goal, true, exit); }
                 finally { _relax = false; }
                 _relaxedFields[key] = f;
             }
-            if (float.IsInfinity(f.Dist[from])) { LastReason = "no relaxed way out on the " + s.Name + " map"; return false; }
+            if (float.IsInfinity(f.Dist[from])) { LastReason = LogOn ? "no relaxed way out on the " + s.Name + " map" : "-"; return false; }
             _relax = true;
             int pick = from;
             try
@@ -700,7 +747,7 @@ namespace Apocaraider
                 if (pick == from) { int nb = Downhill(s, f, from); if (nb >= 0) pick = nb; }
             }
             finally { _relax = false; }
-            if (pick == from) { LastReason = "no downhill cell on the relaxed " + s.Name + " map"; return false; }
+            if (pick == from) { LastReason = LogOn ? "no downhill cell on the relaxed " + s.Name + " map" : "-"; return false; }
             float y = float.IsNaN(s.FloorY[pick]) ? pos.y - 0.98f : s.FloorY[pick];
             next = CellCenter(s, pick % s.W, pick / s.W, y);
             Vector3 ec = CellCenter(s, exit % s.W, exit / s.W, 0f);
@@ -749,10 +796,21 @@ namespace Apocaraider
         private static Field FieldFor(Structure s, Vector3 goal, bool inside, int goalCell)
         {
             float now = Time.time;
-            long key = inside ? goalCell : (long)1 << 40 | (long)(Mathf.FloorToInt(goal.x / 4f) & 0xFFFFF) << 20 | (long)(Mathf.FloorToInt(goal.z / 4f) & 0xFFFFF);
+            // an inside goal is bucketed to 4 x 4 cells (2 m): a running target doesn't force a new Dijkstra every think; the cached field
+            // is kept while its goal cell is still within 2 cells of the real one (the feelers close the last metres anyway)
+            long key = inside ? ((long)(goalCell % s.W / 4) << 20) | (long)(goalCell / s.W / 4)
+                              : (long)1 << 40 | (long)(Mathf.FloorToInt(goal.x / 4f) & 0xFFFFF) << 20 | (long)(Mathf.FloorToInt(goal.z / 4f) & 0xFFFFF);
+            float life = Mathf.Max(0.2f, Plugin.NavFieldSeconds.Value);
             Field f;
-            if (s.Fields.TryGetValue(key, out f) && now - f.Made < Mathf.Max(0.2f, Plugin.NavFieldSeconds.Value)) return f;
-            if (s.Fields.Count > 32) s.Fields.Clear();
+            if (s.Fields.TryGetValue(key, out f) && now - f.Made < life && (!inside || f.GoalCell == goalCell || f.Dist[goalCell] <= s.Cell * 2.9f)) return f;
+            if (f != null) { Return(f); s.Fields.Remove(key); }
+            if (s.Fields.Count >= 16)
+            {
+                _expired.Clear();
+                foreach (var kv in s.Fields) if (now - kv.Value.Made >= life) _expired.Add(kv.Key);
+                foreach (var k in _expired) { Return(s.Fields[k]); s.Fields.Remove(k); }
+                if (s.Fields.Count >= 32) { foreach (var kv in s.Fields) Return(kv.Value); s.Fields.Clear(); }
+            }
             f = Build(s, goal, inside, goalCell);
             s.Fields[key] = f;
             return f;
@@ -762,7 +820,7 @@ namespace Apocaraider
         private static Field Build(Structure s, Vector3 goal, bool inside, int goalCell)
         {
             int n = s.W * s.H;
-            var dist = new float[n];
+            var dist = Rent(n);
             for (int i = 0; i < n; i++) dist[i] = float.PositiveInfinity;
             var heap = new Heap(Math.Max(64, n / 4));
             if (inside) { dist[goalCell] = 0f; heap.Push(goalCell, 0f); }
@@ -790,7 +848,7 @@ namespace Apocaraider
                         if (nd < dist[j]) { dist[j] = nd; heap.Push(j, nd); }
                     }
             }
-            return new Field { Dist = dist, Made = Time.time, GoalInside = inside };
+            return new Field { Dist = dist, Made = Time.time, GoalInside = inside, GoalCell = inside ? goalCell : -1 };
         }
 
         private static void Seed(Structure s, int x, int z, Vector3 goal, float[] dist, Heap heap)

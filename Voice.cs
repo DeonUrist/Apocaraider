@@ -39,8 +39,7 @@ namespace Apocaraider
 
         private static IEnumerator Load()
         {
-            _clips.Clear();
-            _ready.Clear();
+            _ready.Clear();     // clips already read by a load that was cut short (runner destroyed) are kept, not re-created
             string dir = Gungirl.ModPath(Plugin.GungirlVoice.Value);
             if (!Directory.Exists(dir))
             {
@@ -53,6 +52,7 @@ namespace Apocaraider
             foreach (var path in Directory.GetFiles(dir, "*.wav"))
             {
                 string name = Path.GetFileNameWithoutExtension(path);
+                if (_clips.ContainsKey(name)) { wavs++; continue; }
                 try
                 {
                     int ch, rate;
@@ -64,6 +64,7 @@ namespace Apocaraider
                     wavs++;
                 }
                 catch (Exception e) { failed.Add(Path.GetFileName(path) + " (" + e.Message + ")"); }
+                yield return null;      // one file per frame: no load hitch
             }
             foreach (var path in Directory.GetFiles(dir, "*.ogg"))
             {
@@ -79,6 +80,8 @@ namespace Apocaraider
                     if (clip == null || clip.length <= 0f) throw new InvalidDataException("not a readable Ogg Vorbis file");
                     clip.name = name;
                     clip.hideFlags = HideFlags.DontUnloadUnusedAsset;
+                    AudioClip old;
+                    if (_clips.TryGetValue(name, out old) && old != null && old != clip) UnityEngine.Object.Destroy(old);   // the .wav it replaces
                     _clips[name] = clip;
                     oggs++;
                 }

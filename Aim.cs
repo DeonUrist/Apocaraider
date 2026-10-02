@@ -37,7 +37,7 @@ namespace Apocaraider
         private static readonly Dictionary<int, State> _states = new Dictionary<int, State>();
         private static readonly Dictionary<RandomWait, WaitRefs> _waits = new Dictionary<RandomWait, WaitRefs>();
 
-        public static void OnSceneLoaded() { _states.Clear(); _waits.Clear(); }
+        public static void OnSceneLoaded() { _states.Clear(); _waits.Clear(); _targets.Clear(); }
 
         // drop entries of NPCs that no longer exist (the RandomWait action would keep its whole FSM alive)
         private static readonly List<RandomWait> _deadWaits = new List<RandomWait>();
@@ -52,6 +52,12 @@ namespace Apocaraider
                 _deadStates.Clear();
                 foreach (var kv in _states) if (kv.Value.Owner == null) _deadStates.Add(kv.Key);
                 foreach (var k in _deadStates) _states.Remove(k);
+            }
+            if (_targets.Count > 0)
+            {
+                _deadStates.Clear();
+                foreach (var kv in _targets) if (kv.Value.Owner == null) _deadStates.Add(kv.Key);
+                foreach (var k in _deadStates) _targets.Remove(k);
             }
         }
 
@@ -108,7 +114,7 @@ namespace Apocaraider
                 {
                     // the brain turns the body at a limited rate: no burst until it actually faces the target
                     float err = Brain.FacingError(owner);
-                    if (err > Mathf.Max(0f, Plugin.FacingTolerance.Value)) { hold = true; st.Turning = true; }
+                    if (err > Mathf.Max(0f, Plugin.FacingTolerance.Value)) { hold = true; st.Turning = true; Brain.FaceTarget(owner, 0.6f); }   // the brain turns the body to the target now (not the steered heading)
                 }
                 if (hold && Time.time - st.LastLog > 5f)
                 {
@@ -181,16 +187,25 @@ namespace Apocaraider
             return st;
         }
 
-        // The NPC's current target: Detection FSM variable detectedObj (what the Attack / Damage Ranged FSMs read too).
+        // The NPC's current target: Detection FSM variable detectedObj (what the Attack / Damage Ranged FSMs read too). The variable
+        // reference is cached per owner (looked up with GetComponents once, not per burst check).
+        private sealed class TargetRef { public GameObject Owner; public FsmGameObject Var; }
+        private static readonly Dictionary<int, TargetRef> _targets = new Dictionary<int, TargetRef>();
         internal static GameObject TargetOf(GameObject owner)
         {
+            int id = owner.GetInstanceID();
+            TargetRef tr;
+            if (_targets.TryGetValue(id, out tr) && tr.Owner == owner) return tr.Var != null ? tr.Var.Value : null;
+            FsmGameObject found = null;
             foreach (var f in owner.GetComponents<PlayMakerFSM>())
             {
-                if (f == null || f.FsmName != "Detection" || !f.Fsm.Initialized) continue;
-                var v = f.FsmVariables.GetFsmGameObject("detectedObj");
-                return v != null ? v.Value : null;
+                if (f == null || f.FsmName != "Detection" || f.Fsm == null || !f.Fsm.Initialized) continue;
+                found = f.FsmVariables.FindFsmGameObject("detectedObj");
+                break;
             }
-            return null;
+            if (found == null) return null;              // not initialised yet: look again next time
+            _targets[id] = new TargetRef { Owner = owner, Var = found };
+            return found.Value;
         }
     }
 }

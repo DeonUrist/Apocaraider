@@ -18,7 +18,7 @@ namespace Apocaraider
     {
         public const string GUID = "com.denis.apocalypter.apocaraider";
         public const string NAME = "Apocaraider";
-        public const string VERSION = "1.0.0";
+        public const string VERSION = "1.1.0";
 
         internal static ManualLogSource Log;
         internal static string Dir;
@@ -105,8 +105,8 @@ namespace Apocaraider
 
             ScaleWithActors = Config.Bind("Pathfinding", "ScaleWithActors", false, "With many NPCs around, each one thinks less often (saves CPU in big fights).");
 
-            VerboseLog = Config.Bind("Debug", "VerboseLog", false, "Detailed logs for every part of the mod (hits, detection, movement, maps) and map pictures in config/Apocaraider/NavDump.");
-            HitLog = NavLog = NavDump = SensesLog = BrainLog = VerboseLog;
+            VerboseLog = Config.Bind("Debug", "VerboseLog", false, "Detailed logs for every part of the mod (hits, detection, movement, maps).");
+            HitLog = NavLog = SensesLog = BrainLog = VerboseLog;
             ShowNav = Config.Bind("Debug", "ShowNavigation", false, "Draw the detection ghosts, NPC states and the structure maps' waypoints in the world.");
             ShowGhosts = ShowNav;
 
@@ -278,6 +278,7 @@ namespace Apocaraider
             NavMaxStep = H("Nav", "MaxStep", 0.25f, new ConfigDescription("Largest height step between neighbouring map cells (0.5 m apart) an NPC can walk, m. An NPC's body can't climb much more than a kerb.", new AcceptableValueRange<float>(0.1f, 2f)));
             NavBakeBudgetMs = H("Nav", "BakeBudgetMs", 1f, new ConfigDescription("CPU time per frame spent mapping a structure, ms.", new AcceptableValueRange<float>(0.2f, 10f)));
             NavFieldSeconds = H("Nav", "FieldSeconds", 1f, new ConfigDescription("How long a computed route to one goal is reused by every NPC heading there, s.", new AcceptableValueRange<float>(0.2f, 10f)));
+            NavDump = H("Debug", "NavDump", false, "Map pictures (BMP) in config/Apocaraider/NavDump - written synchronously, 0.5-4 MB each, so not part of VerboseLog.");
             SpawnKey = H("Debug", "SpawnKey", Key.F2,
                 "Spawns a Gungirl 6 m in front of you (a real raider: she fights and is saved). None = off.");
             DamageFontSize = H("Hud", "DamageFontSize", 14, new ConfigDescription("Font size of the damage numbers, px.", new AcceptableValueRange<int>(8, 40)));
@@ -360,7 +361,7 @@ namespace Apocaraider
 
     internal class Runner : MonoBehaviour
     {
-        private void Update() { Voice.EnsureLoading(this); Gungirl.Tick(); Tracers.Tick(); try { Senses.Tick(this); } catch (Exception e) { Plugin.Log.LogError("Senses: " + e); } try { Nav.Tick(); } catch (Exception e) { Plugin.Log.LogError("Nav: " + e); } Brain.Tick(); try { Bosses.Tick(); } catch (Exception e) { Plugin.Log.LogError("Bosses: " + e); } }
+        private void Update() { Voice.EnsureLoading(this); try { Gungirl.Tick(); } catch (Exception e) { Plugin.Log.LogError("Gungirl: " + e); } try { Tracers.Tick(); } catch (Exception e) { Plugin.Log.LogError("Tracers: " + e); } try { Senses.Tick(this); } catch (Exception e) { Plugin.Log.LogError("Senses: " + e); } try { Nav.Tick(); } catch (Exception e) { Plugin.Log.LogError("Nav: " + e); } Brain.Tick(); try { Bosses.Tick(); } catch (Exception e) { Plugin.Log.LogError("Bosses: " + e); } }
         private void LateUpdate() { try { Brain.LateTick(); } catch (Exception e) { Plugin.Log.LogError("Brain: " + e); } }
         private void OnGUI() { try { Hud.OnGUI(); } catch (Exception e) { Plugin.Log.LogError("Hud: " + e); } }
     }

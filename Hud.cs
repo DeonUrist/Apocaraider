@@ -93,7 +93,7 @@ namespace Apocaraider
             _pending.Clear();
         }
 
-        public static void OnSceneLoaded() { _pending.Clear(); _floaters.Clear(); _lines.Clear(); _markerUntil = 0f; }
+        public static void OnSceneLoaded() { _pending.Clear(); _floaters.Clear(); _lines.Clear(); _markerUntil = 0f; _markerHeadUntil = 0f; }
 
         private static void EnsureStyles()
         {

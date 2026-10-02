@@ -99,7 +99,7 @@ walls, instead of feeling its way and running into a dead end; when the map can'
 open (a cave mouth, a building's door) and the feelers take over. The surfaces the maps find to be floor (a cave's rock floor, a camp
 deck) count as ground for the feelers too, as long as they are no steeper than about 37 degrees and no higher than a kerb (0.25 m) where the
 body meets them; a lower step limit and a knee-low wall check keep routes off rock lips, and an NPC stuck on something low hops over it. Outside structures nothing changes. `[Nav] Enabled = false` turns it
-off; `[Debug] ShowNav` shows the mapping state and each NPC's next map waypoint; `[Debug] NavDump` saves the maps as pictures.
+off; `[Debug] ShowNav` shows the mapping state and each NPC's next map waypoint; the hidden `[Debug] NavDump` (code default off) saves the maps as pictures.
 
 ## Install
 
@@ -125,7 +125,7 @@ BepInEx\plugins\Apocaraider\Sounds\Gungirl\*.wav / *.ogg
   AdjustHumanBossHP (40 %: Duke Ironjaw and Buzzgut).
 - **[Detection]** PlayerShoutKey + PlayerShoutKeyModifier (Alt+Q), SightCone, SightRange, DarkSightRange, MuffleSounds.
 - **[Pathfinding]** ScaleWithActors.
-- **[Debug]** VerboseLog (every log of the mod, and map pictures in `config\Apocaraider\NavDump`), ShowNavigation (ghosts, NPC states
+- **[Debug]** VerboseLog (every log of the mod), ShowNavigation (ghosts, NPC states
   and map waypoints drawn in the world).
 
 Everything else (Gungirl looks and voice, tracer colours, weapon ranges, aim pacing, movement, hearing ranges, maps) is fixed in

@@ -75,6 +75,9 @@ namespace Apocaraider
         private static readonly List<int> _dead = new List<int>();
         private static readonly List<Agent> _scratch = new List<Agent>();
         private static int _nextGhostId = 1, _created;
+        private static float _nextIgnoredClear;
+        private static readonly HashSet<string> _presentTags = new HashSet<string>();   // factions with a registered NPC (Look skips the NPC loop when none is hostile)
+        private static readonly Dictionary<int, string> _prefabOf = new Dictionary<int, string>();
         private static float _nextMaint, _nextEngine, _nextLightLog, _lightCache, _lightAt = -10f;
         private static GameObject _player, _playerHead, _playerCar; private static Transform _flashlight; private static float _nextPlayerFind;
         private static PlayMakerFSM _inCarFsm, _grabFsm; private static FsmGameObject _inCarVar, _grabItemVar; private static string _grabState;
@@ -87,7 +90,7 @@ namespace Apocaraider
         public static void OnSceneLoaded()
         {
             foreach (var g in _ghosts) if (g.Obj != null) UnityEngine.Object.Destroy(g.Obj);
-            _ghosts.Clear(); _agents.Clear(); _ignored.Clear();
+            _ghosts.Clear(); _agents.Clear(); _ignored.Clear(); _hpOf.Clear(); _prefabOf.Clear(); _presentTags.Clear(); Nwh.Clear();
             _player = null; _playerHead = null; _playerCar = null; _flashlight = null; _inCarFsm = null; _grabFsm = null; _thrown = null;
             Persist.ResetForScene();
         }
@@ -100,7 +103,7 @@ namespace Apocaraider
             if (now >= _nextMaint)
             {
                 _nextMaint = now + 1f;
-                _dead.Clear();
+                _dead.Clear(); _presentTags.Clear();
                 foreach (var kv in _agents)
                 {
                     var a = kv.Value;
@@ -108,16 +111,19 @@ namespace Apocaraider
                     else
                     {
                         if (!on && a.SensorsOff) Sensors(a, true);
+                        else if (on && !a.SensorsOff) Sensors(a, false);        // switched back on: the game's sensors go quiet again
                         if (a.PlayerIsEnemy != null) Relation(a, true);
+                        _presentTags.Add(a.Tag);
                     }
                 }
                 foreach (var k in _dead) _agents.Remove(k);
+                if (now >= _nextIgnoredClear) { _nextIgnoredClear = now + 120f; _ignored.Clear(); }   // ids of parented / unfinished NPCs: re-evaluated, never kept for the whole session
                 if (_handover.Count > 0) { _dead.Clear(); foreach (var kv in _handover) if (now - kv.Value.Value > 30f) _dead.Add(kv.Key); foreach (var k in _dead) _handover.Remove(k); }
                 for (int i = _ghosts.Count - 1; i >= 0; i--)
                 {
                     var g = _ghosts[i];
                     g.Holders.RemoveAll(h => h.Owner == null);
-                    if (g.Holders.Count == 0 || now - g.Born > 600f) KillGhost(i);
+                    if (g.Holders.Count == 0 || now - g.Moved > 600f) KillGhost(i);     // nobody wants it, or no news about it for 10 min
                 }
                 FindPlayer();
             }
@@ -165,13 +171,14 @@ namespace Apocaraider
             {
                 if (Visible(a, eye, _player, true)) { best = _player; bestD = (_player.transform.position - a.T.position).sqrMagnitude; if (a.Target == _player) currentVisible = true; }
             }
-            if (!currentVisible)
+            if (!currentVisible && HostileNpcAround(a))
             {
+                Vector3 ap = a.T.position;
                 foreach (var kv in _agents)
                 {
                     var b = kv.Value;
-                    if (b == a || b.Owner == null || !a.Hostile.Contains(b.Tag)) continue;
-                    float d2 = (b.T.position - a.T.position).sqrMagnitude;
+                    if (b == a || !a.Hostile.Contains(b.Tag) || b.Owner == null) continue;
+                    float d2 = (b.T.position - ap).sqrMagnitude;
                     if (d2 > d2max || (d2 >= bestD && b.Owner != a.Target)) continue;
                     if (!Visible(a, eye, b.Owner, false)) continue;
                     if (b.Owner == a.Target) { best = b.Owner; currentVisible = true; break; }
@@ -194,6 +201,12 @@ namespace Apocaraider
                 a.UnseenFor += interval;
                 if (a.State == State.Combat && a.UnseenFor > Mathf.Max(0f, Plugin.LoseSeconds.Value)) LoseTarget(a, now);
             }
+        }
+
+        private static bool HostileNpcAround(Agent a)
+        {
+            foreach (var t in a.Hostile) if (t != "Player" && _presentTags.Contains(t)) return true;
+            return false;
         }
 
         private static bool Visible(Agent a, Vector3 eye, GameObject target, bool isPlayer)
@@ -379,7 +392,7 @@ namespace Apocaraider
             if (a.Ghost == g)
             {
                 if (Rank(prio) > Rank(a.GhostPrio)) a.GhostPrio = prio;
-                if (a.State == State.Search) { a.State = State.Investigate; Budget(a, g); }
+                if (a.State != State.Investigate) { a.State = State.Investigate; Budget(a, g); }   // Search, or Idle after Arrived() re-made the ghost it holds
                 return true;
             }
             if (a.Ghost != null)
@@ -397,7 +410,6 @@ namespace Apocaraider
         // time allowed to reach a ghost before searching from wherever the NPC got to (unreachable spots, a cave with no way out)
         private static void Budget(Agent a, Ghost g)
         {
-            float d = Vector3.Distance(a.T.position, g.Pos);
             a.InvestigateUntil = Time.time + Mathf.Max(5f, Plugin.GhostTimeout.Value);
             a.InvestigateSince = Time.time;
         }
@@ -447,7 +459,12 @@ namespace Apocaraider
         private static void KillGhost(int i)
         {
             var g = _ghosts[i];
-            foreach (var h in g.Holders) { if (h.Ghost == g) { h.Ghost = null; if (h.State == State.Investigate || h.State == State.Search) h.State = State.Idle; } }
+            foreach (var h in g.Holders)
+            {
+                if (h.Ghost != g) continue;
+                h.Ghost = null; h.GhostPrio = Src.None;
+                if (h.State == State.Investigate || h.State == State.Search) { h.State = State.Idle; h.SeenFor = 0f; h.Heard.RemoveWhere(x => x < 0); }
+            }
             g.Holders.Clear();
             if (g.Obj != null) UnityEngine.Object.Destroy(g.Obj);
             _ghosts.RemoveAt(i);
@@ -520,7 +537,8 @@ namespace Apocaraider
         {
             if (!On) return;
             float radius = player ? PlayerShotRange(kind) : NpcShotRange(shooter, kind);
-            Noise(shooter, pos, radius, Src.Gunshot, (player ? "player" : Name(shooter)) + " " + kind.ToString().ToLowerInvariant(), null, null, shooter);
+            string about = Plugin.SensesLog.Value || Plugin.ShowGhosts.Value ? (player ? "player" : Name(shooter)) + " " + kind.ToString().ToLowerInvariant() : "gunshot";
+            Noise(shooter, pos, radius, Src.Gunshot, about, null, null, shooter);
         }
 
         private static float PlayerShotRange(Tracers.Kind k)
@@ -551,7 +569,7 @@ namespace Apocaraider
                 }
             }
             float r;
-            if (shooter != null && _npcShot.TryGetValue(Prefab(shooter.name), out r)) return r;
+            if (shooter != null && _npcShot.TryGetValue(PrefabOf(shooter), out r)) return r;
             return PlayerShotRange(k);
         }
 
@@ -565,19 +583,23 @@ namespace Apocaraider
         {
             try
             {
-                if (!On || Plugin.BlastRange.Value <= 0f || __instance.gameObject == null) return;
+                if (__instance.gameObject == null) return;
                 var prefab = __instance.gameObject.Value;
                 if (prefab == null) return;
+                string pname = PrefabOf(prefab);        // prefab assets are few: cached, so this hook costs no string per spawn
+                var made = __instance.storeObject != null ? __instance.storeObject.Value : null;
+                if (made != null && Nav.On && pname.Length > 5 && (pname[0] == 'C' || pname[0] == 'B')) Nav.Spawned(made);   // Camp_N / Cave_N / Building_N
+                if (made != null && pname.Length > 6 && (pname[0] == 'D' || pname[0] == 'B')) Bosses.Spawned(made, pname);                     // Duke_Ironjaw / Buzzgut
+                if (!On || Plugin.BlastRange.Value <= 0f) return;
                 string cfg = Plugin.BlastPrefabs.Value ?? "";
                 if (_blastNames == null || _blastSrc != cfg)
                 {
                     _blastSrc = cfg; _blastNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                     foreach (var part in cfg.Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries)) _blastNames.Add(part.Trim());
                 }
-                if (!_blastNames.Contains(Prefab(prefab.name))) return;
+                if (!_blastNames.Contains(pname)) return;
                 Vector3 pos;
-                var made = __instance.storeObject != null ? __instance.storeObject.Value : null;
-                if (made != null && Prefab(made.name) == Prefab(prefab.name)) pos = made.transform.position;
+                if (made != null && Prefab(made.name) == pname) pos = made.transform.position;
                 else
                 {
                     var sp = __instance.spawnPoint != null ? __instance.spawnPoint.Value : null;
@@ -620,7 +642,7 @@ namespace Apocaraider
                 Ghost shared = tg;
                 // a shout is not a ghost of its own: it passes on what the shouter knows - what it sees (a VISION ghost at the target) or the
                 // very ghost it is going to, at that ghost's rank (a gunshot it is checking stays a GUNSHOT)
-                if (shared == null) { shared = GetOrMake(Src.Vision, where, t.Target, Name(t.Owner) + " saw " + Name(t.Target), 4f, 1f, now); shared.Subject = t.Target; }
+                if (shared == null) { shared = GetOrMake(Src.Vision, where, t.Target, Name(t.Owner) + " saw " + Name(t.Target), 4f, 15f, now); shared.Subject = t.Target; }   // one ghost per sighting: shouts (every few s) refresh it instead of minting new ones
                 Src relay = tg == null ? Src.Vision : t.GhostPrio;
                 int told = 0;
                 foreach (var kv in _agents)
@@ -631,6 +653,7 @@ namespace Apocaraider
                     // a ghost acquired once (from a shout or any other way) is never re-sent by a shout: it would wake a searching NPC
                     // back to investigating the same spot again and again while its friends keep shouting
                     if (f.Ghost == shared || f.Heard.Contains(shared.Id)) continue;
+                    if (f.Ghost != null && f.Ghost.Subject != null && f.Ghost.Subject == shared.Subject && (f.Ghost.Pos - shared.Pos).sqrMagnitude < 16f) continue;   // already knows the same thing
                     if (Assign(f, shared, relay, now)) { told++; f.Heard.Add(shared.Id); }
                 }
                 if (shared != tg && shared.Holders.Count == 0) { int i = _ghosts.IndexOf(shared); if (i >= 0) KillGhost(i); }
@@ -803,7 +826,25 @@ namespace Apocaraider
             float speed = rb != null ? rb.velocity.magnitude : 0f;
             float thr = Nwh.Throttle(car);
             if (speed < 1.5f && thr < 0.05f) radius *= Mathf.Clamp01(Plugin.EngineIdleFactor.Value / 100f);
-            Noise(car, car.transform.position, radius, Src.Engine, "engine " + (hp > 0f ? hp + " HP" : "") , null, null, _player);
+            Vector3 cpos = car.transform.position;
+            Noise(car, cpos, radius, Src.Engine, "engine " + (hp > 0f ? hp + " HP" : "") , null, null, _player);
+            // the engine ghost is one shared ghost that moves with the car and is refreshed every tick: an NPC that drove out of earshot
+            // would follow it for ever - let go of it where the NPC stands
+            foreach (var g in _ghosts)
+            {
+                if (g.Src != Src.Engine || g.Source != car) continue;
+                _scratch.Clear();
+                foreach (var h in g.Holders) if (h.Owner == null || (h.T.position - cpos).sqrMagnitude > radius * radius * 1.3f) _scratch.Add(h);
+                foreach (var h in _scratch)
+                {
+                    if (h.Owner == null) { g.Holders.Remove(h); continue; }
+                    Log(h, "lost the engine sound, searches here");
+                    h.Ghost = null; h.GhostPrio = Src.None; g.Holders.Remove(h);
+                    h.State = State.Search; h.SearchUntil = now + Mathf.Max(0f, Plugin.SearchSeconds.Value);
+                }
+                if (g.Holders.Count == 0) { int i = _ghosts.IndexOf(g); if (i >= 0) KillGhost(i); }
+                break;
+            }
         }
 
         private static bool Apocapatrol_EngineRunning(GameObject car) { return Nwh.EngineRunning(car); }
@@ -1138,6 +1179,16 @@ namespace Apocaraider
 
         private static string Name(GameObject go) { return go == null ? "?" : (go == _player ? "the player" : Prefab(go.name)); }
         private static string Prefab(string n) { int c = n.IndexOf('('); return c > 0 ? n.Substring(0, c) : n; }
+        // the prefab name of an object, read once (GameObject.name is a native call + a new string every time)
+        internal static string PrefabOf(GameObject go)
+        {
+            int id = go.GetInstanceID(); string n;
+            if (_prefabOf.TryGetValue(id, out n)) return n;
+            n = Prefab(go.name);
+            if (_prefabOf.Count > 4096) _prefabOf.Clear();
+            _prefabOf[id] = n;
+            return n;
+        }
 
         private static void Log(Agent a, string s)
         {
@@ -1178,6 +1229,7 @@ namespace Apocaraider
         private static class Nwh
         {
             private static readonly Dictionary<int, object[]> _h = new Dictionary<int, object[]>();   // car id -> { engine, input }
+            internal static void Clear() { _h.Clear(); }
             private static object[] Of(GameObject car)
             {
                 object[] h;
@@ -1213,9 +1265,10 @@ namespace Apocaraider
         // after a load once the NPCs (found by their saved names) are back. NPC names are unique per world (the Health FSM numbers them).
         private static class Persist
         {
-            private static PlayMakerFSM _saveLoad; private static string _lastState, _loadSlot; private static float _nextScan; private static bool _restoring;
+            private static PlayMakerFSM _saveLoad; private static string _lastState, _loadSlot; private static float _nextScan; private static bool _restoring, _loadPending;
+            private static int _gen;        // bumped by every reset / clear / new load: a running Restore sees it and stops
 
-            internal static void ResetForScene() { _saveLoad = null; _lastState = null; _loadSlot = null; _restoring = false; _nextScan = 0f; }
+            internal static void ResetForScene() { _saveLoad = null; _lastState = null; _loadSlot = null; _restoring = false; _loadPending = false; _nextScan = 0f; _gen++; }
 
             internal static void Tick(MonoBehaviour runner)
             {
@@ -1232,9 +1285,16 @@ namespace Apocaraider
                 try
                 {
                     if (state == "SaveGame") Save(Slot());
-                    if (state == "LoadGame") _loadSlot = Slot();
+                    if (state == "LoadGame") { _loadSlot = Slot(); _loadPending = true; _gen++; _restoring = false; }   // a new load cancels a restore in progress
                     if (state == "setSeed") Clear();
-                    if (state == "isPlay" && !string.IsNullOrEmpty(_loadSlot) && !_restoring) { string s = _loadSlot; _loadSlot = null; runner.StartCoroutine(Restore(s)); }
+                    if (state == "isPlay" && _loadPending && !_restoring)
+                    {
+                        _loadPending = false;
+                        // the slot read while loading can be stale (SaveFile may still name the previous slot): read it again now that the game is in play
+                        string s = Slot(); if (string.IsNullOrEmpty(s)) s = _loadSlot;
+                        _loadSlot = null;
+                        if (!string.IsNullOrEmpty(s)) runner.StartCoroutine(Restore(s));
+                    }
                 }
                 catch (Exception e) { Plugin.Log.LogError("Senses persistence: " + e); }
             }
@@ -1258,7 +1318,8 @@ namespace Apocaraider
 
             private static void Clear()
             {
-                foreach (var kv in _agents) { var a = kv.Value; a.State = State.Idle; a.Target = null; a.Ghost = null; }
+                _gen++;
+                foreach (var kv in _agents) { var a = kv.Value; a.State = State.Idle; a.Target = null; a.Ghost = null; a.GhostPrio = Src.None; a.Heard.Clear(); }
                 for (int i = _ghosts.Count - 1; i >= 0; i--) KillGhost(i);
             }
 
@@ -1299,7 +1360,10 @@ namespace Apocaraider
                 string[] lines;
                 try { lines = File.ReadAllLines(path); } catch (Exception e) { Plugin.Log.LogWarning("Senses: cannot read " + path + ": " + e.Message); _restoring = false; yield break; }
                 if (lines.Length == 0 || !lines[0].StartsWith("v1 ")) { _restoring = false; yield break; }
+                if (!string.Equals(lines[0].Substring(3).Trim(), Path.GetFileName(slot), StringComparison.OrdinalIgnoreCase))
+                { Plugin.Log.LogWarning("Senses: " + path + " was written for another slot, not restored"); _restoring = false; yield break; }
                 Clear();
+                int gen = _gen;
                 _nextPlayerFind = 0f; FindPlayer();
                 var ci = CultureInfo.InvariantCulture;
                 var ghostById = new Dictionary<int, Ghost>();
@@ -1358,6 +1422,7 @@ namespace Apocaraider
                         catch (Exception e) { Plugin.Log.LogWarning("Senses: restore of " + p[1] + " failed: " + e.Message); }
                     }
                     if (pending.Count > 0) yield return new WaitForSecondsRealtime(0.5f);
+                    if (gen != _gen) { Plugin.Verbose("Senses: restore of " + Path.GetFileName(slot) + " cancelled"); _restoring = false; yield break; }   // a new load / reset happened meanwhile
                 }
                 for (int i = _ghosts.Count - 1; i >= 0; i--) if (_ghosts[i].Holders.Count == 0) KillGhost(i);
                 Plugin.Verbose("Senses: restored " + restored + " alert NPC(s), " + _ghosts.Count + " ghost(s) from " + Path.GetFileName(slot) + (pending.Count > 0 ? "; " + pending.Count + " NPC(s) not found" : ""));

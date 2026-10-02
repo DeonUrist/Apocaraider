@@ -32,7 +32,7 @@ namespace Apocaraider
             public float Speed, Range, Damage, Travelled;
             public GameObject Target, ShooterRoot;
             public GameObject Impact;
-            public string EventName;
+            public string EventName, EventFsm;
             public bool Bolt, Shotgun, Alive;
             public int Layers, DetectLayers;
             public PlayerGun Gun;            // non-null: the player's shot (first collider it meets is hit, like the vanilla camera ray)
@@ -67,7 +67,9 @@ namespace Apocaraider
             public float DamageLiteral;
             public float LeadSkill = 1f;    // this NPC's share of [NpcAim] LeadAccuracy (0.5..1, rolled once)
             public string EventName = "Damage";
+            public string EventFsm;         // the vanilla SendEvent's named FSM (null = every FSM on the object, as PlayMaker broadcasts)
             public string BodypartFsm = "Bodypart", BodypartVar = "Damage";
+            public float Retry;             // no weapon found: look again after this time (the gun model may be inactive for a frame)
         }
 
         private static readonly List<Shot> _shots = new List<Shot>(256);
@@ -154,7 +156,7 @@ namespace Apocaraider
                         Cap = cap0,
                         ShooterRoot = owner.transform.root.gameObject,
                         Impact = info.Impact,
-                        EventName = info.EventName,
+                        EventName = info.EventName, EventFsm = info.EventFsm,
                         Bolt = info.Kind == Kind.Crossbow,
                         Shotgun = info.Kind == Kind.Shotgun,
                         Alive = true,
@@ -183,7 +185,7 @@ namespace Apocaraider
             _counts.Clear();
             _rangedHit = null; _metalImpact = null; _effectsLooked = false;
             _carRoots.Clear();
-            _isPart.Clear(); _headMul.Clear();
+            _isPart.Clear(); _headMul.Clear(); _health.Clear();
             _reported.Clear();
             Hud.OnSceneLoaded();
             Aim.OnSceneLoaded();
@@ -419,8 +421,7 @@ namespace Apocaraider
             var vp = fsm.Variables.GetFsmVector3("hitPoint"); if (vp != null) vp.Value = h.point;
             var vn = fsm.Variables.GetFsmVector3("hitNormal"); if (vn != null) vn.Value = h.normal;
             // vehicle parts carry a Bodypart FSM too (their condition): not a creature - no hurt ghost, no white/red number (the part rule shows blue)
-            var owningPart = OwningPart(go.transform);
-            bool isPart = IsVehiclePart(go) || (owningPart != null && IsVehiclePart(owningPart.gameObject)) || go.CompareTag("vehPartRemoved");
+            bool isPart = OwningPart(go.transform) != null || go.CompareTag("vehPartRemoved") || IsVehiclePart(go);   // the same test HitWorld uses (a vehPart-tagged ancestor)
             bool creature = !isPart && (HasBodypart(go) || HasBodypart(go.transform.root.gameObject));
             if (creature) Senses.Hurt(go, s.Player);
             bool feedback = creature && Plugin.HudEnabled.Value && (Plugin.DamageNumbers.Value != 0 || Plugin.HitMarker.Value);
@@ -564,8 +565,8 @@ namespace Apocaraider
         {
             ShooterInfo info;
             int id = owner.GetInstanceID();
-            if (_shooters.TryGetValue(id, out info) && (info.Weapon == null || info.Weapon.gameObject.activeInHierarchy)) return info;
-            info = new ShooterInfo { Owner = owner, LeadSkill = UnityEngine.Random.Range(0.5f, 1f) };
+            if (_shooters.TryGetValue(id, out info) && (info.Weapon != null ? info.Weapon.gameObject.activeInHierarchy : Time.time < info.Retry)) return info;
+            info = new ShooterInfo { Owner = owner, LeadSkill = UnityEngine.Random.Range(0.5f, 1f), Retry = Time.time + 1f };
             _shooters[id] = info;
 
             // the weapon in the hand: a model with a fire_effect child (guns) or an active "crossbow"
@@ -597,7 +598,12 @@ namespace Apocaraider
                         if (sf.variableName != null && !string.IsNullOrEmpty(sf.variableName.Value)) info.BodypartVar = sf.variableName.Value;
                     }
                     var se = a as SendEvent;
-                    if (se != null && se.sendEvent != null && !string.IsNullOrEmpty(se.sendEvent.Name)) info.EventName = se.sendEvent.Name;
+                    if (se != null && se.sendEvent != null && !string.IsNullOrEmpty(se.sendEvent.Name))
+                    {
+                        info.EventName = se.sendEvent.Name;
+                        var et = se.eventTarget;
+                        info.EventFsm = et != null && et.target == FsmEventTarget.EventTarget.GameObjectFSM && et.fsmName != null && !string.IsNullOrEmpty(et.fsmName.Value) ? et.fsmName.Value : null;
+                    }
                 }
             if (info.DamageVar == null) info.DamageLiteral = -7f;
 
@@ -608,7 +614,7 @@ namespace Apocaraider
                 var rs = ray.GetComponent<Micosmo.SensorToolkit.RaySensor>();
                 if (rs != null) { info.ObstructLayers = rs.ObstructedByLayers.value; info.DetectLayers = rs.DetectsOnLayers.value; }
             }
-            Plugin.Verbose("Tracers: " + owner.name + " fires " + info.Kind + " (" + info.Weapon.name + "), damage " +
+            if (Plugin.VerboseLog.Value) Plugin.Verbose("Tracers: " + owner.name + " fires " + info.Kind + " (" + info.Weapon.name + "), damage " +
                            (info.DamageVar != null ? info.DamageVar.Value : info.DamageLiteral) + ", impact " + (info.Impact != null ? info.Impact.name : "none"));
             return info;
         }
@@ -658,12 +664,21 @@ namespace Apocaraider
         }
 
         // [Debug] HitLog: the Health of the thing hit (its root's Health FSM), before and after
+        // the creature's Health variable, found once per root (a full hierarchy scan) and cached by root object
+        private sealed class HealthRef { public GameObject Root; public FsmFloat Var; }
+        private static readonly Dictionary<int, HealthRef> _health = new Dictionary<int, HealthRef>();
         private static float HealthOf(GameObject go)
         {
             if (go == null) return float.NaN;
-            foreach (var f in go.transform.root.GetComponentsInChildren<PlayMakerFSM>())
-                if (f.FsmName == "Health") { var v = f.FsmVariables.GetFsmFloat("Health"); if (v != null) return v.Value; }
-            return float.NaN;
+            var root = go.transform.root.gameObject;
+            int id = root.GetInstanceID();
+            HealthRef hr;
+            if (_health.TryGetValue(id, out hr) && hr.Root == root) return hr.Var != null ? hr.Var.Value : float.NaN;
+            hr = new HealthRef { Root = root };
+            foreach (var f in root.GetComponentsInChildren<PlayMakerFSM>())
+                if (f.FsmName == "Health") { var v = f.FsmVariables.FindFsmFloat("Health"); if (v != null) { hr.Var = v; break; } }
+            _health[id] = hr;
+            return hr.Var != null ? hr.Var.Value : float.NaN;
         }
 
         internal static float RangeOf(Kind k)
@@ -771,7 +786,8 @@ namespace Apocaraider
             float dt = Time.deltaTime;
             Snapshot();
             if (_meleeWheels.Count > 0) { try { CheckMeleeWheels(); } catch (Exception e) { Plugin.Log.LogError("Tracers melee: " + e); _meleeWheels.Clear(); } }
-            if (dt <= 0f) { Draw(); return; }   // paused: keep drawing, don't move
+            if (dt <= 0f) { if (!_drawnPaused) { Draw(); _drawnPaused = true; } return; }   // paused: the mesh is drawn once and left as it is
+            _drawnPaused = false;
             if (Plugin.LeadTargets.Value) TrackPlayer(dt);
             for (int i = _shots.Count - 1; i >= 0; i--)
             {
@@ -794,8 +810,8 @@ namespace Apocaraider
                 {
                     var go = _popped[i].Key;
                     var rb = go != null ? go.GetComponent<Rigidbody>() : null;
-                    if (rb != null && go.transform.parent == null) { rb.AddForce(_popped[i].Value, ForceMode.VelocityChange); _popped.RemoveAt(i); }
-                    else if (go == null) _popped.RemoveAt(i);
+                    if (rb != null && go.transform.parent == null) { rb.AddForce(_popped[i].Value, ForceMode.VelocityChange); _popped.RemoveAt(i); _forceFree.Remove(go); }
+                    else if (go == null) { _popped.RemoveAt(i); _forceFree.RemoveWhere(g => g == null); }
                     else if (Time.frameCount > _poppedFrame + 30 && !_forceFree.Contains(go)) _popped.RemoveAt(i);
                     else if (Time.frameCount > _poppedFrame + 30)
                     {
@@ -822,6 +838,12 @@ namespace Apocaraider
             _dead.Clear();
             foreach (var kv in _heads) if (kv.Value == null) _dead.Add(kv.Key);
             foreach (var k in _dead) _heads.Remove(k);
+            _dead.Clear();
+            foreach (var kv in _health) if (kv.Value.Root == null) _dead.Add(kv.Key);
+            foreach (var k in _dead) _health.Remove(k);
+            // instance-id keyed yes/no caches: cheap to rebuild, so they are simply emptied every sweep instead of growing all session
+            _counts.Clear(); _isPart.Clear(); _headMul.Clear(); _carRoots.Clear(); _isMelee.Clear();
+            _forceFree.RemoveWhere(g => g == null);
             Aim.Sweep();
         }
 
@@ -834,7 +856,7 @@ namespace Apocaraider
             float radius = s.Gun == null ? _npcRadius : 0f;
             // NPC bullet at the player: the virtual hitbox decides the hit on the player, physics only the obstructions in front of it
             CapsuleCollider vcap = s.Gun == null && s.Target != null ? s.Cap : null;
-            if (vcap != null && !vcap.enabled) vcap = PlayerCapsule(s.Target);     // the game swapped capsules (crouch): re-find
+            if (vcap != null && !vcap.enabled) { vcap = PlayerCapsule(s.Target); if (vcap != null) s.Cap = vcap; }     // the game swapped capsules (crouch): re-find, once
             float vt = float.MaxValue; bool vhead = false;
             if (vcap != null && !PlayerHit(s.Pos, s.Dir, move, radius, s.Target, vcap, out vt, out vhead)) vt = float.MaxValue;
             int n = radius > 0f
@@ -885,7 +907,7 @@ namespace Apocaraider
                 float dist = s.Travelled + vt;
                 float falloff = Falloff(ref s, dist);
                 float mult = vhead ? _headMult : 1f;
-                if (vhead) Plugin.Verbose("Tracers: headshot on " + s.Target.name + " at " + dist.ToString("0.0") + " m");
+                if (vhead && Plugin.VerboseLog.Value) Plugin.Verbose("Tracers: headshot on " + s.Target.name + " at " + dist.ToString("0.0") + " m");
                 HitTarget(ref s, s.Pos + s.Dir * vt, s.Damage * falloff * mult, vhead && s.Head != null ? s.Head : s.Target, dist);
                 s.Pos += s.Dir * vt;
                 s.Travelled = dist;
@@ -1021,7 +1043,7 @@ namespace Apocaraider
                     if (v != null) v.Value = damage;
                 }
             float before = Plugin.HitLog.Value ? HealthOf(target) : 0f;
-            foreach (var f in fsms) f.SendEvent(s.EventName);
+            foreach (var f in fsms) if (s.EventFsm == null || f.FsmName == s.EventFsm) f.SendEvent(s.EventName);
             Senses.Hurt(target, s.ShooterRoot);
             if (Plugin.HitLog.Value)
                 Plugin.Log.LogInfo("Hit: " + (s.ShooterRoot != null ? s.ShooterRoot.name : "?") + " -> " + target.transform.root.name + "/" + target.name + " at "
@@ -1123,7 +1145,7 @@ namespace Apocaraider
                         if (f.FsmName == "de_Attach") { f.SendEvent("de_Attach"); break; }
                     _popped.Add(new KeyValuePair<GameObject, Vector3>(part.gameObject, s.Dir * 3f + Vector3.up));
                     _poppedFrame = Time.frameCount + 2;
-                    Plugin.Verbose("Tracers: " + part.name + " shot off");
+                    if (Plugin.VerboseLog.Value) Plugin.Verbose("Tracers: " + part.name + " shot off");
                 }
                 return;
             }
@@ -1160,7 +1182,7 @@ namespace Apocaraider
             _popped.Add(new KeyValuePair<GameObject, Vector3>(part.gameObject, d * 2.5f + Vector3.up * 4f));
             _forceFree.Add(part.gameObject);
             _poppedFrame = Time.frameCount + 2;
-            Plugin.Verbose("Tracers: " + part.name + " shot off its car (condition 0)");
+            if (Plugin.VerboseLog.Value) Plugin.Verbose("Tracers: " + part.name + " shot off its car (condition 0)");
         }
 
         // a wheel / tyre part: the hit collider or any object up to (and including) its part is named like one
@@ -1190,7 +1212,7 @@ namespace Apocaraider
         private static readonly List<Color> _c = new List<Color>();
         private static readonly List<int> _t = new List<int>();
 
-        private static bool _drawnEmpty;
+        private static bool _drawnEmpty, _drawnPaused;
         private static void Draw()
         {
             if (_shots.Count == 0 && _drawnEmpty) return;      // nothing to draw and the mesh is already empty
@@ -1223,6 +1245,7 @@ namespace Apocaraider
                 bool tracers = Plugin.TracersDraw.Value, mine = Plugin.PlayerGunTracers.Value;
                 foreach (var s in _shots)
                 {
+                    if (!tracers && !mine && !s.Bolt) continue;
                     if (!s.Bolt && (!tracers || (s.Gun != null && !mine))) continue;      // [Gunplay] Tracers / PlayerGunTracers (bolts always show)
                     float len = Mathf.Min(s.Bolt ? bl : tl, s.Travelled);
                     if (len <= 0.01f) continue;
