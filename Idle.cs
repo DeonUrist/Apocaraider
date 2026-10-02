@@ -39,7 +39,7 @@ namespace Apocaraider
             public Vector3 Steer; public float Speed; public bool Moving, AtHome;
             public List<Vector3> Points; public int PointsState;   // 0 not tried, -1 map not baked yet, 1 done
             public float NextPoints; public float[] DroppedUntil; public int PointsTries;
-            public float LookYaw, NextLook; public bool Turning, PendingBack;
+            public float LookYaw, NextLook; public bool Turning, PendingBack; public float LastHop = -10f;
             public bool NoHome, LastWasSearch, Fresh;
             public bool InSearch, SAtOrigin; public Vector3 SOrigin; public List<Vector3> SPts; public float[] SDropped; public int SLast = -1;
         }
@@ -162,6 +162,12 @@ namespace Apocaraider
                 {
                     if (c.Moving || c.Leg != Leg.None || c.Turning) Stop(c, false);
                     c.InSearch = false;
+                    continue;
+                }
+                if (a.Blown)                   // shoved by a tornado: stands as vanilla, nothing counts (no failed tries)
+                {
+                    if (c.Moving || c.Leg != Leg.None || c.Turning) Stop(c, true);
+                    c.InSearch = false; c.PendingBack = false;
                     continue;
                 }
                 if (!c.Resolved && now >= c.NextResolve) { try { Resolve(c, now); } catch (Exception e) { Plugin.Log.LogError("Idle: " + e); c.Excluded = true; continue; } if (c.Excluded) continue; }
@@ -299,12 +305,33 @@ namespace Apocaraider
             float arrive = c.Leg == Leg.Home ? 1.5f : c.Leg == Leg.SearchBack ? 1.2f : 0.8f;
             if (left <= arrive && Mathf.Abs(pos.y - c.Goal.y) < 2.5f) { Arrived(c, now); return; }
             Vector3 next; float pathLeft;
-            if (Nav.On && Nav.Next(c.A.Owner, pos, c.Goal, out next, out pathLeft)) { c.Steer = next; left = pathLeft; }
+            if (Nav.On && Nav.Next(c.A.Owner, pos, c.Goal, out next, out pathLeft))
+            {
+                c.Steer = next; left = pathLeft;
+                if (Nav.HopAhead(pos, next)) Hop(c, now);             // the map's way crosses a low lip here
+            }
             else { c.Steer = c.Goal; }
             if (c.Leg == Leg.Home && left <= 25f && c.Speed > 2.5f) Go(c, 2.5f);      // slows to a walk near home
             if (left < c.BestLeft - 0.5f) { c.BestLeft = left; c.ProgressAt = now; }
             float patience = c.Leg == Leg.Home ? 2f : 1f;
             if (now - c.ProgressAt > patience) Failed(c, now);
+        }
+
+        // a small hop over a low lip ahead (same impulse as the brain's): low ray hits something, knee-high ray doesn't; once per 2 s
+        private static void Hop(Ctl c, float now)
+        {
+            if (c.Rb == null || now - c.LastHop < 2f) return;
+            var col = c.A.Col; if (col == null) return;
+            var b = col.bounds;
+            Vector3 fwd = c.A.T.forward; fwd.y = 0f; if (fwd.sqrMagnitude < 0.01f) return; fwd.Normalize();
+            float reach = Mathf.Min(b.extents.x, b.extents.z) + 0.45f;
+            Vector3 low = new Vector3(b.center.x, b.min.y + 0.1f, b.center.z), knee = new Vector3(b.center.x, b.min.y + 0.55f, b.center.z);
+            RaycastHit h;
+            if (!Physics.Raycast(low, fwd, out h, reach, FeelMask | (1 << 14), QueryTriggerInteraction.Ignore) || h.collider.transform.root == c.A.T) return;
+            if (Physics.Raycast(knee, fwd, reach + 0.2f, FeelMask | (1 << 14), QueryTriggerInteraction.Ignore)) return;
+            c.LastHop = now;
+            c.Rb.AddForce(Vector3.up * 3.2f + fwd * 1.5f, ForceMode.VelocityChange);
+            Log(c, "hops over a low edge (" + h.collider.name + ")");
         }
 
         private static void Arrived(Ctl c, float now)

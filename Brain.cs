@@ -264,7 +264,14 @@ namespace Apocaraider
             // moving: Chase or Advance
             // inside a baked camp / building / cave the structure's own map says the way (out through the right exit, around its walls)
             Vector3 navNext = Vector3.zero; float pathLeft = 0f;
-            n.OnNav = now >= n.NavOffUntil && Nav.Next(n.Owner, n.T.position, tp, out navNext, out pathLeft) && NavLegClear(n, navNext);
+            bool hopLeg = false;
+            n.OnNav = now >= n.NavOffUntil && Nav.Next(n.Owner, n.T.position, tp, out navNext, out pathLeft);
+            if (n.OnNav)
+            {
+                hopLeg = Nav.HopAhead(n.T.position, navNext);         // the route climbs a low lip / kerb (a hop edge) right ahead
+                if (!NavLegClear(n, navNext, hopLeg)) n.OnNav = false;
+                else if (hopLeg) TryHop(n, now, true);
+            }
             if (Plugin.BrainLog.Value && !n.OnNav && Nav.LastReason != n.NavReason)
             {
                 n.NavReason = Nav.LastReason;
@@ -550,6 +557,7 @@ namespace Apocaraider
         // moving modes: is the NPC getting anywhere? (called from Think) - 5 s without coming nearer flips the side once, then rests
         private static bool Progress(Npc n, float d, float now)
         {
+            if (Senses.Blown(n.Owner)) { n.NoProgressSince = now; n.BestDist = Mathf.Min(n.BestDist, d); return true; }   // pushed by a tornado: no judgement
             if (d < n.BestDist - 0.5f) { n.BestDist = d; n.NoProgressSince = now; return true; }
             if (now - n.NoProgressSince < NoProgressSeconds * R) return true;
             n.NoProgressSince = now;
@@ -772,7 +780,8 @@ namespace Apocaraider
         // a map waypoint is taken only when the first metre toward it is free for the body (walls, rock, baked props - not loose items or cars,
         // the feelers steer round those); otherwise this look runs without the map, as before maps existed
         private static readonly int NavGateMask = PathMask & ~((1 << 8) | (1 << 9));
-        private static bool NavLegClear(Npc n, Vector3 next)
+        private static bool NavLegClear(Npc n, Vector3 next) { return NavLegClear(n, next, false); }
+        private static bool NavLegClear(Npc n, Vector3 next, bool hopLeg)
         {
             if (n.Col == null) return true;
             var b = n.Col.bounds;
@@ -786,6 +795,7 @@ namespace Apocaraider
             if (!Physics.CapsuleCast(p1, p2, r, d.normalized, out h, len, NavGateMask, QueryTriggerInteraction.Ignore)) return true;
             if (h.collider.transform.root == n.T) return true;
             if (Nav.IsFloor(h.collider, h.normal, h.point.y, b.min.y)) return true;
+            if (hopLeg && h.point.y - b.min.y <= Nav.HopStep + 0.1f) return true;   // the lip the map hops over, not a wall
             if (Plugin.BrainLog.Value) Plugin.Log.LogInfo("Brain: " + n.Owner.name + " map waypoint blocked by " + h.collider.name + ", steers without the map");
             return false;
         }
@@ -794,6 +804,7 @@ namespace Apocaraider
         {
             float now = Time.time;
             if (n.Mode == Mode.Hold || n.Mode == Mode.Rest || n.Mode == Mode.Search || n.Mode == Mode.BackUp || n.Mode == Mode.Off) return;   // standing still: the Unstuck FSM's "not moving" is no stuck
+            if (Senses.Blown(n.Owner)) return;          // pushed by a tornado: not stuck
             if (n.OnNav)
             {
                 // stuck on a map route: this map is wrong here - steer without it for a while
@@ -827,14 +838,15 @@ namespace Apocaraider
                 n.SideUntil = now + SideLock * 2f * R; n.ClearLooks = 0;
             }
             if (Plugin.BrainLog.Value) LogAhead(n);
-            if (TryHop(n, now)) return;
+            if (TryHop(n, now, true)) return;       // stuck: a low edge is hopped even when its face is sloped (only gentle terrain is not)
             n.ModeUntil = now + Mathf.Max(0.1f, Plugin.StuckBackupSeconds.Value) * R;
             SetMode(n, Mode.BackUp, Plugin.BrainLog.Value ? "stuck " + n.Stucks + "x, backs up" : "");
         }
 
         // Stuck on something low (a rock lip, a kerb, a pipe on the floor) with nothing above it: the game's own Unstuck would hop here (we
         // block its AddForce while steering) - give one small hop forward instead of backing up. At most one hop per 2 s.
-        private static bool TryHop(Npc n, float now)
+        private static bool TryHop(Npc n, float now) { return TryHop(n, now, false); }
+        private static bool TryHop(Npc n, float now, bool lip)
         {
             if (n.Rb == null || n.Col == null || now - n.LastHop < 2f) return false;
             var b = n.Col.bounds;
@@ -843,7 +855,9 @@ namespace Apocaraider
             float reach = Mathf.Min(b.extents.x, b.extents.z) + 0.45f;
             RaycastHit h;
             if (!Physics.Raycast(low, fwd, out h, reach, PathMask, QueryTriggerInteraction.Ignore) || h.collider.transform.root == n.T) return false;
-            if (h.normal.y >= Nav.WalkNormal || Nav.IsFloor(h.collider, h.normal, h.point.y, b.min.y)) return false;   // a slope the body walks up is no edge
+            // a slope the body walks up is no edge - but a lip (stuck at it, or the map's route hops it) is hopped unless it is gentle terrain
+            bool gentle = h.normal.y >= Nav.WalkNormal || Nav.IsFloor(h.collider, h.normal, h.point.y, b.min.y);
+            if (gentle && (!lip || h.collider.gameObject.layer == 14)) return false;
             if (Physics.Raycast(knee, fwd, reach + 0.2f, PathMask, QueryTriggerInteraction.Ignore)) return false;      // something higher: not a hop
             n.LastHop = now;
             n.Rb.AddForce(Vector3.up * 3.2f + fwd * 1.5f, ForceMode.VelocityChange);

@@ -37,7 +37,8 @@ namespace Apocaraider
             public int EdgeCells, EdgeWalkable;     // the outer ring of the footprint
             public Dictionary<int, int> FloorHits;  // collider id -> walkable cells it is the floor of (during the bake)
             public float NextDump;
-            public byte[] Edges;                    // per cell, 1 = open edge toward +x (bit 0), +z (1), +x+z (2), -x+z (3): no wall or spike between the two cells
+            public byte[] Edges;                    // per cell, 1 = open edge toward +x (bit 0), +z (1), +x+z (2), -x+z (3): no wall or spike between the two cells;
+                                                    // bits 4 (+x) and 5 (+z): a HOP edge - a low lip / kerb / step of MaxStep..HopStep a body hops over
             public int[] Comp; public int[] CompSize;   // connected areas (flood fill over open edges) and their sizes
             public int Phase;                       // bake: 0 floors, 1 edges, 2 connected areas (sliced too), then Baked
             public int CompScan, CompCur, CompCurSize; public Stack<int> CompStack; public List<int> CompSizes;   // phase 2 progress
@@ -73,6 +74,9 @@ namespace Apocaraider
         private static readonly int BakeMask = ~((1 << 1) | (1 << 2) | (1 << 4) | (1 << 5) | (1 << 6) | (1 << 7) | (1 << 8) | (1 << 9) | (1 << 10) | (1 << 12) | (1 << 13) | (1 << 15) | (1 << 17) | (1 << 19) | (1 << 22));
         private const float Radius = 0.28f, Ankle = 0.2f, HeadTop = 1.5f;   // a human NPC: capsule r 0.28, 1.5 m tall
         private const int MinArea = 30;          // connected areas smaller than this (7.5 m2) are noise next to props: never start or end a route there
+        internal const float HopStep = 0.5f;     // a floor step / lip up to this high is crossed with a hop (the brain's hop clears ~0.5 m)
+        private const float HopCost = 2f;        // a hop edge costs like 2 m more walking: the map prefers a flat way when there is one
+        private static bool _noHop;              // patrol / search points must be reachable without hops
         private static readonly HashSet<int> _floorCols = new HashSet<int>();   // colliders that are the floor of >= FloorColCells map cells (cave floors, camp decks)
         private const int FloorColCells = 40;
 
@@ -362,12 +366,21 @@ namespace Apocaraider
                         int cx = x + EdgeDx[k], cz = z + EdgeDz[k];
                         if (cx < 0 || cz < 0 || cx >= s.W || cz >= s.H) continue;
                         float yb = s.FloorY[cz * s.W + cx];
-                        if (float.IsNaN(yb) || Mathf.Abs(ya - yb) > Mathf.Max(0.1f, Plugin.NavMaxStep.Value)) continue;
+                        if (float.IsNaN(yb)) continue;
+                        float dy = Mathf.Abs(ya - yb);
                         Vector3 b = CellCenter(s, cx, cz, yb);
-                        if (Physics.Linecast(a + Vector3.up * 0.15f, b + Vector3.up * 0.15f, BakeMask, QueryTriggerInteraction.Ignore)) continue;   // a low rock lip / kerb
-                        if (Physics.Linecast(a + Vector3.up * 0.5f, b + Vector3.up * 0.5f, BakeMask, QueryTriggerInteraction.Ignore)) continue;
-                        if (Physics.Linecast(a + Vector3.up * 1.2f, b + Vector3.up * 1.2f, BakeMask, QueryTriggerInteraction.Ignore)) continue;
-                        bits |= (byte)(1 << k);
+                        if (dy <= Mathf.Max(0.1f, Plugin.NavMaxStep.Value)
+                            && !Physics.Linecast(a + Vector3.up * 0.15f, b + Vector3.up * 0.15f, BakeMask, QueryTriggerInteraction.Ignore)   // a low rock lip / kerb
+                            && !Physics.Linecast(a + Vector3.up * 0.5f, b + Vector3.up * 0.5f, BakeMask, QueryTriggerInteraction.Ignore)
+                            && !Physics.Linecast(a + Vector3.up * 1.2f, b + Vector3.up * 1.2f, BakeMask, QueryTriggerInteraction.Ignore))
+                        { bits |= (byte)(1 << k); continue; }
+                        // not walkable: a hop edge? (straight neighbours only) a step / lip up to HopStep with the body's way clear above it
+                        if (k > 1 || dy > HopStep) continue;
+                        float top = Mathf.Max(ya, yb);
+                        Vector3 a2 = new Vector3(a.x, top, a.z), b2 = new Vector3(b.x, top, b.z);
+                        if (Physics.Linecast(a2 + Vector3.up * 0.6f, b2 + Vector3.up * 0.6f, BakeMask, QueryTriggerInteraction.Ignore)) continue;
+                        if (Physics.Linecast(a2 + Vector3.up * 1.2f, b2 + Vector3.up * 1.2f, BakeMask, QueryTriggerInteraction.Ignore)) continue;
+                        bits |= (byte)(1 << (k + 4));
                     }
                     s.Edges[i] = bits;
                 }
@@ -619,17 +632,50 @@ namespace Apocaraider
         private static bool _relax;
         private static bool Crossable(Structure s, int i) { return !float.IsNaN(s.FloorY[i]) || s.Why[i] == 1 || s.Why[i] == 4; }
 
-        private static bool Step(Structure s, int a, int b)
+        private static bool Step(Structure s, int a, int b) { return EdgeKind(s, a, b) > 0; }
+
+        // 0 = no way, 1 = walk, 2 = hop (a lip / step the body hops; not while _noHop)
+        private static int EdgeKind(Structure s, int a, int b)
         {
             float ya = s.FloorY[a], yb = s.FloorY[b];
-            if (_relax && (float.IsNaN(ya) || float.IsNaN(yb))) return s.Why != null && Crossable(s, a) && Crossable(s, b);
-            if (float.IsNaN(ya) || float.IsNaN(yb) || Mathf.Abs(ya - yb) > Mathf.Max(0.1f, Plugin.NavMaxStep.Value)) return false;
-            if (s.Edges == null || s.Phase < 2) return true;
+            if (_relax && (float.IsNaN(ya) || float.IsNaN(yb))) return s.Why != null && Crossable(s, a) && Crossable(s, b) ? 1 : 0;
+            if (float.IsNaN(ya) || float.IsNaN(yb)) return 0;
+            bool walkStep = Mathf.Abs(ya - yb) <= Mathf.Max(0.1f, Plugin.NavMaxStep.Value);
+            if (s.Edges == null || s.Phase < 2) return walkStep ? 1 : 0;
             int ax = a % s.W, az = a / s.W, bx = b % s.W, bz = b / s.W;
             int dx = bx - ax, dz = bz - az;
             if (dz < 0 || (dz == 0 && dx < 0)) { int t = a; a = b; b = t; dx = -dx; dz = -dz; }
             int k = dz == 0 ? 0 : dx == 0 ? 1 : dx > 0 ? 2 : 3;
-            return (s.Edges[a] & (1 << k)) != 0;
+            if (walkStep && (s.Edges[a] & (1 << k)) != 0) return 1;
+            if (!_noHop && k <= 1 && (s.Edges[a] & (1 << (k + 4))) != 0) return 2;
+            return 0;
+        }
+
+        // the route from pos toward next (first 2 m) crosses a hop edge
+        internal static bool HopAhead(Vector3 pos, Vector3 next)
+        {
+            int hc; var s = BakedAt(pos, out hc);
+            if (s == null) return false;
+            Vector3 d = next - pos; d.y = 0f;
+            float len = Mathf.Min(2f, d.magnitude);
+            if (len < 0.05f) return false;
+            d /= d.magnitude;
+            int prev = hc, x, z;
+            for (float t = s.Cell * 0.5f; t <= len; t += s.Cell * 0.5f)
+            {
+                if (!CellOf(s, pos + d * t, out x, out z)) return false;
+                int i = z * s.W + x;
+                if (i == prev) continue;
+                int px = prev % s.W, pz = prev / s.W;
+                if (px != x && pz != z)
+                {   // diagonal: through either straight neighbour
+                    int m1 = pz * s.W + x, m2 = z * s.W + px;
+                    if (EdgeKind(s, prev, m1) == 2 || EdgeKind(s, m1, i) == 2 || EdgeKind(s, prev, m2) == 2 || EdgeKind(s, m2, i) == 2) return true;
+                }
+                else if (EdgeKind(s, prev, i) == 2) return true;
+                prev = i;
+            }
+            return false;
         }
 
         // a walkable cell with a walkable neighbour at a walkable height that it still can't reach (a wall / spike between them)
@@ -1006,6 +1052,7 @@ namespace Apocaraider
                         if (!Step(s, i0, j)) continue;
                         if (dx != 0 && dz != 0 && (!Step(s, i0, z * s.W + cx) || !Step(s, i0, cz * s.W + x))) continue;
                         float nd = d + (dx != 0 && dz != 0 ? c2 : c1);
+                        if (dx == 0 || dz == 0) { if (EdgeKind(s, i0, j) == 2) nd += HopCost; }
                         if (nd < dist[j]) { dist[j] = nd; heap.Push(j, nd); }
                     }
             }
@@ -1094,6 +1141,13 @@ namespace Apocaraider
         // from anything unwalkable, and a body-sized capsule swept along the line hits nothing solid. 16 bearings x 5 distances (longest
         // clear one per bearing), then the points are picked >= 60 deg apart, longest first. -1 = home's map is not baked (yet), 0 = none.
         internal static int PatrolPoints(Vector3 home, List<Vector3> pts, int max, float minD, float maxD)
+        {
+            _noHop = true;
+            try { return PatrolPointsNoHop(home, pts, max, minD, maxD); }
+            finally { _noHop = false; }
+        }
+
+        private static int PatrolPointsNoHop(Vector3 home, List<Vector3> pts, int max, float minD, float maxD)
         {
             pts.Clear();
             int hc; var s = BakedAt(home, out hc);

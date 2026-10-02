@@ -67,11 +67,13 @@ namespace Apocaraider
             public GameObject Pursue; public int Pursuits;     // the target it lost from sight, and how many more times it will go to where that target really is
             public Behaviour[] Sensors; public bool SensorsOff;
             public bool InStorm;          // inside a sandstorm (refreshed once a second)
+            public bool Blown;            // within a tornado funnel's shove radius (refreshed once a second)
             public readonly HashSet<int> Heard = new HashSet<int>();   // ghosts it already got from a friend's shout, and enemy shouters (instance ids, negated) it already went to: a shout never re-sends them
         }
 
         private static readonly Dictionary<int, Agent> _agents = new Dictionary<int, Agent>();
         internal static Dictionary<int, Agent>.ValueCollection AllAgents { get { return _agents.Values; } }   // read-only use (Idle)
+        internal static bool Blown(GameObject owner) { Agent a; return owner != null && _agents.TryGetValue(owner.GetInstanceID(), out a) && a.Blown; }
         private static readonly HashSet<int> _ignored = new HashSet<int>();
         private static readonly List<Ghost> _ghosts = new List<Ghost>();
         private static readonly List<int> _dead = new List<int>();
@@ -122,6 +124,8 @@ namespace Apocaraider
                         if (a.PlayerIsEnemy != null) Relation(a, true);
                         _presentTags.Add(a.Tag);
                         a.InStorm = Storm.Any && Storm.In(a.T.position);
+                        bool blown = Storm.AnyFunnel && Storm.InBlast(a.T.position);
+                        if (blown != a.Blown) { a.Blown = blown; if (blown) Log(a, "is shoved by a tornado"); }
                     }
                 }
                 foreach (var k in _dead) _agents.Remove(k);
@@ -158,6 +162,13 @@ namespace Apocaraider
         // ---------- sight ----------
         private static void Look(Agent a, float interval, float now)
         {
+            // shoved by a tornado: it forgets what it was doing unless it sees the player right now (sight still works, hearing doesn't)
+            if (a.Blown && a.State != State.Idle && !(a.State == State.Combat && a.Target == _player && a.UnseenFor < 0.5f))
+            {
+                Release(a);
+                a.State = State.Idle; a.Target = null; a.SeenFor = 0f; a.Pursue = null;
+                Log(a, "blown about by a tornado, forgets what it was doing");
+            }
             if (a.State == State.Search && now >= a.SearchUntil) { GiveUp(a, "nothing here"); }
             if (a.State == State.Investigate && a.Ghost != null)
             {
@@ -179,7 +190,7 @@ namespace Apocaraider
             {
                 if (Visible(a, eye, _player, true, _playerInStorm)) { best = _player; bestD = (_player.transform.position - a.T.position).sqrMagnitude; if (a.Target == _player) currentVisible = true; }
             }
-            if (!currentVisible && HostileNpcAround(a))
+            if (!currentVisible && !a.Blown && HostileNpcAround(a))
             {
                 Vector3 ap = a.T.position;
                 foreach (var kv in _agents)
@@ -519,6 +530,7 @@ namespace Apocaraider
                 if (stormy && (srcStorm || a.InStorm) && d2 > rs2) continue;
                 if (filter != null && !filter(a)) continue;
                 if (aboutPlayer && !a.Hostile.Contains("Player")) continue;
+                if (a.Blown) continue;                                      // the tornado's roar: hears nothing
                 if (Plugin.MuffleSounds.Value && !Clear(pos + Vector3.up, Eye(a), a.T))
                 {
                     float m = radius * Mathf.Clamp01(Plugin.MuffleFactor.Value / 100f);
@@ -827,7 +839,7 @@ namespace Apocaraider
         {
             if (!On || victim == null || attacker == null) return;
             var a = Get(victim.transform.root.gameObject);
-            if (a == null || a.State == State.Combat) return;
+            if (a == null || a.State == State.Combat || a.Blown) return;
             float now = Time.time;
             var g = GetOrMake(Src.Hit, attacker.transform.root.position, attacker.transform.root.gameObject, "hit by " + Name(attacker), 0f, 1f, now);
             g.Subject = attacker.transform.root.gameObject;
