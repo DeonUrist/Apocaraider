@@ -64,6 +64,7 @@ namespace Apocaraiders
             public int Side, ClearLooks; public float SideUntil; public bool Flipped;     // pathing: the committed way around an obstacle
             public float FreeLeft, FreeRight;                                             // the last fan's free lengths per half
             public Vector3 Waypoint; public bool HasWaypoint; public float WaypointUntil, NextScout;   // a scouted corner with a clear line to the target
+            public string NavReason = "";
             public bool ToGhost, OnNav, WasOnNav; public float LookYaw, NextLookTurn, NavOffUntil;                       // Senses: going to a ghost / looking around at it
             public float BestDist = float.MaxValue, NoProgressSince;
             public int Stucks; public float FirstStuck;
@@ -239,6 +240,11 @@ namespace Apocaraiders
             // inside a baked camp / building / cave the structure's own map says the way (out through the right exit, around its walls)
             Vector3 navNext = Vector3.zero; float pathLeft = 0f;
             n.OnNav = now >= n.NavOffUntil && Nav.Next(n.Owner, n.T.position, tp, out navNext, out pathLeft) && NavLegClear(n, navNext);
+            if (Plugin.BrainLog.Value && !n.OnNav && Nav.LastReason != n.NavReason)
+            {
+                n.NavReason = Nav.LastReason;
+                if (n.NavReason.Length > 0) Plugin.Log.LogInfo("Brain: " + n.Owner.name + " no map route: " + n.NavReason);
+            }
             if (n.OnNav != n.WasOnNav) { n.WasOnNav = n.OnNav; n.BestDist = float.MaxValue; n.NoProgressSince = now; }   // map path length and straight distance don't compare
             if (!Progress(n, n.OnNav ? pathLeft : d, now)) return;
             Vector3 goal = d3; float gd = d;
@@ -528,6 +534,7 @@ namespace Apocaraiders
             }
             n.Flipped = false; n.Side = 0; n.BestDist = float.MaxValue;
             n.ModeUntil = now + RestSeconds * R;
+            if (n.ToGhost) { Senses.CannotReach(n.Owner); n.NextLookTurn = 0f; SetMode(n, Mode.Search, "gets nowhere toward the ghost"); return false; }
             SetMode(n, Mode.Rest, "gets nowhere, rests");
             return false;
         }
@@ -770,6 +777,7 @@ namespace Apocaraiders
             {
                 n.Stucks = 0;
                 n.ModeUntil = now + RestSeconds * R;
+                if (n.ToGhost) { Senses.CannotReach(n.Owner); n.NextLookTurn = 0f; SetMode(n, Mode.Search, "stuck on the way to the ghost"); return; }
                 SetMode(n, Mode.Rest, "stuck for good, rests");
                 return;
             }

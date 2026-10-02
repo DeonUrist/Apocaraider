@@ -73,8 +73,10 @@ your gunshots (80 m for a pistol, up to 150 m for rifles and shotguns), each oth
 own faction within 15 m where you are and tells its enemies where it stands), an item you throw (10 m around where it lands) and
 your running engine (50 m for the weakest engines to 150 m for the strongest, half while idling, nothing when it's off). What an NPC
 hears or saw becomes a "ghost", a remembered spot it goes to check; one event makes one ghost shared by everyone it alerted, and an
-NPC keeps the more trustworthy knowledge (sight over a hit, over a shout, over a gunshot, over a thrown item, over an engine; the
-newest of equal rank). At the spot it looks around for 15 s and, seeing nothing, loses interest and idles where it stands. Being
+NPC keeps the more trustworthy knowledge (sight over any sound - gunshots, hits, explosions, thrown items, shouts - over an
+engine; the newest of equal rank; newer news about the same person always wins, so a shot you fire pulls NPCs away from an older
+shout about you). A shout is not a ghost of its own: it passes on what the shouter knows, what it sees (as sight) or the ghost it is going to, with that ghost's own rank. An
+NPC that can't reach its spot within ReachSeconds (plus travel time) searches from where it got. At the spot it looks around for 15 s and, seeing nothing, loses interest and idles where it stands. Being
 shot tells it where that came from. The same rules run between NPC factions. Ghosts and alert states are saved with the game and
 restored after a load. With Apocapatrol installed, a raider bailing out of a car keeps its crew's knowledge (it fights if it sees you,
 otherwise heads for where you were) and an exploding car is heard like a gunshot. `[Senses] Enabled = false` gives the game's own sensors back; `[Debug] ShowGhosts` draws every ghost and
@@ -120,7 +122,7 @@ BepInEx\plugins\Apocaraiders\Sounds\Gungirl\*.wav / *.ogg
 - **[Brain]**: on/off, ReactionTime (% of the default thinking/waiting times, 1-500), ScaleWithActors (think less often with many NPCs engaged, off), TurnRate (deg/s), AimPose (gun kept up while holding), CrouchChance (% of holds spent kneeling), SensorInterval (how often NPC eyes look, 0.1 s), FeelerLength / MeleeFeelerLength / FeelerAngle / FeelerCount, DropCheck, ShooterPathing, AdvanceChance (% per hold
   recheck that a holding gunman runs at you) and AdvanceMin/Max (s), StuckBackupSeconds, StuckMemorySeconds, StuckGiveUpCount, MaxDistance.
 - **[Senses]**: on/off, SightCone, SightRange / DarkSightRange, DaylightIntensity, NoticeSeconds, LoseSeconds, SearchSeconds, ArriveDistance,
-  LookInterval, MuffleSounds / MuffleFactor (off), ShotRange per weapon class, NpcShotRanges (per NPC type), TauntRange, HumanFactions,
+  LookInterval, MuffleSounds / MuffleFactor (off), ReachSeconds, ShotRange per weapon class, NpcShotRanges (per NPC type), TauntRange, HumanFactions,
   EngineMinRange / EngineMaxRange / EngineMinHp / EngineMaxHp / EngineIdleFactor, ThrowRange, BailOutAware / BailOutAwareRange / ExplosionRange (with Apocapatrol).
 - **[Nav]**: on/off, BakeRange, CellSize, Margin, MaxStep, BakeBudgetMs, FieldSeconds.
 - **[Hud]**: DamageNumbers (0/1/2), DamageFontSize, HitMarker on/off, HitMarkerSize.

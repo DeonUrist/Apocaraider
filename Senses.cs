@@ -32,7 +32,7 @@ namespace Apocaraiders
     //   shouter's target or ghost is, and tells its enemies where the shouter is), gunshots (GUNSHOT: every NPC within the gun's noise
     //   range gets a ghost at the shooter), a thrown item (THROWN, ThrowRange around where it lands) and the player's running engine
     //   (ENGINE, 50-150 m by horsepower, half while idling). A ghost is shared by everyone the same event alerted; an NPC only takes a
-    //   ghost of equal or higher rank than the one it has (VISION > HIT > TAUNT > GUNSHOT > THROWN > ENGINE, newest wins at equal rank)
+    //   ghost of equal or higher rank than the one it has (VISION > GUNSHOT (every sound) > ENGINE, newest wins at equal rank; newer news about the same subject always wins)
     //   and never while it sees its target. Arriving at the ghost (ArriveDistance) without seeing anything starts a SearchSeconds
     //   look-around (the brain turns the body), then the NPC drops to idle where it stands. A ghost nobody holds any more disappears.
     // Everything is saved per slot (ghosts, who holds which, combat targets, search time left) and restored after a load.
@@ -42,9 +42,17 @@ namespace Apocaraiders
         internal enum Src { None = 0, Engine = 1, Thrown = 2, Gunshot = 3, Taunt = 4, Hit = 5, Vision = 6 }
         internal enum State { Idle, Combat, Investigate, Search }
 
+        // Three ranks (Denis): VISION > GUNSHOT > CAR. Sight (own, or passed on by a friend's shout) is vision; every sound (gunshot, a bullet
+        // hitting, an explosion, a thrown item, an enemy's shout) ranks as a gunshot; the engine is the lowest. The Src kinds stay for labels.
+        internal static int Rank(Src s)
+        {
+            switch (s) { case Src.None: return 0; case Src.Engine: return 1; case Src.Vision: return 3; default: return 2; }
+        }
+
         internal sealed class Ghost
         {
             public int Id; public Vector3 Pos; public Src Src; public float Born, Moved; public GameObject Obj, Source; public string About = "";
+            public GameObject Subject;               // who the ghost is about (the player, an NPC): newer news about the same subject always wins
             public readonly List<Agent> Holders = new List<Agent>();
         }
 
@@ -54,7 +62,7 @@ namespace Apocaraiders
             public PlayMakerFSM Detection, Attack; public FsmGameObject DetectedVar;
             public string Tag; public HashSet<string> Hostile; public bool Human;
             public State State; public GameObject Target; public Ghost Ghost; public Src GhostPrio;
-            public float SeenFor, UnseenFor, SearchUntil, NextLook, Stagger, LastLog; public Vector3 LastSeen;
+            public float SeenFor, UnseenFor, SearchUntil, NextLook, Stagger, LastLog, InvestigateUntil; public Vector3 LastSeen;
             public Behaviour[] Sensors; public bool SensorsOff;
         }
 
@@ -133,6 +141,7 @@ namespace Apocaraiders
             {
                 Vector3 to = a.Ghost.Pos - a.T.position; to.y = 0f;
                 if (to.magnitude <= Mathf.Max(0.5f, Plugin.ArriveDistance.Value)) Arrived(a, now);
+                else if (now >= a.InvestigateUntil) { Log(a, "can't reach ghost #" + a.Ghost.Id + " (" + to.magnitude.ToString("0") + " m left), searches from here"); Arrived(a, now); }
             }
             if (a.State == State.Combat && a.Target == null) { a.State = State.Idle; Log(a, "target gone"); }
 
@@ -318,6 +327,7 @@ namespace Apocaraiders
             var target = a.Target;
             a.Target = null;
             var g = GetOrMake(Src.Vision, a.LastSeen, target, "last seen " + Name(target), 4f, 3f, now);
+            g.Subject = target;
             a.State = State.Idle;
             Assign(a, g, Src.Vision, now);
             Log(a, "lost sight of " + Name(target) + ", goes where it was (ghost #" + g.Id + ")");
@@ -336,16 +346,43 @@ namespace Apocaraiders
             Log(a, "gives up (" + why + "), idle");
         }
 
-        // an NPC takes a ghost of equal or higher rank than the one it has; never while it sees its target
+        // An NPC takes a ghost of equal or higher rank than the one it has, or any ghost with newer news about the same subject (it went to
+        // check a shout about the player; the player now shoots elsewhere: that is where the player is). Never while it sees its target.
         private static bool Assign(Agent a, Ghost g, Src prio, float now)
         {
             if (g == null || a.State == State.Combat) return false;
-            if (a.Ghost == g) { a.GhostPrio = prio; if (a.State == State.Search) { a.State = State.Investigate; } return true; }
-            if (a.Ghost != null && (int)prio < (int)a.GhostPrio) return false;
+            if (a.Ghost == g)
+            {
+                if (Rank(prio) > Rank(a.GhostPrio)) a.GhostPrio = prio;
+                if (a.State == State.Search) { a.State = State.Investigate; Budget(a, g); }
+                return true;
+            }
+            if (a.Ghost != null)
+            {
+                bool newerSameSubject = g.Subject != null && a.Ghost.Subject == g.Subject && g.Moved >= a.Ghost.Moved;
+                if (!newerSameSubject && Rank(prio) < Rank(a.GhostPrio)) return false;
+            }
             Release(a);
             a.Ghost = g; a.GhostPrio = prio; g.Holders.Add(a);
             a.State = State.Investigate; a.SeenFor = 0f;
+            Budget(a, g);
             return true;
+        }
+
+        // time allowed to reach a ghost before searching from wherever the NPC got to (unreachable spots, a cave with no way out)
+        private static void Budget(Agent a, Ghost g)
+        {
+            float d = Vector3.Distance(a.T.position, g.Pos);
+            a.InvestigateUntil = Time.time + Mathf.Max(0f, Plugin.ReachSeconds.Value) + d / 2.5f;
+        }
+
+        // the brain gave up getting there (stuck for good / no progress): search from here
+        internal static void CannotReach(GameObject owner)
+        {
+            var a = Get(owner);
+            if (a == null || a.State != State.Investigate || a.Ghost == null) return;
+            Log(a, "gets nowhere toward ghost #" + a.Ghost.Id + ", searches from here");
+            Arrived(a, Time.time);
         }
 
         private static void Release(Agent a)
@@ -376,7 +413,7 @@ namespace Apocaraiders
             n.Obj.transform.SetParent(_ghostRoot, false);
             n.Obj.transform.position = pos;
             _ghosts.Add(n);
-            if (Plugin.SensesLog.Value) Plugin.Log.LogInfo("Senses: ghost #" + n.Id + " " + src + " (" + n.About + ") at " + pos);
+            if (Plugin.SensesLog.Value && (src == Src.Vision || src == Src.Hit)) Plugin.Log.LogInfo("Senses: ghost #" + n.Id + " " + src + " (" + n.About + ") at " + pos);
             return n;
         }
 
@@ -391,12 +428,13 @@ namespace Apocaraiders
 
         // ---------- sounds ----------
         // one ghost per event, offered to every NPC within the radius (walls halve the radius with [Senses] MuffleSounds)
-        private static void Noise(GameObject source, Vector3 pos, float radius, Src src, string about, Func<Agent, bool> filter, Func<Agent, Vector3> at)
+        private static void Noise(GameObject source, Vector3 pos, float radius, Src src, string about, Func<Agent, bool> filter, Func<Agent, Vector3> at, GameObject subject = null)
         {
             if (radius <= 0f || !On) return;
             float now = Time.time;
             Transform sroot = source != null ? source.transform.root : null;
             Ghost shared = at == null ? GetOrMake(src, pos, source, about, 0f, 1f, now) : null;
+            if (shared != null) shared.Subject = subject;
             int told = 0;
             float r2 = radius * radius;
             foreach (var kv in _agents)
@@ -411,11 +449,12 @@ namespace Apocaraiders
                     float m = radius * Mathf.Clamp01(Plugin.MuffleFactor.Value / 100f);
                     if (d2 > m * m) continue;
                 }
-                Ghost g = shared ?? GetOrMake(src, at(a), source, about, 0f, 1f, now);
+                Ghost g = shared;
+                if (g == null) { g = GetOrMake(src, at(a), source, about, 0f, 1f, now); g.Subject = subject; }
                 if (Assign(a, g, src, now)) told++;
             }
             if (shared != null && shared.Holders.Count == 0) { int i = _ghosts.IndexOf(shared); if (i >= 0) KillGhost(i); }
-            if (Plugin.SensesLog.Value && told > 0) Plugin.Log.LogInfo("Senses: " + src + " (" + about + ") within " + radius.ToString("0") + " m alerts " + told);
+            if (Plugin.SensesLog.Value && told > 0) Plugin.Log.LogInfo("Senses: " + src + " (" + about + ") within " + radius.ToString("0") + " m alerts " + told + (shared != null ? " -> ghost #" + shared.Id : ""));
         }
 
         // Tracers: a gun fired (the player's or an NPC's), once per shot (pellets of one blast merge through the 1 s source window)
@@ -423,7 +462,7 @@ namespace Apocaraiders
         {
             if (!On) return;
             float radius = player ? PlayerShotRange(kind) : NpcShotRange(shooter, kind);
-            Noise(shooter, pos, radius, Src.Gunshot, (player ? "player" : Name(shooter)) + " " + kind.ToString().ToLowerInvariant(), null, null);
+            Noise(shooter, pos, radius, Src.Gunshot, (player ? "player" : Name(shooter)) + " " + kind.ToString().ToLowerInvariant(), null, null, shooter);
         }
 
         private static float PlayerShotRange(Tracers.Kind k)
@@ -485,21 +524,25 @@ namespace Apocaraiders
             if (known)
             {
                 string tag = t.Tag;
-                Ghost shared = tg ?? GetOrMake(Src.Taunt, where, t.Owner, Name(t.Owner) + " shouts about " + (t.Target != null ? Name(t.Target) : "a ghost"), 0f, 1f, now);
+                Ghost shared = tg;
+                // a shout is not a ghost of its own: it passes on what the shouter knows - what it sees (a VISION ghost at the target) or the
+                // very ghost it is going to, at that ghost's rank (a gunshot it is checking stays a GUNSHOT)
+                if (shared == null) { shared = GetOrMake(Src.Vision, where, t.Target, Name(t.Owner) + " saw " + Name(t.Target), 4f, 1f, now); shared.Subject = t.Target; }
+                Src relay = tg == null ? Src.Vision : t.GhostPrio;
                 int told = 0;
                 foreach (var kv in _agents)
                 {
                     var f = kv.Value;
                     if (f == t || f.Owner == null || !f.Human || f.Tag != tag || f.T.parent != null) continue;
                     if ((f.T.position - t.T.position).sqrMagnitude > range * range) continue;
-                    if (Assign(f, shared, Src.Taunt, now)) told++;
+                    if (Assign(f, shared, relay, now)) told++;
                 }
                 if (shared != tg && shared.Holders.Count == 0) { int i = _ghosts.IndexOf(shared); if (i >= 0) KillGhost(i); }
                 if (Plugin.SensesLog.Value && told > 0) Plugin.Log.LogInfo("Senses: " + Name(t.Owner) + "'s shout sends " + told + " " + tag + " to " + (tg != null ? "ghost #" + tg.Id : "its target"));
             }
             // enemies: the shouter gave itself away
             string ttag = t.Tag;
-            Noise(t.Owner, t.T.position, range, Src.Taunt, Name(t.Owner) + " shouting", a => a.Hostile.Contains(ttag), null);
+            Noise(t.Owner, t.T.position, range, Src.Taunt, Name(t.Owner) + " shouting", a => a.Hostile.Contains(ttag), null, t.Owner);
         }
 
         // Tracers: a bullet hit a creature - it knows where that came from
@@ -510,6 +553,7 @@ namespace Apocaraiders
             if (a == null || a.State == State.Combat) return;
             float now = Time.time;
             var g = GetOrMake(Src.Hit, attacker.transform.root.position, attacker.transform.root.gameObject, "hit by " + Name(attacker), 0f, 1f, now);
+            g.Subject = attacker.transform.root.gameObject;
             bool had = a.Ghost == g;
             if (Assign(a, g, Src.Hit, now)) { if (!had) Log(a, "is hit by " + Name(attacker) + ", goes for ghost #" + g.Id); }   // once per shot, not per pellet
             else if (g.Holders.Count == 0) { int i = _ghosts.IndexOf(g); if (i >= 0) KillGhost(i); }
@@ -543,7 +587,7 @@ namespace Apocaraiders
             float speed = rb != null ? rb.velocity.magnitude : 0f;
             float thr = Nwh.Throttle(car);
             if (speed < 1.5f && thr < 0.05f) radius *= Mathf.Clamp01(Plugin.EngineIdleFactor.Value / 100f);
-            Noise(car, car.transform.position, radius, Src.Engine, "engine " + (hp > 0f ? hp + " HP" : "") , null, null);
+            Noise(car, car.transform.position, radius, Src.Engine, "engine " + (hp > 0f ? hp + " HP" : "") , null, null, _player);
         }
 
         private static bool Apocapatrol_EngineRunning(GameObject car) { return Nwh.EngineRunning(car); }
@@ -573,7 +617,7 @@ namespace Apocaraiders
             if (_thrown.velocity.magnitude < 0.5f) _thrownRest += dt; else _thrownRest = 0f;
             if (_thrownRest > 0.3f || now - _thrownSince > 6f)
             {
-                Noise(_thrown.gameObject, _thrown.position, Plugin.ThrowRange.Value, Src.Thrown, "thrown " + Prefab(_thrown.name), null, null);
+                Noise(_thrown.gameObject, _thrown.position, Plugin.ThrowRange.Value, Src.Thrown, "thrown " + Prefab(_thrown.name), null, null, _player);
                 _thrown = null;
             }
         }
@@ -724,6 +768,7 @@ namespace Apocaraiders
             float now = Time.time;
             a.LastSeen = h.Key.transform.position;
             var g = GetOrMake(Src.Vision, a.LastSeen, h.Key, "crew knew where " + Name(h.Key) + " was", 6f, 2f, now);
+            g.Subject = h.Key;
             if (Assign(a, g, Src.Vision, now)) Log(a, "bailed out, goes where its crew last had " + Name(h.Key) + " (ghost #" + g.Id + ")");
         }
 
@@ -877,7 +922,7 @@ namespace Apocaraiders
             {
                 var c = SrcColor[(int)g.Src];
                 Hud.Mark(g.Pos + Vector3.up * 1.2f, c, 14f);
-                Hud.Label(g.Pos + Vector3.up * 1.6f, "#" + g.Id + " " + g.Src.ToString().ToUpperInvariant() + " " + g.About + "  (" + g.Holders.Count + ", " + (now - g.Born).ToString("0") + " s)", c);
+                Hud.Label(g.Pos + Vector3.up * 1.6f, "#" + g.Id + " " + (g.Src == Src.Taunt ? "SHOUT" : g.Src.ToString().ToUpperInvariant()) + " " + g.About + "  (" + g.Holders.Count + ", " + (now - g.Born).ToString("0") + " s)", c);
             }
             foreach (var kv in _agents)
             {
@@ -887,7 +932,7 @@ namespace Apocaraiders
                 switch (a.State)
                 {
                     case State.Combat: s = "COMBAT " + Name(a.Target); c = SrcColor[(int)Src.Vision]; break;
-                    case State.Investigate: s = "-> ghost #" + (a.Ghost != null ? a.Ghost.Id.ToString() : "?") + " (" + a.GhostPrio + ")"; c = a.Ghost != null ? SrcColor[(int)a.Ghost.Src] : Color.white; break;
+                    case State.Investigate: s = "-> ghost #" + (a.Ghost != null ? a.Ghost.Id.ToString() : "?") + " (" + (Rank(a.GhostPrio) == 3 ? "vision" : Rank(a.GhostPrio) == 2 ? "sound" : "engine") + ")"; c = a.Ghost != null ? SrcColor[(int)a.Ghost.Src] : Color.white; break;
                     default: s = "SEARCH " + Mathf.Max(0f, a.SearchUntil - now).ToString("0") + " s"; c = new Color(0.75f, 0.6f, 1f); break;
                 }
                 Vector3 top = a.Col != null ? new Vector3(a.Col.bounds.center.x, a.Col.bounds.max.y, a.Col.bounds.center.z) : a.T.position + Vector3.up * 2f;
@@ -1037,6 +1082,7 @@ namespace Apocaraiders
                             if (_ghostRoot == null) { var r = new GameObject("Apocaraiders.Ghosts") { hideFlags = HideFlags.HideAndDontSave }; UnityEngine.Object.DontDestroyOnLoad(r); _ghostRoot = r.transform; }
                             g.Obj = new GameObject("Apocaraiders.Ghost#" + g.Id) { hideFlags = HideFlags.HideAndDontSave };
                             g.Obj.transform.SetParent(_ghostRoot, false); g.Obj.transform.position = g.Pos;
+                            if (g.About.IndexOf("player", StringComparison.OrdinalIgnoreCase) >= 0) g.Subject = _player;
                             _ghosts.Add(g); ghostById[g.Id] = g;
                             if (g.Id >= _nextGhostId) _nextGhostId = g.Id + 1;
                         }

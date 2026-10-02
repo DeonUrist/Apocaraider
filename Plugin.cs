@@ -18,7 +18,7 @@ namespace Apocaraiders
     {
         public const string GUID = "com.denis.apocalypter.apocaraiders";
         public const string NAME = "Apocaraiders";
-        public const string VERSION = "0.12.1";
+        public const string VERSION = "0.12.2";
 
         internal static ManualLogSource Log;
         internal static string Dir;
@@ -41,7 +41,7 @@ namespace Apocaraiders
         internal static ConfigEntry<float> TurnRate, CrouchChance, SensorInterval, ReactionTime, FeelerLength, MeleeFeelerLength, FeelerAngle, AdvanceChance, AdvanceMin, AdvanceMax, StuckBackupSeconds, StuckMemorySeconds, MaxDistance;
         internal static ConfigEntry<int> FeelerCount, StuckGiveUpCount;
         internal static ConfigEntry<bool> SensesEnabled, MuffleSounds, SensesLog, ShowGhosts, BailOutAware;
-        internal static ConfigEntry<float> SightCone, SightRange, DarkSightRange, DaylightIntensity, NoticeSeconds, LoseSeconds, SearchSeconds, LookInterval, ArriveDistance, MuffleFactor,
+        internal static ConfigEntry<float> SightCone, SightRange, DarkSightRange, DaylightIntensity, NoticeSeconds, LoseSeconds, SearchSeconds, ReachSeconds, LookInterval, ArriveDistance, MuffleFactor,
             ShotRangePistol, ShotRangeSmg, ShotRangeRifle, ShotRangeSniper, ShotRangeShotgun, ShotRangeCrossbow, TauntRange, EngineMinRange, EngineMaxRange, EngineMinHp, EngineMaxHp, EngineIdleFactor, ThrowRange, BailOutAwareRange, ExplosionRange;
         internal static ConfigEntry<string> NpcShotRanges, HumanFactions;
         internal static ConfigEntry<bool> NavEnabled, NavLog, ShowNav;
@@ -202,6 +202,7 @@ namespace Apocaraiders
             NoticeSeconds = Config.Bind("Senses", "NoticeSeconds", 0.2f, new ConfigDescription("How long a target has to be in view before the NPC reacts, s.", new AcceptableValueRange<float>(0f, 5f)));
             LoseSeconds = Config.Bind("Senses", "LoseSeconds", 0.3f, new ConfigDescription("How long a target can be out of view before the NPC counts it as lost and goes to where it last saw it, s.", new AcceptableValueRange<float>(0f, 10f)));
             SearchSeconds = Config.Bind("Senses", "SearchSeconds", 15f, new ConfigDescription("How long an NPC looks around at the place it went to check before it loses interest, s.", new AcceptableValueRange<float>(0f, 120f)));
+            ReachSeconds = Config.Bind("Senses", "ReachSeconds", 10f, new ConfigDescription("Time an NPC is given to reach a spot it goes to check, s, plus 1 s for every 2.5 m of distance; then it searches from where it got (an unreachable spot no longer holds it forever).", new AcceptableValueRange<float>(2f, 120f)));
             ArriveDistance = Config.Bind("Senses", "ArriveDistance", 1.5f, new ConfigDescription("How close to the remembered spot counts as being there, m.", new AcceptableValueRange<float>(0.5f, 10f)));
             LookInterval = Config.Bind("Senses", "LookInterval", 0.15f, new ConfigDescription("How often each NPC looks, s (a couple of rays per look).", new AcceptableValueRange<float>(0.05f, 2f)));
             MuffleSounds = Config.Bind("Senses", "MuffleSounds", false, "Walls muffle sounds: an NPC with no line to the sound hears it only within MuffleFactor % of the range (one extra ray per NPC in range).");
@@ -214,7 +215,7 @@ namespace Apocaraiders
             ShotRangeCrossbow = Config.Bind("Senses", "ShotRangeCrossbow", 15f, new ConfigDescription("A crossbow shot is heard this far, m.", new AcceptableValueRange<float>(0f, 1000f)));
             NpcShotRanges = Config.Bind("Senses", "NpcShotRanges", "Flexa=150, Gungirl=150, Lugnut=150, Scrud=150, Boltjaw=120, Sprokka=80, Pistoleer=80, Gunnar=150, Lugger=150",
                 "How far each NPC type's gunfire is heard, m, as Type=metres pairs; a type not listed uses the range of its weapon class above.");
-            TauntRange = Config.Bind("Senses", "TauntRange", 15f, new ConfigDescription("A human's combat shout tells same-faction humans within this range where its target (or the ghost it is going to) is, and tells its enemies where it stands, m. 0 = off.", new AcceptableValueRange<float>(0f, 200f)));
+            TauntRange = Config.Bind("Senses", "TauntRange", 15f, new ConfigDescription("A human's shout passes on what it knows to same-faction humans within this range - what it sees (as sight) or the spot it is going to check (at that spot's own rank) - and tells its enemies where it stands, m. 0 = off.", new AcceptableValueRange<float>(0f, 200f)));
             HumanFactions = Config.Bind("Senses", "HumanFactions", "Scrapyard,Coyotes", "Which factions (object tags) count as humans for taunts.");
             EngineMinRange = Config.Bind("Senses", "EngineMinRange", 50f, new ConfigDescription("Your running engine is heard this far with the weakest engine (EngineMinHp), m.", new AcceptableValueRange<float>(0f, 1000f)));
             EngineMaxRange = Config.Bind("Senses", "EngineMaxRange", 150f, new ConfigDescription("... and this far with the strongest (EngineMaxHp), m.", new AcceptableValueRange<float>(0f, 1000f)));
@@ -247,7 +248,7 @@ namespace Apocaraiders
             NavLog = Config.Bind("Debug", "NavLog", false, "Log the structures found and mapped (size, cells, time taken).");
             ShowNav = Config.Bind("Debug", "ShowNav", false, "Draw each nearby structure's mapping state and, in cyan, the next map waypoint of every NPC routing through one.");
             SensesLog = Config.Bind("Debug", "SensesLog", false, "Log every detection event: who sees, hears, loses, searches, gives up; every ghost made.");
-            ShowGhosts = Config.Bind("Debug", "ShowGhosts", false, "Draw the ghosts in the world (a diamond and a label: number, source, what it is about, holders, age) and each alert NPC's state above its head. Colours: red sight, magenta hit, orange taunt, yellow gunshot, green thrown item, blue engine.");
+            ShowGhosts = Config.Bind("Debug", "ShowGhosts", false, "Draw the ghosts in the world (a diamond and a label: number, source, what it is about, holders, age) and each alert NPC's state above its head. Colours: red sight (own, or passed on by a friend's shout), magenta hit, orange an enemy's shout, yellow gunshot, green thrown item, blue engine. Ranks: sight > any sound > engine.");
             BrainLog = Config.Bind("Debug", "BrainLog", false, "Log every NPC movement decision (chase, hold, advance, stuck, rest) with the reason and distance.");
 
             try

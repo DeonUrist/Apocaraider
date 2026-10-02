@@ -180,14 +180,14 @@ namespace Apocaraiders
             }
         }
 
-        // the floor of a cell: the walkable surface (upward facing, room for a body above it) nearest to the structure's base height.
+        // the floor of a cell: the lowest walkable surface (upward facing, room for a body above it, not inside rock) within 6 m of the base height.
         // Ray by ray from the top down (a multi-hit query reports one hit per collider, and a cave's roof and floor can be one mesh; ray
         // casts skip back faces, so the inside of a cave roof is passed through and its floor is found).
         private static float Floor(Structure s, int x, int z)
         {
             Vector3 c = CellCenter(s, x, z, s.RefY);
             float y0 = s.Box.max.y + 1f, bottom = s.RefY - 8f;
-            float best = float.NaN, bestD = float.MaxValue;
+            float best = float.NaN;
             RaycastHit h;
             for (int k = 0; k < 8 && y0 > bottom; k++)
             {
@@ -195,13 +195,13 @@ namespace Apocaraiders
                 y0 = h.point.y - 0.05f;
                 if (h.normal.y < 0.6f) continue;                       // a wall or a steep rock face
                 float y = h.point.y;
-                float d = Mathf.Abs(y - s.RefY);
-                if (d >= bestD || d > 6f) { if (y < s.RefY - 6f) break; continue; }
+                if (y > s.RefY + 6f) continue;                          // roofs, rock tops above the structure
+                if (y < s.RefY - 6f) break;
                 Vector3 f = new Vector3(c.x, y, c.z);
                 if (Physics.CheckCapsule(f + Vector3.up * (Ankle + Radius), f + Vector3.up * (HeadTop - Radius), Radius, BakeMask, QueryTriggerInteraction.Ignore)) continue;
                 if (InsideSolid(f)) continue;
-                best = y; bestD = d;
-            }
+                best = y;                                               // keep going: the LOWEST free surface is the floor (a wreck's deck,
+            }                                                           // a crate top or a cave roof above it is not where NPCs walk)
             return best;
         }
 
@@ -255,27 +255,28 @@ namespace Apocaraiders
         // ---------- routing ----------
         // A waypoint toward goal for an NPC at pos, or false when no structure is involved / the way is straight. pathLeft = path length to the
         // goal (inside) or to the exit plus the straight rest (outside), for the brain's progress check.
+        internal static string LastReason = "";
         internal static bool Next(GameObject owner, Vector3 pos, Vector3 goal, out Vector3 next, out float pathLeft)
         {
-            next = goal; pathLeft = 0f;
+            next = goal; pathLeft = 0f; LastReason = "";
             if (!On) return false;
             Structure s = null;
             foreach (var t in _structures) if (t.Baked && t.FloorY != null && t.Root != null && Inside(t, pos)) { s = t; break; }
-            if (s == null) return false;
+            if (s == null) { LastReason = ""; return false; }
             int x, z; CellOf(s, pos, out x, out z);
             int from = NearestWalkable(s, x, z, 3);
-            if (from < 0) return false;
-            if (Mathf.Abs(pos.y - s.FloorY[from]) > 2.5f) return false;   // on the roof of a cave, on a rock above a camp: not on this map
+            if (from < 0) { LastReason = "no free map cell near it in " + s.Name; return false; }
+            if (Mathf.Abs(pos.y - s.FloorY[from]) > 2.5f) { LastReason = "not on the floor of " + s.Name; return false; }   // on the roof of a cave, on a rock above a camp: not on this map
             int gx, gz;
             bool goalInside = CellOf(s, goal, out gx, out gz);
             int goalCell = goalInside ? NearestWalkable(s, gx, gz, 4) : -1;
             if (goalInside && (goalCell < 0 || Mathf.Abs(goal.y - s.FloorY[goalCell]) > 3f)) goalInside = false;   // in a wall / above the map: outside
-            if (goalInside && GridSight(s, from, goalCell)) return false;  // straight across the floor: the feelers do the rest
-            if (!goalInside && IsEdge(s, from)) return false;             // already at the edge of the footprint: out we go
+            if (goalInside && GridSight(s, from, goalCell)) { LastReason = "straight line to the goal on the " + s.Name + " map"; return false; }  // straight across the floor: the feelers do the rest
+            if (!goalInside && IsEdge(s, from)) { LastReason = "at the edge of " + s.Name; return false; }             // already at the edge of the footprint: out we go
 
             var f = FieldFor(s, goal, goalInside, goalCell);
             float d0 = f.Dist[from];
-            if (float.IsInfinity(d0)) return false;                       // no way from here (walled-in spot): let the feelers try
+            if (float.IsInfinity(d0)) { LastReason = "no way out of this spot on the " + s.Name + " map"; return false; }                       // no way from here (walled-in spot): let the feelers try
             pathLeft = d0;
             // descend the field up to 16 cells, keep the farthest cell still in grid sight
             int cur = from, pick = from;
@@ -286,7 +287,7 @@ namespace Apocaraiders
                 cur = nb;
                 if (GridSight(s, from, cur)) pick = cur; else break;
             }
-            if (pick == from) { int nb = Downhill(s, f, from); if (nb < 0) return false; pick = nb; }
+            if (pick == from) { int nb = Downhill(s, f, from); if (nb < 0) { LastReason = "no downhill cell on the " + s.Name + " map"; return false; } pick = nb; }
             next = CellCenter(s, pick % s.W, pick / s.W, s.FloorY[pick]);
             Remember(owner, next, s);
             return true;
