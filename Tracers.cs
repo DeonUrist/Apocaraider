@@ -183,7 +183,7 @@ namespace Apocaraiders
             _counts.Clear();
             _rangedHit = null; _metalImpact = null; _effectsLooked = false;
             _carRoots.Clear();
-            _isPart.Clear();
+            _isPart.Clear(); _headMul.Clear();
             _reported.Clear();
             Hud.OnSceneLoaded();
             Aim.OnSceneLoaded();
@@ -423,10 +423,11 @@ namespace Apocaraiders
             bool isPart = IsVehiclePart(go) || (owningPart != null && IsVehiclePart(owningPart.gameObject)) || go.CompareTag("vehPartRemoved");
             bool creature = !isPart && (HasBodypart(go) || HasBodypart(go.transform.root.gameObject));
             if (creature) Senses.Hurt(go, s.Player);
-            bool feedback = creature && (Plugin.DamageNumbers.Value != 0 || Plugin.HitMarker.Value);
+            bool feedback = creature && Plugin.HudEnabled.Value && (Plugin.DamageNumbers.Value != 0 || Plugin.HitMarker.Value);
             float before = Plugin.HitLog.Value || feedback ? HealthOf(go) : 0f;
             Replay(fsm, go.layer == 10 && gun.ActorHit != null ? gun.ActorHit : gun.GetLayer, falloff);
-            Replay(fsm, gun.Hit, falloff, Plugin.VehicleDamage.Value && isPart);
+            float headF = creature && col_isHead(go) && !IsPlayerObj(go) ? HeadFactor(go) : 1f;     // [Gunplay] HeadshotMultiplier instead of the head's own x2
+            Replay(fsm, gun.Hit, falloff * headF, Plugin.VehicleDamage.Value && isPart);
             float after = Plugin.HitLog.Value || feedback ? HealthOf(go) : 0f;
             if (feedback)
             {
@@ -441,6 +442,36 @@ namespace Apocaraiders
                     + (gun.Damage != null ? gun.Damage.Value * falloff : 0f).ToString("0.0") + " (x" + falloff.ToString("0.00") + ")"
                     + (float.IsNaN(before) ? ", no Health FSM" : ", Health " + before.ToString("0.0") + " -> " + after.ToString("0.0")));
             }
+        }
+
+        // An NPC's head carries its own Bodypart FSM whose damage state multiplies the damage (FloatMultiply, x2 on every NPC) before taking it
+        // off Health. A hit there is pre-scaled so the result is [Gunplay] HeadshotMultiplier x the damage. Cached per head object.
+        private static readonly Dictionary<int, float> _headMul = new Dictionary<int, float>();
+        private static float HeadFactor(GameObject head)
+        {
+            float m;
+            int id = head.GetInstanceID();
+            if (!_headMul.TryGetValue(id, out m))
+            {
+                m = 1f;
+                foreach (var f in head.GetComponents<PlayMakerFSM>())
+                {
+                    if (f == null || f.FsmName != "Bodypart" || f.Fsm == null || f.Fsm.States == null) continue;
+                    foreach (var st in f.Fsm.States)
+                    {
+                        if (st.Actions == null) continue;
+                        foreach (var a in st.Actions) { var fm = a as FloatMultiply; if (fm != null && fm.multiplyBy != null && fm.multiplyBy.Value > 0f) m = fm.multiplyBy.Value; }
+                    }
+                }
+                _headMul[id] = m;
+            }
+            return Mathf.Max(0f, Plugin.HeadshotMultiplier.Value) / m;
+        }
+
+        private static bool IsPlayerObj(GameObject go)
+        {
+            for (var t = go.transform; t != null; t = t.parent) if (t.CompareTag("Player")) return true;
+            return false;
         }
 
         // the hit object is a creature's head when it is a child with its own Bodypart FSM (the player's "head", NPC mixamorig:Head)
@@ -981,6 +1012,7 @@ namespace Apocaraiders
         {
             if (s.Impact != null) UnityEngine.Object.Instantiate(s.Impact, point, Quaternion.identity);
             if (target == null || Mathf.Abs(damage) < 0.01f) return;
+            if (col_isHead(target) && !IsPlayerObj(target)) damage *= HeadFactor(target);
             var fsms = target.GetComponents<PlayMakerFSM>();
             foreach (var f in fsms)
                 if (f.FsmName == "Bodypart")
@@ -1188,8 +1220,10 @@ namespace Apocaraiders
                 Color tc = Plugin.TracerColor.Value, bc = Plugin.BoltColor.Value;
                 float tw = Plugin.TracerWidth.Value, tl = Plugin.TracerLength.Value;
                 float bw = Plugin.BoltWidth.Value, bl = Plugin.BoltLength.Value;
+                bool tracers = Plugin.TracersDraw.Value, mine = Plugin.PlayerGunTracers.Value;
                 foreach (var s in _shots)
                 {
+                    if (!s.Bolt && (!tracers || (s.Gun != null && !mine))) continue;      // [Gunplay] Tracers / PlayerGunTracers (bolts always show)
                     float len = Mathf.Min(s.Bolt ? bl : tl, s.Travelled);
                     if (len <= 0.01f) continue;
                     Vector3 head = s.Pos, tail = s.Pos - s.Dir * len;

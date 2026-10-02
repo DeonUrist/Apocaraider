@@ -115,32 +115,20 @@ BepInEx\plugins\Apocaraiders\Sounds\Gungirl\*.wav / *.ogg
 
 `BepInEx\config\com.denis.apocalypter.apocaraiders.cfg`, or in game in the Apocasetter Mods menu.
 
-- **[General] Enabled**: new Gungirls appear among the raiders.
-- **[Gungirl] Chance**: % of Flexa spawns that are Gungirls (0 to 100).
-- **[Gungirl] Model / Texture**: her body model and texture in the mod folder. You can make your own: the model has to be
-  rigged to Flexa's skeleton (see below).
-- **[Gungirl] Voice**: the folder with her voice clips (see below).
-- **[Gungirl] VoiceMatchLoudness / VoiceVolume**: her clips are brought to Flexa's loudness, then scaled by VoiceVolume (1 = as loud as Flexa).
-- **[Gungirl] VoiceIntervalMin / VoiceIntervalMax**: the pause between her shouts in a fight, in seconds (default 2 to 8; Flexa uses 0.1 to 4).
-- **[Gungirl] HideParts**: Flexa's attachments she doesn't wear (default: beard, headband, armband).
-- **[Tracers]**: on/off (NPCs and, separately, your own guns), bullet and bolt speed, colour, width, length and glow,
-  the falloff range per weapon type, shotgun pellets and spread, ImpactEffects, MetalSparks and MetalSparksScale, vehicle damage on/off and VehicleDamagePer1, the
-  metal-plate chance, and the most bullets in flight at once.
-- **[NpcAim]**: on/off, FacingTolerance (no burst until the body faces you within this many degrees), AimTimeScale (% of the game's pause between bursts, 50 = twice as fast), AimBaseDistance, AimDelayPer5m, SpreadPer5m, EngagePercent (fire within this % of the reach),
-  EngagePatience, HoldRecheckMin/Max (1 to 4 s reaction time once you come into reach), LeadTargets, LeadAccuracy
-  (0 = no lead, 1 = perfect), LeadError (% speed misjudgement), MaxLeadTime.
-- **[Brain]**: on/off, ReactionTime (% of the default thinking/waiting times, 1-500), ScaleWithActors (think less often with many NPCs engaged, off), TurnRate (deg/s), AimPose (gun kept up while holding), CrouchChance (% of holds spent kneeling), SensorInterval (how often NPC eyes look, 0.1 s), FeelerLength / MeleeFeelerLength / FeelerAngle / FeelerCount, DropCheck, ShooterPathing, AdvanceChance (% per hold
-  recheck that a holding gunman runs at you) and AdvanceMin/Max (s), StuckBackupSeconds, StuckMemorySeconds, StuckGiveUpCount, MaxDistance.
-- **[Senses]**: on/off, SightCone, SightRange / DarkSightRange, DaylightIntensity, NoticeSeconds, LoseSeconds, SearchSeconds, ArriveDistance,
-  LookInterval, MuffleSounds / MuffleFactor (off), GhostTimeout, ShoutKey / PlayerShoutRange / ShoutCooldown / ShoutVolume, ShotRange per weapon class, NpcShotRanges (per NPC type), TauntRange, HumanFactions,
-  EngineMinRange / EngineMaxRange / EngineMinHp / EngineMaxHp / EngineIdleFactor, BlastRange / BlastPrefabs, ThrowRange, BailOutAware / BailOutAwareRange / ExplosionRange (with Apocapatrol).
-- **[Nav]**: on/off, BakeRange, CellSize, Margin, MaxStep, BakeBudgetMs, FieldSeconds.
-- **[Hud]**: DamageNumbers (0/1/2), DamageFontSize, HitMarker on/off, HitMarkerSize.
-- **[Debug] HitLog**: logs every bullet that hits a creature with its damage and the creature's health before and after.
-- **[Debug] NavLog / ShowNav**: log the structures mapped; draw their state and the NPCs' map waypoints.
-- **[Debug] SensesLog / ShowGhosts**: log every detection event; draw the ghosts and alert states in the world.
-- **[Debug] BrainLog**: logs every NPC movement decision (chase, hold, advance, stuck, rest) with the reason.
-- **[Debug] SpawnKey** (F9): spawns a Gungirl in front of you.
+- **[General]** EnableHudEffects (damage numbers and hit marker), EnableGunplay (real bullets, falloff, headshots, NPC aim pacing,
+  vehicle damage), EnableNpcDetection (sight, hearing, ghosts, search), EnableNpcPathfinding (steering, structure maps, shooting
+  positions), EnableFemaleNpc (Gungirls among the raiders).
+- **[Hud]** FloatingDamage (0 off, 1 list top right, 2 floating numbers), HitMarker.
+- **[Gunplay]** Tracers (draw bullet trails), PlayerGunTracers (also for your own shots), BulletSpeed, BoltSpeed, HeadshotMultiplier
+  (1.5: your bullets in an NPC's head, NPC bullets in yours and in each other's), VehicleDamage, WheelPopOff, NpcAim,
+  AdjustHumanBossHP (40 %: Duke Ironjaw and Buzzgut).
+- **[Detection]** PlayerShoutKey + PlayerShoutKeyModifier (Alt+Q), SightCone, SightRange, DarkSightRange, MuffleSounds.
+- **[Pathfinding]** ScaleWithActors.
+- **[Debug]** VerboseLog (every log of the mod, and map pictures in `config\Apocaraiders\NavDump`), ShowNavigation (ghosts, NPC states
+  and map waypoints drawn in the world).
+
+Everything else (Gungirl looks and voice, tracer colours, weapon ranges, aim pacing, movement, hearing ranges, maps) is fixed in
+the code (`Plugin.cs`, the `H(...)` lines): each can be put back in the config file by changing `H(` to `Config.Bind(`.
 
 ## Making your own body
 

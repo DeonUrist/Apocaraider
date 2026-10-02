@@ -27,7 +27,7 @@ namespace Apocaraiders
         // called by Tracers for every player bullet that hits a creature (damage < 0 in the game's convention)
         public static void PlayerHit(GameObject target, Vector3 point, float damage, bool head)
         {
-            if (target == null) return;
+            if (target == null || !Plugin.HudEnabled.Value) return;
             int mode = Plugin.DamageNumbers.Value;
             if (mode == 0 && !Plugin.HitMarker.Value) return;
             float now = Time.unscaledTime;
@@ -47,7 +47,7 @@ namespace Apocaraiders
         // a player bullet took pct % off a vehicle part's condition: a light blue number ("-1.2%")
         public static void PartHit(GameObject part, Vector3 point, float pct)
         {
-            if (part == null || Plugin.DamageNumbers.Value == 0) return;
+            if (part == null || !Plugin.HudEnabled.Value || Plugin.DamageNumbers.Value == 0) return;
             float now = Time.unscaledTime;
             for (int i = 0; i < _pending.Count; i++)
             {
