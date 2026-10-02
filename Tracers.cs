@@ -378,6 +378,16 @@ namespace Apocaraider
             return ok;
         }
 
+        // (1.5.2) A dead NPC is a separate "<Name>_Dead" ragdoll (layer Item, limbs on Default with Bodypart FSMs that add to a Health
+        // the corpse doesn't have): a Bodypart on a body with no Health FSM. The game picks the hit effect by layer (Actor = blood), so
+        // its limbs got the ground's dust; and our creature test showed damage numbers on it.
+        private static bool IsCorpse(GameObject go)
+        {
+            if (go == null || IsPlayerObj(go)) return false;
+            if (!HasBodypart(go) && !HasBodypart(go.transform.root.gameObject)) return false;
+            return float.IsNaN(HealthOf(go));
+        }
+
         private static bool HasBodypart(GameObject go)
         {
             foreach (var f in go.GetComponents<PlayMakerFSM>()) if (f != null && f.FsmName == "Bodypart") return true;
@@ -426,11 +436,12 @@ namespace Apocaraider
             var vn = fsm.Variables.GetFsmVector3("hitNormal"); if (vn != null) vn.Value = h.normal;
             // vehicle parts carry a Bodypart FSM too (their condition): not a creature - no hurt ghost, no white/red number (the part rule shows blue)
             bool isPart = OwningPart(go.transform) != null || go.CompareTag("vehPartRemoved") || IsVehiclePart(go);   // the same test HitWorld uses (a vehPart-tagged ancestor)
-            bool creature = !isPart && (HasBodypart(go) || HasBodypart(go.transform.root.gameObject));
+            bool corpse = !isPart && IsCorpse(go);                // (1.5.2) a dead NPC's ragdoll: blood, but no number / marker / hurt
+            bool creature = !isPart && !corpse && (HasBodypart(go) || HasBodypart(go.transform.root.gameObject));
             if (creature) Senses.Hurt(go, s.Player);
             bool feedback = creature && Plugin.HudEnabled.Value && (Plugin.DamageNumbers.Value != 0 || Plugin.HitMarker.Value);
             float before = Plugin.HitLog.Value || feedback ? HealthOf(go) : 0f;
-            Replay(fsm, go.layer == 10 && gun.ActorHit != null ? gun.ActorHit : gun.GetLayer, falloff);
+            Replay(fsm, (go.layer == 10 || corpse) && gun.ActorHit != null ? gun.ActorHit : gun.GetLayer, falloff);   // a corpse bleeds like the living NPC did
             float headF = creature && col_isHead(go) && !IsPlayerObj(go) ? HeadFactor(go) : 1f;     // [Gunplay] HeadshotMultiplier instead of the head's own x2
             Replay(fsm, gun.Hit, falloff * headF, Plugin.VehicleDamage.Value && isPart);
             float after = Plugin.HitLog.Value || feedback ? HealthOf(go) : 0f;
@@ -1003,6 +1014,10 @@ namespace Apocaraider
                 float falloff = Falloff(ref s, dist) * s.DmgMult;
                 if (!onTarget && Penetrates(ref s, col, h, s.Damage * falloff)) continue;
                 if (onTarget) HitTarget(ref s, h.point, s.Damage * falloff, col.isTrigger ? col.gameObject : s.Target, dist);   // a head trigger: its own Bodypart (x2)
+                else if (s.Impact != null && IsCorpse(col.gameObject))     // (1.5.2) an NPC's bullet in a corpse: the shooter's own blood impact, not dust
+                {
+                    UnityEngine.Object.Instantiate(s.Impact, h.point, Quaternion.identity);   // as HitTarget does
+                }
                 else { WorldImpact(col, h.point, h.normal, s.Dir); HitWorld(ref s, col, h.point, s.Damage * falloff); }
                 s.Pos = h.point;
                 s.Travelled = dist;
