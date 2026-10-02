@@ -74,7 +74,8 @@ body, 100 m in daylight and down to 5 m in full darkness (your flashlight gives 
 your gunshots (80 m for a pistol, up to 150 m for rifles and shotguns), each other's gunfire, a human's combat shout (it tells its
 own faction within 15 m where you are and tells its enemies where it stands), explosions (grenades, blast lances, Blast Rats and
 Blast Zombies, 150 m, like a gunshot), an item you throw (10 m around where it lands) and
-your running engine (50 m for the weakest engines to 150 m for the strongest, half while idling, nothing when it's off). What an NPC
+your running engine (50 m for the weakest engines to 150 m for the strongest, half while idling, nothing when it's off), your car horn
+(200 m for every car - the strongest engine's range + 50 m; NPCs it reaches beyond your engine's range go to where it last sounded). What an NPC
 hears or saw becomes a "ghost", a remembered spot it goes to check; one event makes one ghost shared by everyone it alerted, and an
 NPC keeps the more trustworthy knowledge (sight over a gunshot - or a hit, an explosion, a thrown item - over a shout, over an
 engine; the newest of equal rank; newer news about the same person always wins, so a shot you fire pulls NPCs away from an older

@@ -15,7 +15,7 @@ they just see, hear, move and shoot like they mean it.
 ## Seeing and hearing
 
 * Raiders see what is in front of them, not through the back of their heads. In the dark they barely see you - unless your flashlight is on.
-* They hear gunshots, explosions, car engines, items you throw and shouts, each from its own distance.
+* They hear gunshots, explosions, car engines and horns, items you throw and shouts, each from its own distance.
 * Lose them and they go to where they last saw you, follow where you went a few times, then search before giving up.
 * A raider who spots you shouts and his friends nearby join in.
 * Peaceful factions (the Coyote towns) ignore your shooting - until you attack one of them. Then the whole faction hunts you.

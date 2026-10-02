@@ -95,6 +95,7 @@ namespace Apocaraider
             _ghosts.Clear(); _agents.Clear(); _ignored.Clear(); _hpOf.Clear(); _prefabOf.Clear(); _presentTags.Clear(); Nwh.Clear();
             _player = null; _playerHead = null; _playerCar = null; _flashlight = null; _inCarFsm = null; _grabFsm = null; _thrown = null;
             Storm.Reset();
+            _hornFsm = null;
             Persist.ResetForScene();
         }
 
@@ -640,7 +641,9 @@ namespace Apocaraider
             {
                 if (!On) return true;
                 var fsm = __instance.Fsm;
-                if (fsm == null || fsm.Name != "Sound" || fsm.ActiveStateName != "attack") return true;
+                if (fsm == null) return true;
+                if (fsm.Name == "INPUT_Horn") { _hornFsm = fsm; _hornAt = Time.time; return true; }    // the player's car horn starts (Engine() picks it up)
+                if (fsm.Name != "Sound" || fsm.ActiveStateName != "attack") return true;
                 var a = Get(fsm.GameObject);
                 if (a == null || !a.Human || Plugin.TauntRange.Value <= 0f) return true;
                 Taunt(a);
@@ -831,10 +834,39 @@ namespace Apocaraider
 
         // the player's car: a running engine is heard EngineMinRange..EngineMaxRange m by horsepower, half of it idling, nothing switched off
         private static Dictionary<int, float> _hpOf = new Dictionary<int, float>();
+        // The car horn (the car's DriveTrigger/INPUT [INPUT_Horn] FSM: Horn button down -> loop the horn clip, up -> stop): heard like the
+        // engine (same rank, peaceful factions, sandstorm) by everyone within the engine's longest range + 50 m (every horn the same), every
+        // engine tick while it sounds (a short tap counts too: the AudioPlay hook stamps the start).
+        private static Fsm _hornFsm; private static float _hornAt = -10f;
+
         private static void Engine(float now)
         {
             var car = PlayerCar();
-            if (car == null || !Apocapatrol_EngineRunning(car)) return;
+            if (car == null) return;
+            bool engineOn = Apocapatrol_EngineRunning(car);
+            bool hornOn = _hornFsm != null && _hornFsm.GameObject != null && _hornFsm.GameObject.transform.root == car.transform.root
+                          && (now - _hornAt < 0.6f || _hornFsm.ActiveStateName == "on");
+            if (!engineOn && !hornOn) return;
+            Vector3 cpos = car.transform.position;
+            float er = 0f;
+            if (engineOn)
+            {
+                string about;
+                er = EngineRadius(car, out about);
+                Noise(car, cpos, er, Src.Engine, about, null, null, _player);
+                ReleaseEngineHolders(car, cpos, er, now);
+            }
+            if (hornOn)
+            {
+                // its own ghost (source = the horn object): it follows the car while the horn sounds and then stays where it last sounded,
+                // so NPCs it reached beyond the engine's range walk there. NPCs within the engine's range keep the engine ghost.
+                float er2 = er * er;
+                Noise(_hornFsm.GameObject, cpos, Plugin.EngineMaxRange.Value + 50f, Src.Engine, "horn", engineOn ? (Func<Agent, bool>)(a => (a.T.position - cpos).sqrMagnitude > er2) : null, null, _player);
+            }
+        }
+
+        private static float EngineRadius(GameObject car, out string about)
+        {
             float hp;
             if (!_hpOf.TryGetValue(car.GetInstanceID(), out hp))
             {
@@ -857,8 +889,12 @@ namespace Apocaraider
             float speed = rb != null ? rb.velocity.magnitude : 0f;
             float thr = Nwh.Throttle(car);
             if (speed < 1.5f && thr < 0.05f) radius *= Mathf.Clamp01(Plugin.EngineIdleFactor.Value / 100f);
-            Vector3 cpos = car.transform.position;
-            Noise(car, cpos, radius, Src.Engine, "engine " + (hp > 0f ? hp + " HP" : "") , null, null, _player);
+            about = "engine " + (hp > 0f ? hp + " HP" : "");
+            return radius;
+        }
+
+        private static void ReleaseEngineHolders(GameObject car, Vector3 cpos, float radius, float now)
+        {
             // the engine ghost is one shared ghost that moves with the car and is refreshed every tick: an NPC that drove out of earshot
             // would follow it for ever - let go of it where the NPC stands
             foreach (var g in _ghosts)

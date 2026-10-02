@@ -18,7 +18,7 @@ namespace Apocaraider
     {
         public const string GUID = "com.denis.apocalypter.apocaraider";
         public const string NAME = "Apocaraider";
-        public const string VERSION = "1.2.1";
+        public const string VERSION = "1.2.2";
 
         internal static ManualLogSource Log;
         internal static string Dir;
