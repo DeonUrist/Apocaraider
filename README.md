@@ -1,14 +1,21 @@
 # Apocaraider
 
 Smarter raiders and real gunfights for Apocalypter: real bullets, headshots and car-part damage; raiders that see, hear, remember
-and search; pathing that knows camps, caves and buildings; and Gungirl, a female raider. The short player description is in NEXUS.md.
+and search; pathing that knows camps, caves and buildings; and female raiders, Gungirl and Shoota. The short player description is in NEXUS.md.
 
 ## Gungirl
 
 A woman among the Flexa raiders. She shows up in the same camps and places as Flexa, carries the same guns, fights the
 same way, and leaves her own corpse when she dies. A share of the Flexas the game spawns are Gungirls instead
-(50 % by default). She and her corpse are named Gungirl in the game, stay Gungirls after a save and load, and her corpse
-is labelled Gungirl when you look at it.
+(`[General] FemalePopulation`, 50 % by default). She and her corpse are named Gungirl in the game, stay Gungirls after a save
+and load, and her corpse is labelled Gungirl when you look at it.
+
+## Shoota
+
+The same for Sprokka: a share of the Sprokkas the game spawns (the same `FemalePopulation` %) are Shootas - her own body
+(`Models\Sprokka_female.glb`, `Models\sprokka_female.png`) without Sprokka's armour vest, his pistols and shiv, his fighting, and the
+female voice (`Sounds\Gungirl`). Her corpse is a Shoota too; both stay Shootas after a save and load. Crews spawned by other mods
+(Apocapatrol) are left as they are.
 
 Only new spawns are affected: the Flexas already in your world stay as they are.
 
@@ -146,6 +153,8 @@ Needs BepInEx 5. Copy the `Apocaraider` folder into `BepInEx\plugins\`, so you h
 BepInEx\plugins\Apocaraider\Apocaraider.dll
 BepInEx\plugins\Apocaraider\Models\Flexa_female.glb
 BepInEx\plugins\Apocaraider\Models\flexa_female.png
+BepInEx\plugins\Apocaraider\Models\Sprokka_female.glb
+BepInEx\plugins\Apocaraider\Models\sprokka_female.png
 BepInEx\plugins\Apocaraider\Sounds\Gungirl\*.wav / *.ogg
 ```
 
@@ -155,7 +164,7 @@ BepInEx\plugins\Apocaraider\Sounds\Gungirl\*.wav / *.ogg
 
 - **[General]** EnableHudEffects (damage numbers and hit marker), EnableGunplay (real bullets, falloff, headshots, NPC aim pacing,
   vehicle damage), EnableNpcDetection (sight, hearing, ghosts, search), EnableNpcPathfinding (steering, structure maps, shooting
-  positions), EnableFemaleNpc (Gungirls among the raiders).
+  positions), EnableFemaleNpc (Gungirls and Shootas among the raiders), FemalePopulation (% of Flexas / Sprokkas spawned female, 50).
 - **[Hud]** FloatingDamage (0 off, 1 list top right, 2 floating numbers), HitMarker, TurnOffCrosshair (hides the game's centre dot and
   gun crosshair; off by default).
 - **[Gunplay]** Tracers (draw bullet trails), PlayerGunTracers (also for your own shots), BulletSpeed, BoltSpeed, HeadshotMultiplier

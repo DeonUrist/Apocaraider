@@ -21,17 +21,48 @@ namespace Apocaraider
     // ("Gungirl_Dead(Clone)N"), and after a load the scan finds Gungirl* / Gungirl_Dead* roots and swaps their body again.
     // Versions before 0.6.0 marked her with a root scale x = y * (1 + 1/4096) instead; such Flexas from older saves are
     // renamed on sight (the scale is left alone - harmless).
+    //
+    // 1.7.0: the same for Sprokka -> Shoota (Models/Sprokka_female.glb + sprokka_female.png, her armour vest hidden), both at
+    // [General] FemalePopulation %. Each female type is a Variant: base prefab name, own name, model, texture, parts to hide.
     internal static class Gungirl
     {
         public const string Name = "Gungirl", CorpseName = "Gungirl_Dead";
 
-        private static SkinModel _model;
-        private static bool _modelTried;
-        private static Texture2D _tex;
-        private static bool _texTried;
-        private static readonly Dictionary<string, Mesh> _meshes = new Dictionary<string, Mesh>();   // per bone layout
+        private sealed class Variant
+        {
+            public string Base, Female;                 // prefab name ("Flexa") and her name ("Gungirl")
+            public string BaseCorpse, FemaleCorpse;     // "Flexa_Dead", "Gungirl_Dead"
+            public BepInEx.Configuration.ConfigEntry<string> ModelCfg, TexCfg, HideCfg;
+            public SkinModel Model; public bool ModelTried;
+            public Texture2D Tex; public bool TexTried;
+            public readonly Dictionary<string, Mesh> Meshes = new Dictionary<string, Mesh>();        // per bone layout
+            public readonly Dictionary<string, Material> Mats = new Dictionary<string, Material>(); // by material name
+
+            public bool IsBase(string n) { return n == Base || n.StartsWith(Base + "(", StringComparison.Ordinal); }
+            public bool IsBaseCorpse(string n) { return n.StartsWith(BaseCorpse, StringComparison.Ordinal); }
+            public bool IsFemale(string n) { return n == Female || n.StartsWith(Female + "(", StringComparison.Ordinal); }
+            public bool IsFemaleCorpse(string n) { return n.StartsWith(FemaleCorpse, StringComparison.Ordinal); }
+        }
+        private static Variant[] _variants;
+        private static Variant[] Variants
+        {
+            get
+            {
+                if (_variants == null)
+                    _variants = new[]
+                    {
+                        new Variant { Base = "Flexa", Female = Name, BaseCorpse = "Flexa_Dead", FemaleCorpse = CorpseName,
+                                      ModelCfg = Plugin.GungirlModel, TexCfg = Plugin.GungirlTexture, HideCfg = Plugin.GungirlHideParts },
+                        new Variant { Base = "Sprokka", Female = "Shoota", BaseCorpse = "Sprokka_Dead", FemaleCorpse = "Shoota_Dead",
+                                      ModelCfg = Plugin.ShootaModel, TexCfg = Plugin.ShootaTexture, HideCfg = Plugin.ShootaHideParts },
+                    };
+                return _variants;
+            }
+        }
+        // the female variant a root name belongs to (her or her corpse), or null
+        private static Variant FemaleOf(string n) { foreach (var v in Variants) if (v.IsFemale(n) || v.IsFemaleCorpse(n)) return v; return null; }
+
         private static readonly HashSet<Mesh> _ours = new HashSet<Mesh>();
-        private static readonly Dictionary<string, Material> _mats = new Dictionary<string, Material>();   // by material name: per-instance copies share one
         private static readonly HashSet<int> _dressed = new HashSet<int>();     // root ids already dressed (a skinned prop never re-enters Apply)
         private static GameObject _prefab;
         private static float _nextScan, _burstUntil; private static bool _burstPending;
@@ -43,11 +74,15 @@ namespace Apocaraider
         private static bool IsGungirlCorpse(string name) { return name.StartsWith(CorpseName, StringComparison.Ordinal); }
 
         // "Flexa(Clone)281" -> "Gungirl(Clone)281", "Flexa_Dead(Clone)" -> "Gungirl_Dead(Clone)"
-        private static void Rename(GameObject go)
+        private static Variant Rename(GameObject go)
         {
             string n = go.name;
-            if (IsFlexaCorpse(n)) go.name = CorpseName + n.Substring("Flexa_Dead".Length);
-            else if (IsFlexa(n)) go.name = Name + n.Substring("Flexa".Length);
+            foreach (var v in Variants)
+            {
+                if (v.IsBaseCorpse(n)) { go.name = v.FemaleCorpse + n.Substring(v.BaseCorpse.Length); return v; }
+                if (v.IsBase(n)) { go.name = v.Female + n.Substring(v.Base.Length); return v; }
+            }
+            return null;
         }
 
         // the pre-0.6.0 marker (root scale x = y * (1 + 1/4096)) - read only, to convert Gungirls from older saves
@@ -65,11 +100,13 @@ namespace Apocaraider
         public static bool MakeGungirl(GameObject root)
         {
             if (root == null) return false;
-            Rename(root);
-            return Apply(root, "api");
+            var v = Rename(root) ?? FemaleOf(root.name);
+            return v != null && Apply(root, v, "api");
         }
 
-        public static bool IsGungirl(GameObject root) { return root != null && (IsGungirlName(root.name) || IsGungirlCorpse(root.name)); }
+        // a female raider of any kind (Gungirl, Shoota) or her corpse
+        public static bool IsGungirl(GameObject root) { return root != null && FemaleOf(root.name) != null; }
+        public static bool IsFemale(GameObject root) { return IsGungirl(root); }
 
         // ---------- hooks ----------
         // Harmony postfix on HutongGames.PlayMaker.Actions.CreateObject.OnEnter
@@ -83,22 +120,26 @@ namespace Apocaraider
                 var prefabVar = __instance.gameObject;
                 if (prefabVar == null || prefabVar.Value == null) return;
                 string pn = Senses.PrefabOf(prefabVar.Value);      // cached per prefab asset: no name string per spawn
-
-                if (IsFlexaCorpse(pn))
+                foreach (var v in Variants)
                 {
-                    var owner = __instance.Fsm != null ? __instance.Fsm.GameObject : null;
-                    if (owner != null && IsGungirlName(owner.name))
+                    if (pn == v.BaseCorpse)
                     {
-                        Rename(go);                 // "Gungirl_Dead(Clone)"; the Health FSM appends the itemNameID number next
-                        Apply(go, "corpse");
+                        var owner = __instance.Fsm != null ? __instance.Fsm.GameObject : null;
+                        if (owner != null && v.IsFemale(owner.name))
+                        {
+                            Rename(go);                 // "Gungirl_Dead(Clone)"; the Health FSM appends the itemNameID number next
+                            Apply(go, v, "corpse");
+                        }
+                        return;
                     }
-                }
-                else if (pn == "Flexa")
-                {
-                    if (!Plugin.Enabled.Value) return;
-                    if (UnityEngine.Random.Range(0, 100) >= Plugin.GungirlChance.Value) return;
-                    Rename(go);                     // "Gungirl(Clone)"; the spawner appends the itemNameID number next
-                    Apply(go, "spawn");
+                    if (pn == v.Base)
+                    {
+                        if (!Plugin.Enabled.Value) return;
+                        if (UnityEngine.Random.Range(0, 100) >= Plugin.FemalePopulation.Value) return;
+                        Rename(go);                     // "Gungirl(Clone)"; the spawner appends the itemNameID number next
+                        Apply(go, v, "spawn");
+                        return;
+                    }
                 }
             }
             catch (Exception e) { Plugin.Log.LogError("CreateObject hook: " + e); }
@@ -144,36 +185,38 @@ namespace Apocaraider
                 if (m == null || _ours.Contains(m)) continue;
                 var bones = smr.bones;
                 if (bones == null || bones.Length < 10) continue;     // props, not bodies (Apply ignores them too)
-                Transform root = null; bool old = false;
+                Transform root = null; bool old = false; Variant fem = null;
                 for (var p = smr.transform; p != null; p = p.parent)
                 {
-                    if (IsGungirlName(p.name) || IsGungirlCorpse(p.name)) { root = p; old = false; }
-                    else if ((IsFlexa(p.name) || IsFlexaCorpse(p.name)) && IsOldMarked(p)) { root = p; old = true; }
+                    var fv = FemaleOf(p.name);
+                    if (fv != null) { root = p; old = false; fem = fv; }
+                    else if ((IsFlexa(p.name) || IsFlexaCorpse(p.name)) && IsOldMarked(p)) { root = p; old = true; fem = Variants[0]; }
                 }
                 if (root == null || _dressed.Contains(root.gameObject.GetInstanceID())) continue;
                 if (old) { Rename(root.gameObject); Plugin.Verbose("Gungirl: " + root.name + " converted from the old scale mark"); }
-                Apply(root.gameObject, "restored");
+                Apply(root.gameObject, fem, "restored");
             }
         }
 
         // ---------- the body swap ----------
-        private static bool Apply(GameObject root, string why)
+        private static bool Apply(GameObject root, Variant v, string why)
         {
+            if (v == null) return false;
             int swapped = 0;
             foreach (var smr in root.GetComponentsInChildren<SkinnedMeshRenderer>(true))
             {
                 if (smr.sharedMesh == null || _ours.Contains(smr.sharedMesh)) continue;
-                if (smr.bones == null || smr.bones.Length < 10) continue;     // only the body, not props
-                var mesh = MeshFor(smr);
+                if (smr.bones == null || smr.bones.Length < 10) continue;     // only the body, not props (Sprokka's vest has 6 bones)
+                var mesh = MeshFor(v, smr);
                 if (mesh == null) return false;
-                var mat = MaterialFor(smr.sharedMaterial);
+                var mat = MaterialFor(v, smr.sharedMaterial);
                 smr.sharedMesh = mesh;
                 if (mat != null) smr.sharedMaterial = mat;
                 swapped++;
             }
-            int hidden = HideParts(root);
+            int hidden = HideParts(root, v);
             if (swapped > 0) { Voice.Apply(root); Label(root); _dressed.Add(root.GetInstanceID()); }
-            if (swapped > 0) Plugin.Verbose("Gungirl: " + root.name + " (" + why + ") body swapped, " + hidden + " part(s) hidden");
+            if (swapped > 0) Plugin.Verbose(v.Female + ": " + root.name + " (" + why + ") body swapped, " + hidden + " part(s) hidden");
             return swapped > 0;
         }
 
@@ -182,6 +225,8 @@ namespace Apocaraider
         internal static int Label(GameObject root)
         {
             int n = 0;
+            var v = root != null ? FemaleOf(root.name) : null;
+            if (v == null) return 0;
             foreach (var f in root.GetComponents<PlayMakerFSM>())
             {
                 if (f == null || f.FsmName != "ItemName" || f.Fsm == null || !f.Fsm.Initialized) continue;
@@ -193,55 +238,59 @@ namespace Apocaraider
                         if (a == null || a.GetType().Name != "UiTextSetText") continue;     // by reflection: the action's field types pull in UnityEngine.UI
                         var fld = a.GetType().GetField("text");
                         var cur = fld != null ? fld.GetValue(a) as FsmString : null;
-                        if (cur != null && cur.Value == "Flexa") { fld.SetValue(a, new FsmString { Value = Name }); n++; }
+                        if (cur != null && cur.Value == v.Base) { fld.SetValue(a, new FsmString { Value = v.Female }); n++; }
                     }
                 }
             }
             return n;
         }
 
-        private static int HideParts(GameObject root)
+        private static int HideParts(GameObject root, Variant v)
         {
-            string list = Plugin.GungirlHideParts.Value ?? "";
+            string list = v.HideCfg.Value ?? "";
             if (list.Trim().Length == 0) return 0;
             var names = new List<string>();
             foreach (var s in list.Split(',')) { var n = s.Trim(); if (n.Length > 0) names.Add(n); }
             int count = 0;
-            foreach (var r in root.GetComponentsInChildren<MeshRenderer>(true))
+            foreach (var r in root.GetComponentsInChildren<Renderer>(true))
+            {
+                var sk = r as SkinnedMeshRenderer;
+                if (!(r is MeshRenderer) && sk == null) continue;
+                if (sk != null && (sk.sharedMesh == null || _ours.Contains(sk.sharedMesh) || (sk.bones != null && sk.bones.Length >= 10))) continue;   // never the body; skinned props (Sprokka's vest) yes
                 foreach (var n in names)
                     if (r.gameObject.name.StartsWith(n, StringComparison.OrdinalIgnoreCase))
                     {
                         if (r.enabled) { r.enabled = false; count++; }
                         break;
                     }
+            }
             return count;
         }
 
-        private static SkinModel Model()
+        private static SkinModel Model(Variant v)
         {
-            if (_modelTried) return _model;
-            _modelTried = true;
-            string path = ModPath(Plugin.GungirlModel.Value);
+            if (v.ModelTried) return v.Model;
+            v.ModelTried = true;
+            string path = ModPath(v.ModelCfg.Value);
             try
             {
-                _model = Gltf.Load(path);
-                Plugin.Log.LogInfo("Gungirl model: " + Path.GetFileName(path) + " - " + _model.Info);
+                v.Model = Gltf.Load(path);
+                Plugin.Log.LogInfo(v.Female + " model: " + Path.GetFileName(path) + " - " + v.Model.Info);
             }
-            catch (Exception e) { Plugin.Log.LogError("Gungirl model " + path + " could not be loaded: " + e.Message); _model = null; }
-            return _model;
+            catch (Exception e) { Plugin.Log.LogError(v.Female + " model " + path + " could not be loaded: " + e.Message); v.Model = null; }
+            return v.Model;
         }
 
-        private static Mesh MeshFor(SkinnedMeshRenderer smr)
+        private static Mesh MeshFor(Variant vr, SkinnedMeshRenderer smr)
         {
             var bones = smr.bones;
             var names = new string[bones.Length];
             for (int i = 0; i < bones.Length; i++) names[i] = bones[i] != null ? bones[i].name : null;
             string key = string.Join("|", names);
             Mesh cached;
-            if (_meshes.TryGetValue(key, out cached)) return cached;
-            _meshes[key] = null;   // one attempt per layout
-
-            var model = Model();
+            if (vr.Meshes.TryGetValue(key, out cached)) return cached;
+            vr.Meshes[key] = null;   // one attempt per layout
+            var model = Model(vr);
             if (model == null) return null;
 
             // bind poses: the game's own (if the mesh hands them out), else the table read from the asset
@@ -318,38 +367,38 @@ namespace Apocaraider
                 float d = (game - mine).magnitude;
                 if (d > worst) { worst = d; worstName = model.Joints[j]; }
             }
-            string msg = "Gungirl mesh for " + smr.name + ": " + n + " vertices, bind poses from " + bpSource
+            string msg = vr.Female + " mesh for " + smr.name + ": " + n + " vertices, bind poses from " + bpSource
                          + ", skeleton offset max " + (worst * 100f).ToString("0.0") + " cm (" + worstName + ")"
                          + (unmapped.Count > 0 ? ", joints without a game bone (use their parent): " + string.Join(", ", unmapped.ToArray()) : "");
             if (worst > 0.05f) Plugin.Log.LogWarning(msg + " - the armature was moved in Blender; she will be deformed");
             else Plugin.Log.LogInfo(msg);
 
-            _meshes[key] = mesh;
+            vr.Meshes[key] = mesh;
             _ours.Add(mesh);
             return mesh;
         }
 
-        private static Material MaterialFor(Material orig)
+        private static Material MaterialFor(Variant v, Material orig)
         {
             if (orig == null) return null;
             Material m;
             string key = orig.name;
             int cut = key.IndexOf(" (Instance)", StringComparison.Ordinal);
             if (cut > 0) key = key.Substring(0, cut);
-            if (_mats.TryGetValue(key, out m) && m != null) return m;
-            m = new Material(orig) { name = key + " (Gungirl)" };
-            var tex = Texture();
+            if (v.Mats.TryGetValue(key, out m) && m != null) return m;
+            m = new Material(orig) { name = key + " (" + v.Female + ")" };
+            var tex = Texture(v);
             if (tex != null) m.mainTexture = tex;
             m.hideFlags = HideFlags.DontUnloadUnusedAsset;
-            _mats[key] = m;
+            v.Mats[key] = m;
             return m;
         }
 
-        private static Texture2D Texture()
+        private static Texture2D Texture(Variant v)
         {
-            if (_texTried) return _tex;
-            _texTried = true;
-            string path = ModPath(Plugin.GungirlTexture.Value);
+            if (v.TexTried) return v.Tex;
+            v.TexTried = true;
+            string path = ModPath(v.TexCfg.Value);
             try
             {
                 var bytes = File.ReadAllBytes(path);
@@ -359,11 +408,11 @@ namespace Apocaraider
                 tex.filterMode = FilterMode.Trilinear;
                 tex.anisoLevel = 4;
                 tex.hideFlags = HideFlags.DontUnloadUnusedAsset;
-                _tex = tex;
-                Plugin.Log.LogInfo("Gungirl texture: " + Path.GetFileName(path) + " (" + tex.width + "x" + tex.height + ")");
+                v.Tex = tex;
+                Plugin.Log.LogInfo(v.Female + " texture: " + Path.GetFileName(path) + " (" + tex.width + "x" + tex.height + ")");
             }
-            catch (Exception e) { Plugin.Log.LogError("Gungirl texture " + path + " could not be loaded: " + e.Message); }
-            return _tex;
+            catch (Exception e) { Plugin.Log.LogError(v.Female + " texture " + path + " could not be loaded: " + e.Message); }
+            return v.Tex;
         }
 
         internal static string ModPath(string rel)
@@ -393,7 +442,7 @@ namespace Apocaraider
             at += Vector3.up * (FootDepth(prefab) + 0.05f);
             var go = UnityEngine.Object.Instantiate(prefab, at, Quaternion.LookRotation(-fwd) * prefab.transform.rotation);
             Register(go, Name);
-            bool ok = Apply(go, "debug key");
+            bool ok = Apply(go, Variants[0], "debug key");
             Plugin.Log.LogInfo("Gungirl: spawned " + go.name + " at " + at.ToString("F1") + (ok ? "" : " - but the model could not be applied, see the errors above"));
         }
 
@@ -417,8 +466,9 @@ namespace Apocaraider
             {
                 if (owner == null || _dressed.Contains(owner.GetInstanceID())) return;
                 string n = owner.name;
-                if (IsGungirlName(n)) Apply(owner, "restored");
-                else if (IsFlexa(n) && IsOldMarked(owner.transform)) { Rename(owner); Apply(owner, "restored"); }
+                var fv = FemaleOf(n);
+                if (fv != null) Apply(owner, fv, "restored");
+                else if (IsFlexa(n) && IsOldMarked(owner.transform)) { Rename(owner); Apply(owner, Variants[0], "restored"); }
             }
             catch (Exception e) { Plugin.Log.LogError("Gungirl: " + e); }
         }

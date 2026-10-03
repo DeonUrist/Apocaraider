@@ -18,7 +18,7 @@ namespace Apocaraider
     {
         public const string GUID = "com.denis.apocalypter.apocaraider";
         public const string NAME = "Apocaraider";
-        public const string VERSION = "1.6.1";
+        public const string VERSION = "1.7.0";
 
         internal static ManualLogSource Log;
         internal static string Dir;
@@ -26,8 +26,8 @@ namespace Apocaraider
         internal static ConfigEntry<bool> Enabled, VerboseLog, HitLog, GungirlVoiceMatch, HudEnabled, TracersDraw, PlayerGunTracers;
         internal static ConfigEntry<float> BossHpPercent;
         internal static ConfigEntry<float> GungirlVoiceVolume, GungirlVoiceIntervalMin, GungirlVoiceIntervalMax;
-        internal static ConfigEntry<int> GungirlChance;
-        internal static ConfigEntry<string> GungirlModel, GungirlTexture, GungirlVoice, GungirlHideParts;
+        internal static ConfigEntry<int> FemalePopulation;
+        internal static ConfigEntry<string> GungirlModel, GungirlTexture, GungirlVoice, GungirlHideParts, ShootaModel, ShootaTexture, ShootaHideParts;
         internal static ConfigEntry<Key> SpawnKey;
         internal static ConfigEntry<bool> TracersEnabled, VehicleDamage, PlayerTracers, NpcAimAtBody, AimEnabled, HitMarker, TurnOffCrosshair, LeadTargets, ImpactEffects, MetalSparks;
         internal static ConfigEntry<float> LeadAccuracy, LeadError, MaxLeadTime;
@@ -76,7 +76,10 @@ namespace Apocaraider
                 "NPCs steer around obstacles, use the maps of camps, caves and buildings, take shooting positions, kneel and aim. Off = the game's own movement.");
             NavEnabled = BrainEnabled;
             Enabled = Config.Bind("General", "EnableFemaleNpc", true,
-                "Female raiders (Gungirls) appear among the raiders. Off: no new ones; those already in the world keep their looks.");
+                "Female raiders appear among the raiders: Gungirls (female Flexas) and Shootas (female Sprokkas). Off: no new ones; those already in the world keep their looks.");
+            FemalePopulation = Config.Bind("General", "FemalePopulation", 50, new ConfigDescription(
+                "% of the Flexa and Sprokka raiders the game spawns that are female (Gungirl / Shoota) instead - same camps, gear and fighting.",
+                new AcceptableValueRange<int>(0, 100)));
 
             DamageNumbers = Config.Bind("Hud", "FloatingDamage", 2, new ConfigDescription(
                 "Damage your hits do, shown as: 0 = nothing, 1 = a list in the top right corner, 2 = numbers floating up from the hit point. White = damage, red with '!' = headshot, light blue = % of condition taken off a vehicle part.",
@@ -118,9 +121,6 @@ namespace Apocaraider
             ShowGhosts = ShowNav;
 
             // ---------- hidden settings: fixed values, not written to the config file. To expose one, change H( back to Config.Bind( ----------
-            GungirlChance = H("Gungirl", "Chance", 50, new ConfigDescription(
-                "% of the Flexa raiders the game spawns that are Gungirls instead (same camps, same gear and fighting).",
-                new AcceptableValueRange<int>(0, 100)));
             GungirlModel = H("Gungirl", "Model", "Models/Flexa_female.glb",
                 "Body model (.gltf or .glb), relative to the mod folder. Must be rigged to Flexa's skeleton (mixamorig bones). Read at game start.");
             GungirlTexture = H("Gungirl", "Texture", "Models/flexa_female.png",
@@ -140,6 +140,11 @@ namespace Apocaraider
                 new AcceptableValueRange<float>(0f, 60f)));
             GungirlHideParts = H("Gungirl", "HideParts", "beard, headband, armband",
                 "Flexa's attachments to hide on a Gungirl, comma-separated name starts: beard, headband, armband, bag1, pouch1, armor2, machete.");
+            ShootaModel = H("Shoota", "Model", "Models/Sprokka_female.glb",
+                "Shoota (female Sprokka) body model (.gltf or .glb), relative to the mod folder, rigged to the human mixamorig skeleton. Read at game start.");
+            ShootaTexture = H("Shoota", "Texture", "Models/sprokka_female.png", "Shoota body texture (PNG/JPG), relative to the mod folder. Read at game start.");
+            ShootaHideParts = H("Shoota", "HideParts", "armor2, armband",
+                "Sprokka's attachments to hide on a Shoota, comma-separated name starts: armor2 (the vest), armband, shiv.");
             PlayerTracers = H("Tracers", "PlayerGuns", true,
                 "Your own guns follow the same rules: visible bullets with travel time, the same range falloff and vehicle-part hits.");
             TracerColor = H("Tracers", "TracerColor", new Color(1f, 0.78f, 0.35f, 1f), "Bullet tracer colour (RGBA hex). Unlit: same brightness day and night.");
@@ -258,7 +263,7 @@ namespace Apocaraider
             ShotRangeSniper = H("Senses", "ShotRangeSniper", 150f, new ConfigDescription("A sniper rifle shot is heard this far, m.", new AcceptableValueRange<float>(0f, 1000f)));
             ShotRangeShotgun = H("Senses", "ShotRangeShotgun", 150f, new ConfigDescription("A shotgun blast is heard this far, m.", new AcceptableValueRange<float>(0f, 1000f)));
             ShotRangeCrossbow = H("Senses", "ShotRangeCrossbow", 15f, new ConfigDescription("A crossbow shot is heard this far, m.", new AcceptableValueRange<float>(0f, 1000f)));
-            NpcShotRanges = H("Senses", "NpcShotRanges", "Flexa=150, Gungirl=150, Lugnut=150, Scrud=150, Boltjaw=120, Sprokka=80, Pistoleer=80, Gunnar=150, Lugger=150",
+            NpcShotRanges = H("Senses", "NpcShotRanges", "Flexa=150, Gungirl=150, Lugnut=150, Scrud=150, Boltjaw=120, Sprokka=80, Shoota=80, Pistoleer=80, Gunnar=150, Lugger=150",
                 "How far each NPC type's gunfire is heard, m, as Type=metres pairs; a type not listed uses the range of its weapon class above.");
             AllClearRange = H("Senses", "AllClearRange", 30f, new ConfigDescription("A human that searched a spot and found nothing tells same-faction humans within this range who are going to (or searching) the same spot: they give up and go back too.", new AcceptableValueRange<float>(0f, 200f)));
             TauntRange = H("Senses", "TauntRange", 15f, new ConfigDescription("A human's shout passes on what it knows to same-faction humans within this range - what it sees (as sight) or the spot it is going to check (at that spot's own rank) - and tells its enemies where it stands, m. 0 = off.", new AcceptableValueRange<float>(0f, 200f)));
